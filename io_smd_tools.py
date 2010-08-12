@@ -47,49 +47,52 @@ tMat = mathutils.TranslationMatrix
 
 # I hate Python's var redefinition habits
 class smd_info:
-	a = None # Armature object
-	m = None # Mesh datablock
-	file = None
-	jobName = None
-	jobType = None
-	startTime = 0
-	uiTime = 0
-	started_in_editmode = None
-	multiImport = False
-	
-	# Checks for dupe bone names due to truncation
-	dupeCount = {}
-	# boneIDs contains the ID-to-name mapping of *this* SMD's bones.
-	# - Key: ID (as string due to potential storage in registry)
-	# - Value: bone name (storing object itself is not safe)
-	# Use boneOfID(id) to easily look up a value from here
-	boneIDs = {}
-	
-	# For recording rotation matrices. Children access their parent's matrix.
-	# USE BONE NAME STRING - MULTIPLE BONE TYPES NEED ACCESS (bone, editbone, posebone)
-	rotMats = {}
-	# For connecting bones to their first child only
-	hasBeenLinked = {}
+	def __init__(self):
+		self.a = None # Armature object
+		self.m = None # Mesh datablock
+		self.file = None
+		self.jobName = None
+		self.jobType = None
+		self.startTime = 0
+		self.uiTime = 0
+		self.started_in_editmode = None
+		self.multiImport = False
+		self.maintainBoneRot = False
+		
+		# Checks for dupe bone names due to truncation
+		self.dupeCount = {}
+		# boneIDs contains the ID-to-name mapping of *this* SMD's bones.
+		# - Key: ID (as string due to potential storage in registry)
+		# - Value: bone name (storing object itself is not safe)
+		# Use boneOfID(id) to easily look up a value from here
+		self.boneIDs = {}
+		
+		# For recording rotation matrices. Children access their parent's matrix.
+		# USE BONE NAME STRING - MULTIPLE BONE TYPES NEED ACCESS (bone, editbone, posebone)
+		self.rotMats = {}
 
 class qc_info:
-	startTime = 0
-	imported_smds = []
-	vars = {}
-	ref_mesh = None # for VTA import
-	
-	in_block_comment = False
-	
-	root_filename = ""
-	root_filedir = ""
-	dir_stack = []
+	def __init__(self):
+		self.startTime = 0
+		self.imported_smds = []
+		self.vars = {}
+		self.ref_mesh = None # for VTA import
+		self.maintainBoneRot = False
+		
+		self.in_block_comment = False
+		
+		self.root_filename = ""
+		self.root_filedir = ""
+		self.dir_stack = []
 	
 	def cd(self):
 		return self.root_filedir + "".join(self.dir_stack)
 		
 # rudimentary error reporting...will get UI in the future
 class logger:
-	warnCount = 0
-	errorCount = 0
+	def __init__(self):
+		self.warnCount = 0
+		self.errorCount = 0
 	
 	def warning(self, *string):
 		print("** WARNING:"," ".join(str(s) for s in string))
@@ -99,10 +102,8 @@ class logger:
 		print("** ERROR:"," ".join(str(s) for s in string))
 		self.errorCount += 1
 		
-	def errorReport(self, jobName, deleteSelf = True):
+	def errorReport(self, jobName):
 		print("Encountered %i errors and %i warnings during %s.\n" % (self.errorCount, self.warnCount, jobName))
-		if deleteSelf:
-			del self
 	
 
 #################################
@@ -213,24 +214,6 @@ def matrix_reverse_handedness( matrix ):
 	pos = vector( [ -matrix[3][1], -matrix[3][0], matrix[3][2], 1 ] )
 	return mathutils.Matrix( axisY, axisX, axisZ, pos )
 	
-# deletes any global objects hanging around from failed operations earlier in the session
-def cleanupInfoObjects():
-	global qc
-	global smd
-	global log
-	try:
-		del qc
-	except NameError:
-		pass
-	try:
-		del smd
-	except NameError:
-		pass
-	try:
-		del log
-	except NameError:
-		pass
-
 ########################
 #        Import        #
 ########################
@@ -326,7 +309,6 @@ def readBones():
 		arm_name = smd.jobName
 	a = smd.a = bpy.data.objects.new(arm_name,bpy.data.armatures.new(arm_name))
 	a.x_ray = True
-	a.data.draw_axes = True
 	a.data.deform_envelope = False # Envelope deformations are not exported, so hide them
 	a.data.drawtype = 'STICK'
 	bpy.context.scene.objects.link(a)
@@ -344,7 +326,7 @@ def readBones():
 		countBones += 1
 		values = line.split()
 
-		values[1] = values[1].strip("\"") # remove quotemarks
+		values[1] = values[1].strip("\"") # all bone names are in quotes
 		original_bone_name = values[1]
 		# Remove "ValveBiped." prefix, a leading cause of bones name length going over Blender's limit
 		ValveBipedCheck = values[1].split(".",1)
@@ -358,7 +340,7 @@ def readBones():
 		if len(original_bone_name) > 32: # max Blender bone name lenth
 			# CONFIRM: Truncation may or may not break compatibility with precompiled animation .mdls
 			# (IDs are used but names still recorded)
-			log.warning("-Bone name '%s' was truncated to 32 characters." % values[1])
+			log.warning("Bone name '%s' was truncated to 32 characters." % values[1])
 			newBone['smd_name'] = original_bone_name
 		
 		# Now check if this newly-truncated name is a dupe of another
@@ -444,24 +426,25 @@ def readFrames():
 				smd.rotMats[bn.name] *= smd.rotMats[bn.parent.name] # make rotations cumulative
 				bn.transform(smd.rotMats[bn.parent.name]) # ROTATION
 				bn.translate(bn.parent.head + (destOrg * smd.rotMats[bn.parent.name]) ) # LOCATION
-				bn.tail = bn.head + (vector([0,1,0])*smd.rotMats[bn.name]) # Another 1D to 2D artifact. Bones must point down the Y axis so that their co-ordinates remain stable
+				bn.tail = bn.head + (vector([0,0,1])*smd.rotMats[bn.name]) # Another 1D to 2D artifact. Bones must point down the Y axis so that their co-ordinates remain stable
+				bn.roll = float(values[6])
+				recurse_parent = bn.parent
+				while recurse_parent:
+					bn.roll += recurse_parent.roll
+					try:
+						recurse_parent = parent.parent
+					except:
+						break
+				bn.roll = bn.roll % math.pi
 				
 			else:
 				bn.translate(destOrg) # LOCATION WITH NO PARENT
-				bn.tail = bn.head + (vector([0,1,0])*smd.rotMats[bn.name])
+				bn.tail = bn.head + (vector([0,0,1])*smd.rotMats[bn.name])
+				bn.roll = float(values[6])
 				#bn.transform(smd.rotMats[bn.name])
-				
-			# Store rotation either way
-			bn['smd_rot'] = euler([float(values[4]),float(values[5]),float(values[6])])
 			
-			# Take a stab at parent-child connections. Not fully effective since only one child can be linked, so I
-			# assume that the first child is the one to go for. It /usually/ is.
-	#		if bn.parent and not smd.hasBeenLinked.get(bn.parent):
-	#			bn.parent.tail = bn.head
-	#			bn.connected = True
-	#			smd.hasBeenLinked[bn.parent] = True
-
-		
+			
+			
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
 		elif smd.jobType in [ 'ANIM', 'ANIM_SOLO' ]:
@@ -489,8 +472,16 @@ def readFrames():
 	
 	# All frames read	
 	
-	if smd.jobType is 'ANIM' or 'ANIM_SOLO':
+	if smd.jobType in ['ANIM','ANIM_SOLO']:
 		scn.frame_end = scn.frame_current
+		
+	if smd.jobType in ['REF','ANIM_SOLO' ]:
+		# Take a stab at parent-child connections. Not fully effective since only one child can be linked, so I
+		# assume that the first child is the one to go for. It /usually/ is.
+		for bn in smd.a.data.edit_bones:
+			if not smd.maintainBoneRot and len(bn.children) > 0:
+				bn.tail = bn.children[0].head
+				bn.children[0].connected = True
 	
 	# TODO: clean curves automagically (ops.graph.clean)
 
@@ -499,7 +490,7 @@ def readFrames():
 	print("- Imported %i frames of animation" % scn.frame_current)
 	scn.frame_current = startFrame
 	
-# triangles block
+# triangles block - also resizes loose bone tails based on reference mesh dimensions
 def readPolys():
 	if smd.jobType not in [ 'REF', 'REF_ADD', 'PHYS' ]:
 		return
@@ -658,6 +649,17 @@ def readPolys():
 		ops.mesh.faces_shade_smooth()
 	ops.object.mode_set(mode='OBJECT')
 	
+	if smd.jobType in ['REF','ANIM_SOLO']:
+		# Go back to the armature and resize loose bone tails based on mesh size
+		bpy.context.scene.objects.active = smd.a
+		ops.object.mode_set(mode='EDIT')
+		length = (smd.m.dimensions[0] + smd.m.dimensions[1] + smd.m.dimensions[2] / 3) / 60 # 1/60th average dimension
+		for bone in smd.a.data.edit_bones:
+			if len(bone.children) == 0 or smd.maintainBoneRot:
+				bone.tail = bone.head + vector([0,0,length]) * smd.rotMats[bone.name] # This is wrong!			
+		ops.object.mode_set(mode='OBJECT')
+			
+	
 	if badWeights:
 		log.warning(badWeights,"vertices weighted to invalid bones!")
 	print("- Imported %i polys" % countPolys)
@@ -726,21 +728,18 @@ def readShapes():
 	print("- Imported",num_shapes-1,"flex shapes") # -1 because the first shape is the reference position
 	
 # Parses a QC file
-def readQC( context, filepath, newscene, doAnim):
+def readQC( context, filepath, newscene, doAnim, outer_qc = False, maintainBoneRot = False):
 	filename = getFilename(filepath)
 	filedir = getFiledir(filepath)
 	
-	is_root_qc = False
 	global qc
-	try:
-		qc
-	except NameError: # we are the outermost QC
+	if outer_qc:
 		print("\nQC IMPORTER: now working on",filename)
-		is_root_qc = True
 		qc = qc_info()
 		qc.startTime = time.time()
 		qc.root_filename = filename
 		qc.root_filedir = filedir
+		qc.maintainBoneRot = maintainBoneRot
 		if newscene:
 			bpy.context.screen.scene = bpy.data.scenes.new(filename) # BLENDER BUG: this currently doesn't update bpy.context.scene
 		else:
@@ -782,7 +781,9 @@ def readQC( context, filepath, newscene, doAnim):
 			path = qc.cd() + appendExt(line[word_index],ext)
 			if not path in qc.imported_smds or type == 'FLEX':
 				qc.imported_smds.append(path)
-				readSMD(context,path,False,type,multiImport)
+				readSMD(context,path,False,type,multiImport,qc.maintainBoneRot)
+			else:
+				log.warning("Skipped repeated SMD \"%s\"" % getFilename(line[word_index]))
 		
 		# meshes
 		if "$body" in line or "$model" in line:
@@ -831,11 +832,11 @@ def readQC( context, filepath, newscene, doAnim):
 
 	file.close()
 	
-	if is_root_qc:
+	if outer_qc:
 		printTimeMessage(qc.startTime,filename,"QC")
 	
 # Parses an SMD file
-def readSMD( context, filepath, newscene = False, smd_type = None, multiImport = False ):
+def readSMD( context, filepath, newscene = False, smd_type = None, multiImport = False, maintainBoneRot = False):
 	# First, overcome Python's awful var redefinition behaviour. The smd object must be
 	# explicitly deleted at the end of the script.
 	if filepath.endswith("dmx"):
@@ -849,6 +850,7 @@ def readSMD( context, filepath, newscene = False, smd_type = None, multiImport =
 	smd.jobType = smd_type
 	smd.multiImport = multiImport
 	smd.startTime = time.time()
+	smd.maintainBoneRot = maintainBoneRot
 	smd.uiTime = 0
 	
 	try:
@@ -885,7 +887,6 @@ def readSMD( context, filepath, newscene = False, smd_type = None, multiImport =
 
 	file.close()
 	printTimeMessage(smd.startTime,smd.jobName)
-	del smd
 
 class SmdImporter(bpy.types.Operator):
 	'''Load a Source engine SMD, VTA or QC file'''
@@ -896,18 +897,18 @@ class SmdImporter(bpy.types.Operator):
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
 	#freshScene = BoolProperty(name="Import to new scene", description="Create a new scene for this import", default=False) # nonfunctional due to Blender limitation
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
+	maintainBoneRot = BoolProperty(name="Maintain bone rotation", description="Blender's bones behave differently from Source's. If you are creating animations for an existing compiled model, check this box.", default=True)
 	doAnim = BoolProperty(name="Import animations (broken)", description="Use for comedic effect only", default=False)
 	
 	def execute(self, context):
-		cleanupInfoObjects()
 		global log
 		log = logger()
 		
 		self.properties.filepath = self.properties.filepath.lower()
 		if self.properties.filepath.endswith('.qc') | self.properties.filepath.endswith('.qci'):
-			readQC(context, self.properties.filepath, False, self.properties.doAnim)
+			readQC(context, self.properties.filepath, False, self.properties.doAnim, outer_qc=True, maintainBoneRot=self.properties.maintainBoneRot)
 		elif self.properties.filepath.endswith('.smd'):
-			readSMD(context, self.properties.filepath, multiImport=self.properties.multiImport)
+			readSMD(context, self.properties.filepath, multiImport=self.properties.multiImport, maintainBoneRot=self.properties.maintainBoneRot)
 		elif self.properties.filepath.endswith ('.vta'):
 			readSMD(context, self.properties.filepath, smd_type='FLEX')
 		elif self.properties.filepath.endswith('.dmx'):
@@ -1146,7 +1147,6 @@ def writeSMD( context, filepath, smd_type = None, doVTA = True, quiet = False ):
 		smd.a = bpy.context.object
 	else:
 		log.error("invalid object selected!")
-		del smd
 		return
 	
 	smd.file = open(filepath, 'w')
@@ -1171,7 +1171,6 @@ def writeSMD( context, filepath, smd_type = None, doVTA = True, quiet = False ):
 
 	smd.file.close()
 	if not quiet: printTimeMessage(smd.startTime,smd.jobName)
-	del smd
 	
 from bpy.props import *
 
@@ -1185,7 +1184,6 @@ class SmdExporter(bpy.types.Operator):
 	doVTA = BoolProperty(name="Export VTA", description="Export a mesh's shape key", default=True)
 	
 	def execute(self, context):
-		cleanupInfoObjects()
 		global log
 		log = logger()
 		
