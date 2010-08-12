@@ -19,7 +19,7 @@
 bl_addon_info = {
     "name": "SMD Tools",
     "author": "Tom Edwards",
-    "version": "0.4",
+    "version": "0.4.1",
     "blender": (2, 5, 3),
     "category": "Import/Export",
     "location": "File > Import/Export",
