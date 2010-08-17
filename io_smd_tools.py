@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards",
-	"version": "0.5",
+	"version": "0.5.1",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/ File > Export",
@@ -723,7 +723,7 @@ def readShapes():
 			if making_base_shape:
 				smd.m.add_shape_key("Basis")
 			else:
-				smd.m.add_shape_key()
+				smd.m.add_shape_key("Unnamed")
 			
 			num_shapes += 1
 			continue # to the first vertex of the new shape
@@ -835,6 +835,14 @@ def readQC( context, filepath, newscene, doAnim, outer_qc = False, maintainBoneR
 		# flex animation
 		if "flexfile" in line:
 			loadSMD(1,"vta",'FLEX')
+			continue
+		
+		# naming shapes
+		if "flex" in line or "flexpair" in line: # "flex" is safe because it cannot come before "flexfile"
+			for i in range(1,len(line)):
+				if line[i] == "frame":
+					qc.ref_mesh.data.shape_keys.keys[int(line[i+1])-1].name = line[1] # subtract 1 because frame 0 isn't a real shape key
+					break
 			continue
 			
 		# physics mesh
@@ -1299,6 +1307,7 @@ class SmdExporter(bpy.types.Operator):
 	bl_idname = "export.smd"
 	bl_label = "Export SMD/VTA"
 	bl_description = "Export meshes, actions and shape keys to Studiomdl Data"
+	bl_options = {'REGISTER', 'UNDO'}
 	
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA file", maxlen=1024, default="", subtype='FILE_PATH')
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA file", maxlen=1024, default="", subtype='FILENAME')
@@ -1315,11 +1324,17 @@ class SmdExporter(bpy.types.Operator):
 	def execute(self, context):
 		props = self.properties
 		
+		if props.exportMode == 'NONE':
+			self.report('ERROR',"Programmer error: bpy.ops.export.smd called without exportMode")
+			return {'CANCELLED'}
+		
 		if props.exportMode == 'CLEAN':
+			self.numPropsRemoved = 0
 			def removeProps(object):
 				for prop in object.items():
 					if prop[0].startswith("smd_"):
 						del object[prop[0]]
+						self.numPropsRemoved += 1
 						
 			for object in context.scene.objects:
 				removeProps(object)
@@ -1327,6 +1342,7 @@ class SmdExporter(bpy.types.Operator):
 					for bone in object.data.bones:
 						removeProps(bone)
 			removeProps(context.scene)
+			self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
 			return {'FINISHED'}
 		
 		# no animation support yet
@@ -1341,6 +1357,8 @@ class SmdExporter(bpy.types.Operator):
 			# Get a path from the scene object
 			prop_path = context.scene.get("smd_path")
 			if prop_path and len(prop_path):
+				if prop_path[-1] not in ['\\','/']:
+					prop_path += "\\"
 				props.filepath = prop_path
 			else:
 				props.filename = "<folder select>"
