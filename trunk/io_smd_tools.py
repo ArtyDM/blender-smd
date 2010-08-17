@@ -18,7 +18,7 @@
 
 bl_addon_info = {
 	"name": "SMD Tools",
-	"author": "Tom Edwards",
+	"author": "Tom Edwards, Biglines",
 	"version": "0.5.1",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
@@ -175,10 +175,19 @@ def parseQuoteBlockedLine(line):
 					words.append(cur_word)
 				last_word_start = i+1 # we are in whitespace, first new char is the next one
 	
-	# catch last word, removing '{'s crashing into it (char not currently used)
-	cur_word = line[last_word_start:i].strip("\"{")
+	# catch last word and any '{'s crashing into it
+	needBracket = False
+	cur_word = line[last_word_start:i]
+	if cur_word.endswith("{"):
+		needBracket = True
+		
+	cur_word = cur_word.strip("\"{")
 	if len(cur_word) > 0:
 		words.append(cur_word)
+		
+	if needBracket:
+		words.append("{")
+		
 
 	return words
 	
@@ -220,17 +229,6 @@ def vector_by_matrix( m, p ):
 					p[0] * m[0][1] + p[1] * m[1][1] + p[2] * m[2][1],
 					p[0] * m[0][2] + p[1] * m[1][2] + p[2] * m[2][2]] )
 
-# CONFIRM THIS: OpenGL (Blender) is left-handed, DirectX (Source) is right-handed
-def matrix_reverse_handedness( matrix ):
-	axisX = vector( [ -matrix[0][1], -matrix[0][0], matrix[0][2], 0 ] )
-	axisX.normalize()
-	axisY = vector( [ -matrix[1][1], -matrix[1][0], matrix[1][2], 0 ] )
-	axisY.normalize()
-	axisZ = vector( [ -matrix[2][1], -matrix[2][0], matrix[2][2], 0 ] )
-	axisZ.normalize()
-	pos = vector( [ -matrix[3][1], -matrix[3][0], matrix[3][2], 1 ] )
-	return mathutils.Matrix( axisY, axisX, axisZ, pos )
-	
 ########################
 #        Import        #
 ########################
@@ -419,10 +417,6 @@ def readFrames():
 		values = line.split()
 		if values[0] == "time":
 			scn.frame_current += 1
-			if scn.frame_current == 2 and smd.jobType == 'ANIM_SOLO':
-				# apply smd_rot properties
-				ops.object.mode_set(mode='OBJECT')
-				ops.object.mode_set(mode='EDIT')
 			continue # skip to next line
 
 		# The current bone
@@ -432,10 +426,10 @@ def readFrames():
 			continue
 			
 		# Where the bone should be, local to its parent
-		destOrg = vector([float(values[1]), float(values[2]), float(values[3])])
+		pos = vector([float(values[1]), float(values[2]), float(values[3])])
 		# A bone's rotation matrix is used only by its children, a symptom of the transition from Source's 1D bones to Blender's 2D bones.
 		# Also, the floats are inversed to transition them from Source (DirectX; left-handed) to Blender (OpenGL; right-handed)
-		smd.rotMats[bn.name] = rMat(-float(values[4]), 3,'X') * rMat(-float(values[5]), 3,'Y') * rMat(-float(values[6]), 3,'Z')
+		smd.rotMats[bn.name] = rMat(-float(values[4]), 4,'X') * rMat(-float(values[5]), 4,'Y') * rMat(-float(values[6]), 4,'Z')
 		
 		# *************************************************
 		# Set rest positions. This happens only for the first frame, but not for an animation SMD.
@@ -443,28 +437,22 @@ def readFrames():
 		# rot 0 0 0 means alignment with axes
 		if smd.jobType is 'REF' or (smd.jobType is 'ANIM_SOLO' and scn.frame_current == 1):
 
-			if bn.parent:
-				smd.rotMats[bn.name] *= smd.rotMats[bn.parent.name] # make rotations cumulative
-				bn.transform(smd.rotMats[bn.parent.name]) # ROTATION
-				bn.translate(bn.parent.head + (destOrg * smd.rotMats[bn.parent.name]) ) # LOCATION
-				bn.tail = bn.head + (vector([0,0,1])*smd.rotMats[bn.name]) # Another 1D to 2D artifact. Bones must point down the Y axis so that their co-ordinates remain stable
-				bn.roll = float(values[6])
-				recurse_parent = bn.parent
-				while recurse_parent:
-					bn.roll += recurse_parent.roll
-					try:
-						recurse_parent = parent.parent
-					except:
-						break
-				bn.roll = bn.roll % math.pi
+			# location
+			try:
+				bn.head = bn.parent.head + (pos * smd.rotMats[bn.parent.name])
+			except AttributeError:
+				bn.head = pos
+			
+			# rotation
+			try:
+				smd.rotMats[bn.name] *= smd.rotMats[bn.parent.name]
+			except AttributeError:
+				pass
 				
-			else:
-				bn.translate(destOrg) # LOCATION WITH NO PARENT
-				bn.tail = bn.head + (vector([0,0,1])*smd.rotMats[bn.name])
-				bn.roll = float(values[6])
-				#bn.transform(smd.rotMats[bn.name])
-			
-			
+			bn.tail = bn.head + vector([0,1,0]) * smd.rotMats[bn.name]
+
+			#roll
+			bn.align_roll(vector([0,0,1]) * smd.rotMats[bn.name])
 			
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
@@ -475,16 +463,17 @@ def readFrames():
 			bn = smd.a.data.bones[pbn.name]
 			pbn.rotation_mode = 'XYZ'
 			
-			smd_rot = vector(bn['smd_rot'])
+			smd_rot = matrixToEuler(bn.matrix_local.invert())
+			print(smd_rot)
 			ani_rot = vector([float(values[4]),float(values[5]),float(values[6])])
 			
-			pbn.rotation_euler = (ani_rot - smd_rot)
+		#	pbn.rotation_euler = (ani_rot - smd_rot)
 			
 			if bn.parent:
 				smd.rotMats[bn.name] *= smd.rotMats[bn.parent.name] # make rotations cumulative
-				pbn.location = destOrg * smd.rotMats[bn.parent.name] - (bn.head_local - bn.parent.head_local)
+				pbn.location = pos * smd.rotMats[bn.parent.name] - (bn.head - bn.parent.head)
 			else:
-				pbn.location = destOrg - bn.head_local
+				pbn.location = pos - bn.head
 				
 			# TODO: compare to previous frame and only insert if different
 			pbn.keyframe_insert('location') # ('location', 0)
@@ -678,7 +667,7 @@ def readPolys():
 			length = (smd.m.dimensions[0] + smd.m.dimensions[1] + smd.m.dimensions[2] / 3) / 60 # 1/60th average dimension
 			for bone in smd.a.data.edit_bones:
 				if len(bone.children) == 0 or smd.maintainBoneRot:
-					bone.tail = bone.head + vector([0,0,length]) * smd.rotMats[bone.name] # This is wrong!			
+					bone.tail = bone.head + vector([0,length,0]) * smd.rotMats[bone.name]
 			ops.object.mode_set(mode='OBJECT')
 				
 		
@@ -829,7 +818,8 @@ def readQC( context, filepath, newscene, doAnim, outer_qc = False, maintainBoneR
 		# skeletal animations
 		if doAnim and ("$sequence" in line or "$animation" in line):
 			if not "{" in line: # an advanced $sequence using an existing $animation
-				loadSMD(line[2],"smd",'ANIM')
+				print(line)
+				loadSMD(2,"smd",'ANIM')
 			continue
 		
 		# flex animation
@@ -1218,20 +1208,20 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 		try:
 			# this func is also embedded in the "export scene" panel
 			l = self.embed_layout
-			is_embedded = True
+			embedded = True
 		except AttributeError:
 			l = self.layout
-			is_embedded = False
+			embedded = False
 		
 		ob = context.active_object
 		
-		if is_embedded and (len(context.selected_objects) == 0 or not ob):
+		if embedded and (len(context.selected_objects) == 0 or not ob):
 			row = l.row()
 			row.operator(SmdExporter.bl_idname, text="No selection") # filler to stop the scene button moving
 			row.enabled = False
 		elif ob and len(context.selected_objects) == 1:
 			subdir = ob.get('smd_subdir')
-			if subdir and len(subdir):
+			if subdir:
 				label = subdir + "\\"
 			else:
 				label = ""
