@@ -19,11 +19,10 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins, BigLines",
-	"version": "0.6b2",
+	"version": "0.6",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
-	"warning": 'No animation support yet',
 	"wiki_url": "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools",
 	"tracker_url": "http://developer.valvesoftware.com/wiki/Talk:Blender_SMD_Tools",
 	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
@@ -74,6 +73,7 @@ class smd_info:
 		self.multiImport = False
 		self.in_block_comment = False
 		self.connectBones = False
+		self.upAxisRot = getUpAxisRot('Z')
 
 		self.bakeInfo = []
 
@@ -158,10 +158,11 @@ def parseQuoteBlockedLine(line,lower=True):
 	for i in range(len(line)):
 
 		char = line[i]
-		try: nchar = line[i+1]
-		except IndexError: nchar = None
-		try: pchar = line[i-1]
-		except IndexError: pchar = None
+		nchar = pchar = None
+		if i < len(line)-1:
+			nchar = line[i+1]
+		if i > 0:
+			pchar = line[i-1]
 
 		# line comment - precedence over block comment
 		if (char == "/" and nchar == "/") or char in ['#',';']:
@@ -252,6 +253,7 @@ try:
 		print(*string)
 		stdOutReset()
 except AttributeError:
+	STD_RED = STD_YELLOW = STD_WHITE = None
 	def stdOutColour(colour):
 		pass
 	def stdOutReset():
@@ -261,11 +263,11 @@ except AttributeError:
 
 def getUpAxisRot(axis):
 	if axis.upper() == 'X':
-		return vector([0,pi/2,0])
+		return rMat(pi/2,4,'Y')
 	if axis.upper() == 'Y':
-		return vector([pi/2,0,0])
+		return rMat(pi/2,4,'X')
 	if axis.upper() == 'Z':
-		return None
+		return rMat(0,4,'Z')
 	else:
 		raise AttributeError
 
@@ -297,7 +299,7 @@ def getRotAsEuler(thing):
 	mode = thing.rotation_mode
 	if len(mode) == 3: # matches XYZ and variants
 		# CRIKEY! But exec() is needed to turn the rotation_mode string into a property on the vector
-		exec("out." + thing.rotation_mode.lower() + " = vector(thing.rotation_euler) * ry90 * rz90") # FIXME: are those matrices right?
+		exec("out." + thing.rotation_mode.lower() + " = vector(thing.rotation_euler) * ry90 * rz90")
 	elif mode == 'QUATERNION':
 		out = thing.rotation_quaternion.to_euler()
 	elif mode == 'AXIS_ANGLE':
@@ -573,18 +575,36 @@ def readFrames():
 		scn.frame_end = scn.frame_current
 
 	# TODO: clean curves automagically (ops.graph.clean)
-
-	if smd.connectBones:
+	
+	connections = {}
+	if not smd.connectBones == 'NONE':
 		for bone in smd.a.data.edit_bones:
-			if bone.children:
-				bone.tail = bone.children[0].head
-				if bone.children[0].children:
-					bone.children[0].connected = True
+			m1 = bone.matrix.copy().invert()
+			for child in bone.children:
+				head = (m1*child.matrix).translation_part() * smd.upAxisRot # child head relative to parent
+				#print('%s head %s'%(child.name,vectorString(head)))
+				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and abs(head.y) > 0.1): # child head is on parent's Y-axis
+					bone.tail = child.head
+					connections[child.name] = True
+					break # FIXME connect all children, but don't keep moving the tail
+		for bone_name in connections:
+			smd.a.data.edit_bones[bone_name].connected = True
 
 	ops.object.mode_set(mode='OBJECT')
+	
+	def boneShouldBePoint(bone):
+		if smd.connectBones == 'ALL':
+			return True
+
+		childConnect = False
+		for child in bone.children:
+			if child.head == bone.tail:
+				childConnect = True
+				break
+		return not connections.get(bone.name) and not childConnect
 
 	if smd.jobType in ['REF','ANIM_SOLO']:
-		# Resize loose bone tails based on armature size
+		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
 		for bone in smd.a.data.bones:
@@ -598,6 +618,8 @@ def readFrames():
 
 		length = (dimensions[0] + dimensions[1] + dimensions[2]) / 600 # very small indeed, but a custom bone is used for display
 
+		# Generate custom bone shape; a simple sphere
+		# TODO: add axis indicators
 		bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
 		bone_vis = bpy.context.active_object
 		bone_vis.data.name = "smd_bone_vis"
@@ -606,20 +628,19 @@ def readFrames():
 		bpy.context.scene.objects.active = smd.a
 
 		for bone in a.pose.bones:
-			if (len(bone.children) == 0 and not a.data.bones[bone.name].connected) or not smd.connectBones:
-				bone.custom_shape = bone_vis
+			if boneShouldBePoint(bone):
+				bone.custom_shape = bone_vis # apply bone shape
 
 		ops.object.mode_set(mode='EDIT')
-		if len(smd.a.data.bones) > 1:
-				for bone in smd.a.data.edit_bones:
-					if not bone.connected:
-						bone.tail = bone.head + vector([length,0,0]) * smd.rotMats[bone.name]
+		for bone in smd.a.data.edit_bones:
+			if boneShouldBePoint(bone):
+				bone.tail = bone.head + vector([length,0,0]) * smd.rotMats[bone.name] # Resize loose bone tails based on armature size
 		ops.object.mode_set(mode='OBJECT')
 
 	print("- Imported %i frames of animation" % scn.frame_current)
 	bpy.context.scene.set_frame(startFrame)
 
-# triangles block - also resizes loose bone tails based on reference mesh dimensions
+# triangles block
 def readPolys():
 	if smd.jobType not in [ 'REF', 'REF_ADD', 'PHYS' ]:
 		return
@@ -960,7 +981,6 @@ def readSMD( context, filepath, upAxisRot, connectBones, newscene = False, smd_t
 		print("Skipping DMX file import: format unsupported (%s)" % getFilename(filepath))
 		return
 
-
 	global smd
 	smd	= smd_info()
 	smd.jobName = getFilename(filepath)
@@ -968,6 +988,8 @@ def readSMD( context, filepath, upAxisRot, connectBones, newscene = False, smd_t
 	smd.multiImport = multiImport
 	smd.startTime = time.time()
 	smd.connectBones = connectBones
+	if upAxisRot:
+		smd.upAxisRot = upAxisRot
 	smd.uiTime = 0
 
 	try:
@@ -1008,9 +1030,9 @@ def readSMD( context, filepath, upAxisRot, connectBones, newscene = False, smd_t
 
 	if upAxisRot:
 		if smd.jobType in ['REF','ANIM_SOLO']:
-			smd.a.rotation_euler = upAxisRot
+			smd.a.rotation_euler = upAxisRot.to_euler()
 		else:
-			smd.m.rotation_euler = upAxisRot
+			smd.m.rotation_euler = upAxisRot.to_euler()
 			smd.m.select = True
 		bpy.context.scene.update()
 		bpy.ops.object.rotation_apply()
@@ -1026,9 +1048,12 @@ class SmdImporter(bpy.types.Operator):
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
 	#freshScene = BoolProperty(name="Import to new scene", description="Create a new scene for this import", default=False) # nonfunctional due to Blender limitation
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
-	upAxis = EnumProperty(name="Up axis",items=(('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis')),default='Z',description="Which axis represents 'up'. Ignored for QCs.")
-	connectBones = BoolProperty(name="Connect bones",description="Makes armature editing easier, but breaks backwards compatibility.",default=False)
 	doAnim = BoolProperty(name="Import animations (broken)", description="Use for comedic effect only", default=False)
+	upAxis = EnumProperty(name="Up axis",items=(('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis')),default='Z',description="Which axis represents 'up'. Ignored for QCs.")
+	connectionEnum = ( ('NONE','Do not connect (sphere bones)','All bones will be unconnected spheres'),
+	('COMPATIBILITY','Connect retaining compatibility','Only connect bones that will not break compatibility with existing SMDs'),
+	('ALL','Connect all','All bones that can be connected will be, disregarding backwards compatibility') )
+	connectBones = EnumProperty(name="Bone Connection Mode",items=connectionEnum,description="How to choose which bones to connect together",default='COMPATIBILITY')
 
 	def execute(self, context):
 		global log
@@ -1148,8 +1173,13 @@ def writeFrames():
 	smd_bones = getBonesForSmd(smd.a)
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
+	
+	last_frame = 0
+	for fcurve in smd.a.animation_data.action.fcurves:
+		# Get the length of the action
+		last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
 
-	while scene.frame_current <= scene.frame_end:
+	while scene.frame_current <= last_frame:
 		smd.file.write("time %i\n" % scene.frame_current)
 
 		for bone in smd_bones:
@@ -1159,11 +1189,18 @@ def writeFrames():
 			if smd.jobType == 'ANIM':
 				# pose location
 				pbn = smd.a.pose.bones[bone['bone'].name]
-				pos += pbn.location * ry90 * rz90
-				rot += vector(getRotAsEuler(pbn))
+				if pbn.parent:
+					parentRotated = pbn.parent.matrix * (ry90 * rz90)
+					childRotated = pbn.matrix * (ry90 * rz90)
+					rot = parentRotated.invert() * childRotated
+					pos = rot.translation_part()
+					rot = rot.to_euler()
+				else:
+					pos = pbn.matrix.translation_part()
+					rot = (pbn.matrix * (ry90 * rz90)).to_euler('XYZ')
 			for i in range(3):
-				pos_str += " " + str(pos[i])
-				rot_str += " " + str(rot[i])
+				pos_str += " " + getSmdFloat(pos[i])
+				rot_str += " " + getSmdFloat(rot[i])
 			smd.file.write( str(bone['bone']['smd_id']) + pos_str + rot_str + "\n" )
 
 		if smd.jobType != 'ANIM':
