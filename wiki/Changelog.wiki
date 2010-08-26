@@ -15,7 +15,7 @@ Importer:
 
 Exporter:
 
-  * *Fixed bone export (EasyPickins)*, under all bone rotations modes
+  * *Fixed bone export (thanks to EasyPickins)*, under all bone rotations modes
   * *Object scale and rotation is now applied* to all exports (Translation is only applied to meshes with parents or armature modifiers)
   * Copy meshes when converting between quads and tris, instead of operating on the original (EasyPickins)
   * Added option to compile a QC file automatically on export
