@@ -2,12 +2,9 @@
 
 Importer:
 
-  * Bones are now imported correctly to their rest positions.
-  * Meshes now import three times faster
-  * Changed the bone connection options. You can now choose to connect all bones
-regardless of compatibility with other SMDs, only bones that can be connected
-without breaking compatibility, or no bones at all. Unconnected bones become
-spheres.
+  * *Bones are now imported correctly to their rest positions*
+  * *Meshes now import three times faster*
+  * Changed the bone connection options. You can now choose to connect all bones regardless of compatibility with other SMDs, only bones that can be connected without breaking compatibility, or no bones at all. Unconnected bones become spheres.
   * Up axis is now adhered to when importing QCs, and can be configured when
 importing lone SMDs
   * Optimised QC line parsing
@@ -15,12 +12,10 @@ importing lone SMDs
 
 Exporter:
 
-  * Fixed bone export (EasyPickins), under all bone rotations modes
-  * Copy meshes when converting between quads and tris, instead of operating on
-the original (EasyPickins)
-  * Object scale and rotation is now applied to all exports (Translation is only
-applied to meshes with parents or armature modifiers)
+  * *Fixed bone export (EasyPickins)*, under all bone rotations modes
+  * Copy meshes when converting between quads and tris, instead of operating on the original (EasyPickins)
+  * Object scale and rotation is now applied to all exports (Translation is only applied to meshes with parents or armature modifiers)
   * Added option to compile a QC file automatically on export
   * Added armature configuration panel:
-  ** Actions for batch export can be filtered by name
-  ** The active action can be changed, and new ones created
+   * Actions for batch export can be filtered by name
+   * The active action can be changed, and new ones created
