@@ -7,7 +7,7 @@ Importer:
   * Changed the bone connection options. You can now choose to:
    * Connect all bones regardless of compatibility with other SMDs
    * Connect only bones that can be connected without breaking compatibility
-   * Connect no bones at all.
+   * Connect no bones at all
   * Unconnected bones become spheres without tails, to better represent SMD bones
   * Up axis is now adhered to when importing QCs, and can be configured when importing lone SMDs
   * Optimised QC line parsing
