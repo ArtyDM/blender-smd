@@ -13,8 +13,8 @@ importing lone SMDs
 Exporter:
 
   * *Fixed bone export (EasyPickins)*, under all bone rotations modes
+  * *Object scale and rotation is now applied* to all exports (Translation is only applied to meshes with parents or armature modifiers)
   * Copy meshes when converting between quads and tris, instead of operating on the original (EasyPickins)
-  * Object scale and rotation is now applied to all exports (Translation is only applied to meshes with parents or armature modifiers)
   * Added option to compile a QC file automatically on export
   * Added armature configuration panel:
    * Actions for batch export can be filtered by name
