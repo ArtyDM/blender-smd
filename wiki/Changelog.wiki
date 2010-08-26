@@ -4,9 +4,12 @@ Importer:
 
   * *Bones are now imported correctly to their rest positions*
   * *Meshes now import three times faster*
-  * Changed the bone connection options. You can now choose to connect all bones regardless of compatibility with other SMDs, only bones that can be connected without breaking compatibility, or no bones at all. Unconnected bones become spheres.
-  * Up axis is now adhered to when importing QCs, and can be configured when
-importing lone SMDs
+  * Changed the bone connection options. You can now choose to:
+   * Connect all bones regardless of compatibility with other SMDs
+   * Connect only bones that can be connected without breaking compatibility
+   * Connect no bones at all.
+  * Unconnected bones become spheres without tails, to better represent SMD bones
+  * Up axis is now adhered to when importing QCs, and can be configured when importing lone SMDs
   * Optimised QC line parsing
 
 
