@@ -1,3 +1,28 @@
+= 0.6.1 - August 27th, 2010 =
+
+General:
+
+  * Optimisations
+  * More descriptive messages on fatal errors; check the console
+
+Importer:
+
+  * Fixed bones with siblings not always being conncted properly
+  * Changed the armature search method when importing additional meshes:
+   # Active armature
+   # First armature in the selection
+   # First armature found modifying something in the selection
+   # First armature in the scene
+   # Otherwise a new armature is created
+  * Bones at the end of chains are now ALWAYS spheres (fixes length issues and direction confusion)
+
+Exporter:
+
+  * Fixed export failing if there is no active object
+  * Fixed exporter trying to write frames out even if there was no animation on an armature
+  * Don't carry on trying to compile a QC if studiomdl isn't found
+  * Warn when exceeding Source's bone limit of 128
+
 = 0.6 - August 26, 2010 =
 
 Importer:
