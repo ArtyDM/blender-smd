@@ -4,6 +4,7 @@ Importer:
 
   * Fixed bones with siblings being collapsed into each other by the bone connection routine
   * Fixed occasional errors when choosing armature for additional meshes
+  * Fixed bones becoming connected to children directly below them, as well as above (hotfix)
 
 == 0.6.1 - August 27th, 2010 ==
 
