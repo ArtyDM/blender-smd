@@ -1,4 +1,11 @@
-= 0.6.1 - August 27th, 2010 =
+== 0.6.2 - August 27th, 2010 ==
+
+Importer:
+
+  * Fixed bones with siblings being collapsed into each other by the bone connection routine
+  * Fixed occasional errors when choosing armature for additional meshes
+
+== 0.6.1 - August 27th, 2010 ==
 
 General:
 
@@ -23,7 +30,7 @@ Exporter:
   * Don't carry on trying to compile a QC if studiomdl isn't found
   * Warn when exceeding Source's bone limit of 128
 
-= 0.6 - August 26, 2010 =
+== 0.6 - August 26, 2010 ==
 
 Importer:
 
