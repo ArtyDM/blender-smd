@@ -596,11 +596,11 @@ def readFrames():
 			for child in bone.children:
 				head = (m1*child.matrix).translation_part() * smd.upAxisMat # child head relative to parent
 				#print('%s head %s'%(child.name,vectorString(head)))
-				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and abs(head.y) > 0.1): # child head is on parent's Y-axis
+				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and head.y > 0.1): # child head is on parent's Y-axis
 					bone.tail = child.head
 					child.connected = True
 					# connect to the first valid bone only, otherwise bones already attached will be flung about the place
-					# not perfect by ant means, but it leads to the right choice in most situations
+					# not perfect by any means, but it leads to the right choice in most situations
 					# can't just check whether there is only one child, as there are often additional rig helper bones floating around
 					break
 
