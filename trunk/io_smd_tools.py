@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins, BigLines",
-	"version": "0.6.1",
+	"version": "0.6.2",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -388,7 +388,7 @@ def validateBones():
 def readBones():
 	if not smd.multiImport:
 		# Search the current scene for an existing armature - there can only be one skeleton in a Source model
-		if bpy.context.active_object.type == 'ARMATURE':
+		if bpy.context.active_object and bpy.context.active_object.type == 'ARMATURE':
 			smd.a = bpy.context.active_object
 		else:
 			def isArmIn(list):
@@ -401,9 +401,10 @@ def readBones():
 			isArmIn(bpy.context.selected_objects) # armature in the selection?
 
 			for ob in bpy.context.selected_objects:
-				smd.a = ob.data.find_armature() # armature modifying a selected object?
-				if smd.a:
-					break
+				if ob.type == 'MESH':
+					smd.a = ob.data.find_armature() # armature modifying a selected object?
+					if smd.a:
+						break
 
 			isArmIn(bpy.context.scene.objects) # armature in the scene at all?
 		if smd.a:
@@ -589,7 +590,6 @@ def readFrames():
 
 	# TODO: clean curves automagically (ops.graph.clean)
 	
-	connections = {}
 	if not smd.connectBones == 'NONE':
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
@@ -598,9 +598,11 @@ def readFrames():
 				#print('%s head %s'%(child.name,vectorString(head)))
 				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and abs(head.y) > 0.1): # child head is on parent's Y-axis
 					bone.tail = child.head
-					connections[child.name] = True
-		for bone_name in connections:
-			smd.a.data.edit_bones[bone_name].connected = True
+					child.connected = True
+					# connect to the first valid bone only, otherwise bones already attached will be flung about the place
+					# not perfect by ant means, but it leads to the right choice in most situations
+					# can't just check whether there is only one child, as there are often additional rig helper bones floating around
+					break
 
 	ops.object.mode_set(mode='OBJECT')
 	
