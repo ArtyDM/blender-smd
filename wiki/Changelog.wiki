@@ -1,3 +1,10 @@
+== 0.6.3 - August 28th, 2010 ==
+
+Exporter:
+
+- Fixed not exporting reference bone positions (whoops)
+- Fixed subfolder creation failing when the scene root doesn't exist
+
 == 0.6.2 - August 27th, 2010 ==
 
 Importer:
