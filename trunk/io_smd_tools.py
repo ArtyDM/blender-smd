@@ -1181,10 +1181,13 @@ def writeFrames():
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
 	
-	last_frame = 0
-	for fcurve in smd.a.animation_data.action.fcurves:
-		# Get the length of the action
-		last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
+	if smd.jobType == 'ANIM':
+		last_frame = 0
+		for fcurve in smd.a.animation_data.action.fcurves:
+			# Get the length of the action
+			last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
+	else:
+		last_frame = scene.frame_end
 
 	while scene.frame_current <= last_frame:
 		smd.file.write("time %i\n" % scene.frame_current)
@@ -1193,8 +1196,8 @@ def writeFrames():
 			pos_str = rot_str = ""
 			pos = bone['pos'].copy()
 			rot = vector(bone['rot'].copy())
+
 			if smd.jobType == 'ANIM':
-				# pose location
 				pbn = smd.a.pose.bones[bone['bone'].name]
 				if pbn.parent:
 					parentRotated = pbn.parent.matrix * ryz90
@@ -1205,6 +1208,7 @@ def writeFrames():
 				else:
 					pos = pbn.matrix.translation_part()
 					rot = (pbn.matrix * ryz90).to_euler('XYZ')
+
 			for i in range(3):
 				pos_str += " " + getSmdFloat(pos[i])
 				rot_str += " " + getSmdFloat(rot[i])
@@ -1396,8 +1400,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 			writeBones(quiet=True)
 		else:
 			writeBones()
-			if smd.jobType == 'ANIM':
-				writeFrames()
+			writeFrames()
 
 	if smd.m:
 		if smd.jobType in ['REF','PHYS']:
@@ -1691,13 +1694,12 @@ class SmdExporter(bpy.types.Operator):
 				if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
 					studiomdl_path += "studiomdl.exe"
 
-				try:
-					os.stat(studiomdl_path)
+				if os.path.exists(studiomdl_path):
 					import subprocess
 					print("Running studiomdl for \"" + getFilename(context.scene.smd_qc_path) + "\"...\n")
 					subprocess.call([studiomdl_path, "-nop4", bpy.utils.expandpath(context.scene.smd_qc_path)])
 					print("\n")
-				except os.error:
+				else:
 					log.error(self,"Could not access studiomdl at \"" + studiomdl_path + "\"")
 
 			except KeyError:
@@ -1730,10 +1732,8 @@ class SmdExporter(bpy.types.Operator):
 		if path[1] != ":":
 			raise Exception("Due to a current Blender bug, you must save your work after undoing anything before export is possible.")
 
-		try:
-			os.stat(path)
-		except:
-			os.mkdir(path)
+		if not os.path.exists(path):
+			os.makedirs(path)
 
 		if object.type == 'MESH':
 			path += object.name
