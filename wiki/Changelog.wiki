@@ -1,3 +1,18 @@
+#labels Featured
+== 0.6.4 - August 28th, 2010 ==
+
+General:
+
+  * Removed BigLines from the credits, at his request
+
+Importer:
+
+  * Improved performance by 30%
+  * Fixed exception if a vertex is found weighted to a nonexistent bone
+  * Fixed exception when exporting meshes without parents
+  * Fixed exception at the very end of the import process if it wasn't invoked
+from the 3D View
+
 == 0.6.3 - August 28th, 2010 ==
 
 Exporter:
