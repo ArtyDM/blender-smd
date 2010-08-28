@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.6.4",
+	"version": "0.6.5",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -103,7 +103,7 @@ class qc_info:
 
 		self.in_block_comment = False
 
-		self.root_filename = ""
+		self.jobName = ""
 		self.root_filedir = ""
 		self.dir_stack = []
 
@@ -172,17 +172,13 @@ def parseQuoteBlockedLine(line,lower=True):
 			break # nothing more this line
 
 		#block comment
-		try:
-			manager = qc
-		except NameError:
-			manager = smd
-
-		if manager.in_block_comment:
+		global smd_manager
+		if smd_manager.in_block_comment:
 			if char == "/" and pchar == "*": # done backwards so we don't have to skip two chars
-				manager.in_block_comment = False
+				smd_manager.in_block_comment = False
 			continue
 		elif char == "/" and nchar == "*":
-			manager.in_block_comment = True
+			smd_manager.in_block_comment = True
 			continue
 
 		# quote block
@@ -402,7 +398,7 @@ def readBones():
 
 			for ob in bpy.context.selected_objects:
 				if ob.type == 'MESH':
-					smd.a = ob.data.find_armature() # armature modifying a selected object?
+					smd.a = ob.find_armature() # armature modifying a selected object?
 					if smd.a:
 						break
 
@@ -414,11 +410,7 @@ def readBones():
 			return
 
 	# Got this far? Then this is a fresh import which needs a new armature.
-	try:
-		arm_name = qc.root_filename
-	except NameError:
-		arm_name = smd.jobName
-	a = smd.a = bpy.data.objects.new(arm_name,bpy.data.armatures.new(arm_name))
+	a = smd.a = bpy.data.objects.new(smd_manager.jobName,bpy.data.armatures.new(smd_manager.jobName))
 	a.x_ray = True
 	a.data.deform_envelope = False # Envelope deformations are not exported, so hide them
 	a.data.drawtype = 'STICK'
@@ -883,12 +875,14 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 		print("\nQC IMPORTER: now working on",filename)
 		qc = qc_info()
 		qc.startTime = time.time()
-		qc.root_filename = filename
+		qc.jobName = filename
 		qc.root_filedir = filedir
 		if newscene:
 			bpy.context.screen.scene = bpy.data.scenes.new(filename) # BLENDER BUG: this currently doesn't update bpy.context.scene
 		else:
 			bpy.context.scene.name = filename
+		global smd_manager
+		smd_manager = qc
 
 	file = open(filepath, 'r')
 	in_bodygroup = False
@@ -930,7 +924,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 			path = qc.cd() + appendExt(line[word_index],ext)
 			if not path in qc.imported_smds or type == 'FLEX':
 				qc.imported_smds.append(path)
-				readSMD(context,path,qc.upAxisMat,connectBones,False,type,multiImport)
+				readSMD(context,path,qc.upAxisMat,connectBones,False,type,multiImport,from_qc=True)
 				qc.numSMDs += 1
 			else:
 				log.warning("Skipped repeated SMD \"%s\"\n" % getFilename(line[word_index]))
@@ -992,7 +986,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 	return qc.numSMDs
 
 # Parses an SMD file
-def readSMD( context, filepath, upAxisMat, connectBones, newscene = False, smd_type = None, multiImport = False):
+def readSMD( context, filepath, upAxisMat, connectBones, newscene = False, smd_type = None, multiImport = False, from_qc = False):
 	# First, overcome Python's awful var redefinition behaviour. The smd object must be
 	# explicitly deleted at the end of the script.
 	if filepath.endswith("dmx"):
@@ -1009,6 +1003,9 @@ def readSMD( context, filepath, upAxisMat, connectBones, newscene = False, smd_t
 	if upAxisMat:
 		smd.upAxisMat = upAxisMat
 	smd.uiTime = 0
+	if not from_qc:
+		global smd_manager
+		smd_manager = smd
 
 	try:
 		smd.file = file = open(filepath, 'r')
