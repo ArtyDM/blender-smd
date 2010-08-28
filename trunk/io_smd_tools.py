@@ -18,8 +18,8 @@
 
 bl_addon_info = {
 	"name": "SMD Tools",
-	"author": "Tom Edwards, EasyPickins, BigLines",
-	"version": "0.6.3",
+	"author": "Tom Edwards, EasyPickins",
+	"version": "0.6.4",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -761,13 +761,21 @@ def readPolys():
 			weights.append( [] ) # Blank array, needed in case there's only one weightlink
 			if len(values) > 10 and values[9] != "0": # got weight links?
 				for i in range(10, 10 + (int(values[9]) * 2), 2): # The range between the first and last weightlinks (each of which is *two* values)
-					vertGroup = smd.m.vertex_groups.get(boneOfID(values[i]).name)
-					if vertGroup:
-						weights[-1].append( [ smd.m.vertex_groups[boneOfID(values[i]).name], float(values[i+1]) ] ) # [Pointer to the vert group, Weight]
+					bone = boneOfID(values[i])
+					if bone:
+						vertGroup = smd.m.vertex_groups.get(bone.name)
+						if vertGroup:
+							weights[-1].append( [ vertGroup, float(values[i+1]) ] )
+						else:
+							badWeights += 1
 					else:
 						badWeights += 1
 			else: # Fall back on the deprecated value at the start of the line
-				weights[-1].append( [smd.m.vertex_groups[boneOfID(values[0]).name], 1.0] )
+				bone = boneOfID(values[0])
+				if bone:
+					weights[-1].append( [smd.m.vertex_groups[bone.name], 1.0] )
+				else:
+					badWeights += 1
 
 			# Three verts? It's time for a new poly
 			if vertexCount == 3:
@@ -1086,7 +1094,8 @@ class SmdImporter(bpy.types.Operator):
 			return {'CANCELLED'}
 
 		log.errorReport("imported",self)
-		bpy.ops.view3d.view_selected()
+		if bpy.context.space_data.type == 'VIEW_3D':
+			bpy.ops.view3d.view_selected()
 		return {'FINISHED'}
 
 	def invoke(self, context, event):
@@ -1335,7 +1344,7 @@ def bakeObj(object):
 		bpy.ops.mesh.quads_convert_to_tris()
 		bpy.ops.object.mode_set(mode='OBJECT')
 
-		if object.parent or object.data.find_armature(): # don't translate standalone meshes
+		if object.parent or object.find_armature(): # don't translate standalone meshes
 			bpy.ops.object.location_apply()
 
 	# Do rot and scale on both meshes and armatures
