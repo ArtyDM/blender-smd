@@ -11,6 +11,7 @@ Importer:
   * Fixed exception if a vertex is found weighted to a nonexistent bone
   * Fixed exception when exporting meshes without parents
   * Fixed exception at the very end of the import process if it wasn't invoked from the 3D View
+  * Fixed new armatures sometimes being named after earlier QC imports
 
 == 0.6.3 - August 28th, 2010 ==
 
