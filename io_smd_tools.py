@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.6.4",
+	"version": "0.6.5",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -921,8 +921,14 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 			qc.upAxisMat = getUpAxisMat(line[1])
 
 		def loadSMD(word_index,ext,type, multiImport=False):
-			path = qc.cd() + appendExt(line[word_index],ext)
-			if not path in qc.imported_smds or type == 'FLEX':
+			if type == 'FLEX':
+				return
+			path = line[word_index]
+			if line[word_index][1] == ":":
+				path = appendExt(path,ext)
+			else:
+				path = qc.cd() + appendExt(path,ext)
+			if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
 				qc.imported_smds.append(path)
 				readSMD(context,path,qc.upAxisMat,connectBones,False,type,multiImport,from_qc=True)
 				qc.numSMDs += 1
@@ -973,11 +979,15 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 
 		# QC inclusion
 		if "$include" in line:
+			if line[1][1] == ":": # absolute path
+				path = appendExt(line[1], "qci")
+			else:
+				path = filedir + appendExt(line[1], "qci") # special case: ignores dir stack
 			try:
-				readQC(context,filedir + appendExt(line[1], "qci"),False, doAnim, connectBones) # special case: ALWAYS relative to current QC dir
+				readQC(context,path,False, doAnim, connectBones)
 			except IOError:
 				if not line[1].endswith("qci"):
-					readQC(context,filedir + appendExt(line[1], "qc"),False, doAnim, connectBones)
+					readQC(context,path[:-3]+"qc",False, doAnim, connectBones)
 
 	file.close()
 
@@ -1051,6 +1061,8 @@ def readSMD( context, filepath, upAxisMat, connectBones, newscene = False, smd_t
 
 	printTimeMessage(smd.startTime,smd.jobName,"import")
 
+axes = (('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis'))
+
 class SmdImporter(bpy.types.Operator):
 	bl_idname = "import.smd"
 	bl_label = "Import SMD/VTA/QC"
@@ -1061,7 +1073,7 @@ class SmdImporter(bpy.types.Operator):
 	#freshScene = BoolProperty(name="Import to new scene", description="Create a new scene for this import", default=False) # nonfunctional due to Blender limitation
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
 	doAnim = BoolProperty(name="Import animations (broken)", description="Use for comedic effect only", default=False)
-	upAxis = EnumProperty(name="Up axis",items=(('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis')),default='Z',description="Which axis represents 'up'. Ignored for QCs.")
+	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up'. Ignored for QCs.")
 	connectionEnum = ( ('NONE','Do not connect (sphere bones)','All bones will be unconnected spheres'),
 	('COMPATIBILITY','Connect retaining compatibility','Only connect bones that will not break compatibility with existing SMDs'),
 	('ALL','Connect all','All bones that can be connected will be, disregarding backwards compatibility') )
@@ -1091,6 +1103,13 @@ class SmdImporter(bpy.types.Operator):
 			return {'CANCELLED'}
 
 		log.errorReport("imported",self)
+		for area in context.screen.areas:
+			if area.type == 'VIEW_3D':
+				space = area.active_space
+				# FIXME: small meshes offset from their origins won't extend things far enough
+				xy = int(max(smd.m.dimensions[0],smd.m.dimensions[1]))
+				space.grid_lines = max(space.grid_lines, xy)
+				space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
 		if bpy.context.space_data.type == 'VIEW_3D':
 			bpy.ops.view3d.view_selected()
 		return {'FINISHED'}
@@ -1194,6 +1213,8 @@ def writeFrames():
 			last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
 	else:
 		last_frame = scene.frame_end
+		
+	output_rMat = ryz90 #* getUpAxisMat('X') # FIXME: account for bone rotation when importing a Y/X-up model
 
 	while scene.frame_current <= last_frame:
 		smd.file.write("time %i\n" % scene.frame_current)
@@ -1206,14 +1227,14 @@ def writeFrames():
 			if smd.jobType == 'ANIM':
 				pbn = smd.a.pose.bones[bone['bone'].name]
 				if pbn.parent:
-					parentRotated = pbn.parent.matrix * ryz90
-					childRotated = pbn.matrix * ryz90
+					parentRotated = pbn.parent.matrix * output_rMat
+					childRotated = pbn.matrix * output_rMat
 					rot = parentRotated.invert() * childRotated
 					pos = rot.translation_part()
 					rot = rot.to_euler()
 				else:
 					pos = pbn.matrix.translation_part()
-					rot = (pbn.matrix * ryz90).to_euler('XYZ')
+					rot = (pbn.matrix * output_rMat).to_euler('XYZ')
 
 			for i in range(3):
 				pos_str += " " + getSmdFloat(pos[i])
@@ -1559,6 +1580,7 @@ class SMD_PT_Armature(bpy.types.Panel):
 
 		l.prop(arm,"smd_subdir",text="Export Subfolder")
 		l.prop(arm,"smd_action_filter",text="Action Filter")
+		#l.prop(arm.data,"smd_bone_up_axis",text="Bone Up Axis")
 
 		self.embed_arm = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -1805,6 +1827,8 @@ def register():
 	type.Object.BoolProperty(attr="smd_export",name="SMD Scene Export",description="Export this object with the scene",default=True)
 	type.Object.StringProperty(attr="smd_subdir",name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	type.Object.StringProperty(attr="smd_action_filter",name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
+	
+	type.Armature.EnumProperty(attr="smd_bone_up_axis",name="SMD Bone Up Axis",items=axes,default='Y',description="Bones will be rotated so that this axis represents Blender's Y")
 
 if __name__ == "__main__":
 	register()
