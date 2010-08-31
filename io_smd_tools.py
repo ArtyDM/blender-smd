@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.6.5",
+	"version": "0.7b",
 	"blender": (2, 5, 3),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -90,6 +90,11 @@ class smd_info:
 		# For recording rotation matrices. Children access their parent's matrix.
 		# USE BONE NAME STRING - MULTIPLE BONE TYPES NEED ACCESS (bone, editbone, posebone)
 		self.rotMats = {}
+		
+		self.location = {}
+
+		# Animation SMD may remove some parent bones (for example SDK buggy anims remove Gun_Parent)
+		self.parentBones = {}
 
 class qc_info:
 	def __init__(self):
@@ -372,6 +377,9 @@ def validateBones():
 		for bone in smd.a.data.bones:
 			if bone['smd_name'] == smd_name:
 				smd.boneIDs[ int(values[0]) ] = bone.name
+				parentID = int(values[2])
+				if parentID != -1:
+					smd.parentBones[bone.name] = smd.boneIDs[parentID] # parent in this SMD
 				#print("found bone #%s %s"%(values[0],smd_name))
 				foundIt = True
 				break
@@ -472,6 +480,7 @@ def readBones():
 
 		if values[2] != "-1":
 			newBone.parent = boneOfID(values[2])
+			smd.parentBones[newBone.name] = newBone.parent.name
 
 		# Need to keep track of which armature bone = which SMD ID
 		smd.boneIDs[ int(values[0]) ] = newBone.name # Quick lookup
@@ -481,7 +490,50 @@ def readBones():
 
 	ops.object.mode_set(mode='OBJECT')
 
-# skeleton block
+def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
+	#bpy.context.scene.update()
+	ops.object.mode_set(mode='POSE', toggle=False) # smd.a -> pose mode
+	
+	cur_frame_values = {}
+	
+	frame = bpy.context.scene.frame_current
+	frame1 = last_frame_values == {}
+	frame1 = True # comment this out to only set keyframes if the pos/rot changed enough
+		
+	for boneName in matAllPose.keys():
+		matRest = matAllRest[boneName]
+		matPose = matAllPose[boneName]
+		pose_bone = smd.a.pose.bones[boneName]
+		if boneName in smd.parentBones:
+			parentName = smd.parentBones[boneName]
+			matRest = matAllRest[parentName].copy().invert() * matRest
+			matPose = matAllPose[parentName].copy().invert() * matPose
+		matDelta = matRest.copy().invert() * matPose
+		
+		# Rotation
+		rot_quat = matDelta.to_quat()
+		if not frame1:
+			dq = last_frame_values[boneName]['rot'].difference(rot_quat)
+		if frame1 or not (dq.w==1.0 and abs(dq.x)<0.000001 and abs(dq.y)<0.000001 and abs(dq.z)<0.000001):
+			pose_bone.rotation_mode = 'QUATERNION'
+			pose_bone.rotation_quaternion = rot_quat
+			pose_bone.keyframe_insert('rotation_quaternion',-1,frame,boneName)
+		
+		# Location
+		loc = matDelta.translation_part()
+		if not frame1:
+			dl = last_frame_values[boneName]['loc'] - loc
+		if frame1 or loc.length > 0.001 or (dl.length>0.00001):
+			pose_bone.location = loc
+			pose_bone.keyframe_insert('location',-1,frame,boneName)
+		
+		cur_frame_values[boneName] = {'rot':rot_quat.copy(), 'loc':loc.copy()}
+	
+	#bpy.context.scene.update()
+	ops.object.mode_set(mode='EDIT', toggle=False) # smd.a -> edit mode
+	
+	return cur_frame_values
+
 def readFrames():
 	# We only care about the pose data in some SMD types
 	if smd.jobType not in [ 'REF', 'ANIM', 'ANIM_SOLO' ]:
@@ -495,94 +547,77 @@ def readFrames():
 	bpy.context.scene.objects.active = smd.a
 	ops.object.mode_set(mode='EDIT')
 
+	# Get a list of bone names sorted so parents come before children.
+	# Only include bones in the current SMD.
+	smd.sortedBoneNames = []
+	for bone in sorted(smd.a.data.bones, key=lambda bone: bone['smd_id']):
+		for key in smd.boneIDs:
+			if smd.boneIDs[key] == bone.name:
+				smd.sortedBoneNames.append(bone.name)
+				break
+
 	if smd.jobType in ['ANIM','ANIM_SOLO']:
 		if not a.animation_data:
 			a.animation_data_create()
 		a.animation_data.action = bpy.data.actions.new(smd.jobName)
+		
+		# Create a new armature we can pose in edit-mode with each frame of animation.
+		# This is only needed until the matrix math gets sorted out.
+		ops.object.mode_set(mode='OBJECT', toggle=False)
+		pose_arm_name = "pose_armature"
+		pose_arm_data = bpy.data.armatures.new(pose_arm_name)
+		smd.poseArm = pose_arm = bpy.data.objects.new(pose_arm_name,pose_arm_data)
+		bpy.context.scene.objects.link(pose_arm)
+		#bpy.context.scene.update()
+		for i in bpy.context.scene.objects: i.select = False #deselect all objects
+		pose_arm.select = True
+		bpy.context.scene.objects.active = pose_arm
+		ops.object.mode_set(mode='EDIT', toggle=False)
+		for bone in smd.a.data.bones:
+			pose_bone = pose_arm.data.edit_bones.new(bone.name)
+			pose_bone.tail = (0,1,0)
+			if bone.parent:
+				pose_bone.parent = pose_arm.data.edit_bones[bone.parent.name]
+		ops.object.mode_set(mode='OBJECT', toggle=False)
+		pose_arm.select = False
+		smd.a.select = True
+		bpy.context.scene.objects.active = smd.a
+		ops.object.mode_set(mode='EDIT')
 
 	if smd.jobType == 'ANIM':
 		smd_bones = getBonesForSmd(smd.a)
-		last_frame_values = {}
+		smd.last_frame_values = {}
+	
+		# Get all the armature-space matrices for the bones at their rest positions
+		smd.matAllRest = {}
+		for bone in smd.a.data.bones:
+			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
-	# Enter the pose-reading loop
-	for line in smd.file:
-		if line == "end\n":
+		# Every bone must be listed for the first frame of an animation.
+		# After the first frame a bone may not be listed in the SMD if it didn't change from a previous frame.
+		# So keep a list of all the bone matrices up to the current frame.
+		smd.matAllPose = {}
+	
+	smd.framesCount = 0
+	while True:
+		sawEnd = readFrameData()
+		applyFrameData()
+		if sawEnd:
 			break
-
-		values = line.split()
-		if values[0] == "time":
-			scn.frame_current += 1
-			if scn.frame_current == 2 and smd.jobType == 'ANIM_SOLO':
-				smd_bones = getBonesForSmd(smd.a)
-			continue # skip to next line
-
-		# The current bone
-		bn = boneOfID(values[0])
-		if not bn:
-			#print("Invalid bone ID %s; skipping..." % values[0])
-			continue
-
-		# Where the bone should be, local to its parent
-		smd_pos = vector([float(values[1]), float(values[2]), float(values[3])])
-		smd_rot = vector([float(values[4]), float(values[5]), float(values[6])])
-
-		# A bone's rotation matrix is used only by its children, a symptom of the transition from Source's 1D bones to Blender's 2D bones.
-		# Also, the floats are inversed to transition them from Source (DirectX; left-handed) to Blender (OpenGL; right-handed)
-		smd.rotMats[bn.name] = rMat(-smd_rot.x, 3,'X') * rMat(-smd_rot.y, 3,'Y') * rMat(-smd_rot.z, 3,'Z')
-
-
-		# *************************************************
-		# Set rest positions. This happens only for the first frame, but not for an animation SMD.
-
-		# rot 0 0 0 means alignment with axes
-		if smd.jobType is 'REF' or (smd.jobType is 'ANIM_SOLO' and scn.frame_current == 1):
-
-			if bn.parent:
-				smd.rotMats[bn.name] *= smd.rotMats[bn.parent.name] # make rotations cumulative
-
-				bn.head = bn.parent.head + (smd_pos * smd.rotMats[bn.parent.name])
-				bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[bn.name])
-				bn.align_roll(vector([0,1,0]) * smd.rotMats[bn.name])
-			else:
-				bn.head = smd_pos # LOCATION WITH NO PARENT
-				bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[bn.name])
-				bn.align_roll(vector([0,1,0]) * smd.rotMats[bn.name])
-
-		# *****************************************
-		# Set pose positions. This happens for every frame, but not for a reference pose.
-		elif smd.jobType in [ 'ANIM', 'ANIM_SOLO' ]:
-			pbn = smd.a.pose.bones[ boneOfID(values[0]).name ]
-			if not pbn:
-				log.warning("anim has bone #{} not in ref mesh".format(values[0]))
-
-			pbn.rotation_mode = 'XYZ'
-			for record in smd_bones:
-				if record['bone']['smd_id'] == int(values[0]):
-					restBone = record
-					break
-
-			pbn.rotation_euler = euler( vector(restBone['rot'])  - (smd_rot * ryz90) )
-			pbn.location = restBone['pos'] - (smd_pos * ryz90)
-
-			try:
-				if last_frame_values[pbn]['rot'] != pbn.rotation_euler:
-					pbn.keyframe_insert('location')
-				if last_frame_values[pbn]['pos'] != pbn.location:
-					pbn.keyframe_insert('rotation_euler')
-			except:
-				pbn.keyframe_insert('location')
-				pbn.keyframe_insert('rotation_euler')
-			
-			last_frame_values[pbn] = { 'rot':pbn.rotation_euler, 'pos':pbn.location }
 
 	# All frames read
 
 	if smd.jobType in ['ANIM','ANIM_SOLO']:
 		scn.frame_end = scn.frame_current
+		
+		# Remove the pose armature
+		bpy.context.scene.objects.unlink(pose_arm)
+		bpy.data.objects.remove(pose_arm)
+		#bpy.data.armatures.remove(pose_arm.data)
 
 	# TODO: clean curves automagically (ops.graph.clean)
 	
-	if not smd.connectBones == 'NONE':
+	if False and not smd.connectBones == 'NONE':
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
 			for child in bone.children:
@@ -608,7 +643,7 @@ def readFrames():
 				return False
 		return True
 
-	if smd.jobType in ['REF','ANIM_SOLO']:
+	if False and smd.jobType in ['REF','ANIM_SOLO']:
 		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
@@ -644,6 +679,119 @@ def readFrames():
 
 	print("- Imported %i frames of animation" % scn.frame_current)
 	bpy.context.scene.set_frame(startFrame)
+
+def readFrameData():
+	sawEnd = False
+	for line in smd.file:
+
+		if line == "end\n":
+			sawEnd = True
+			break
+
+		values = line.split()
+
+		if values[0] == "time":
+			smd.framesCount += 1 # Foolishness because I don't want to leave at the first 'time' line, we haven't read a frame yet
+			if smd.framesCount == 1:
+				continue
+			bpy.context.scene.frame_current += 1
+			break
+
+		# Lookup the EditBone for this SMD's bone ID.  Can't call boneOfID() because
+		# bone['smd_id'] may be different than the current SMD's ID for the same bone.
+		smdID = int(values[0])
+		if not smdID in smd.boneIDs:
+			continue
+		boneName = smd.boneIDs[smdID]
+		if not boneName in smd.a.data.edit_bones:
+			continue
+		bone = smd.a.data.edit_bones[boneName]
+
+		# Where the bone should be, local to its parent
+		smd_pos = vector([float(values[1]), float(values[2]), float(values[3])])
+		smd_rot = vector([float(values[4]), float(values[5]), float(values[6])])
+		
+		smd.location[boneName] = smd_pos
+
+		# A bone's rotation matrix is used only by its children, a symptom of the transition from Source's 1D bones to Blender's 2D bones.
+		# Also, the floats are inversed to transition them from Source (DirectX; left-handed) to Blender (OpenGL; right-handed)
+		smd.rotMats[boneName] = rMat(-smd_rot.x, 3,'X') * rMat(-smd_rot.y, 3,'Y') * rMat(-smd_rot.z, 3,'Z')
+		
+		if boneName in smd.parentBones:
+			smd.rotMats[boneName] *= smd.rotMats[smd.parentBones[boneName]] # make rotations cumulative
+
+	return sawEnd
+
+def applyFrameData():
+
+	if smd.jobType in [ 'ANIM', 'ANIM_SOLO' ]:
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
+		#pose_arm = bpy.context.scene.objects[pose_arm_name]
+		bpy.context.scene.objects.active = smd.poseArm
+		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
+
+	for boneName in smd.sortedBoneNames:
+
+		smd_pos = smd.location[boneName]
+
+		# *************************************************
+		# Set rest positions. This happens only for the first frame, but not for an animation SMD.
+
+		# rot 0 0 0 means alignment with axes
+		if smd.jobType is 'REF' or (smd.jobType is 'ANIM_SOLO' and scn.frame_current == 1):
+		
+			bn = smd.a.data.edit_bones[boneName]
+
+			if bn.parent:
+				bn.head = bn.parent.head + (smd_pos * smd.rotMats[bn.parent.name])
+				bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[boneName])
+				bn.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+
+				# $upaxis Y
+				if False:
+					bn.tail = bn.head + (vector([0,-1,0]) * smd.rotMats[boneName]) # maya bones point down X
+					bn.align_roll(vector([0,0,1]) * smd.rotMats[boneName])
+			else:
+				bn.head = smd_pos # LOCATION WITH NO PARENT
+				bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[boneName])
+				bn.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+				
+				# $upaxis Y
+				if False:
+					upAxisMat = rMat(-math.pi/2,3,'X')
+					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
+					smd.rotMats[boneName] = upAxisMat * smd.rotMats[boneName]
+					bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[boneName])
+					bn.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+
+		# *****************************************
+		# Set pose positions. This happens for every frame, but not for a reference pose.
+		elif smd.jobType in [ 'ANIM', 'ANIM_SOLO' ]:
+					
+			edit_bone = smd.poseArm.data.edit_bones[boneName]
+			
+			if boneName in smd.parentBones:
+				parentName = smd.parentBones[boneName]
+				edit_bone.head = edit_bone.parent.head + (smd_pos * smd.rotMats[parentName])
+				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * smd.rotMats[boneName])
+				edit_bone.align_roll(vector([0,1,0]) * smd.rotMats[boneName])			
+			else: 
+				edit_bone.head = smd_pos # LOCATION WITH NO PARENT
+				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * smd.rotMats[boneName])
+				edit_bone.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+				
+			smd.matAllPose[boneName] = edit_bone.matrix.copy()
+	
+	if smd.jobType in ['ANIM','ANIM_SOLO']:
+
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
+		bpy.context.scene.objects.active = smd.a
+		bpy.ops.object.mode_set(mode='EDIT') # smd.a -> edit mode
+
+		if bpy.context.scene.frame_current > 0:
+			# Apply the frame we just finished reading to the pose bones
+			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose, smd.last_frame_values )
+			# Now matAllPose will get updated for some/all bones this upcoming frame
 
 # triangles block
 def readPolys():
@@ -815,7 +963,7 @@ def readPolys():
 def readShapes():
 	if smd.jobType is not 'FLEX':
 		return
-
+	
 	if not smd.m:
 		try:
 			smd.m = qc.ref_mesh
@@ -921,8 +1069,6 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 			qc.upAxisMat = getUpAxisMat(line[1])
 
 		def loadSMD(word_index,ext,type, multiImport=False):
-			if type == 'FLEX':
-				return
 			path = line[word_index]
 			if line[word_index][1] == ":":
 				path = appendExt(path,ext)
@@ -955,10 +1101,10 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 
 		# skeletal animations
 		if doAnim and ("$sequence" in line or "$animation" in line):
-			if not "{" in line: # an advanced $sequence using an existing $animation
+			if not "{" in line and len(line) > 3: # an advanced $sequence using an existing $animation, or anim redefinition
 				loadSMD(2,"smd",'ANIM')
 			continue
-
+		
 		# flex animation
 		if "flexfile" in line:
 			loadSMD(1,"vta",'FLEX')
@@ -1103,13 +1249,14 @@ class SmdImporter(bpy.types.Operator):
 			return {'CANCELLED'}
 
 		log.errorReport("imported",self)
-		for area in context.screen.areas:
-			if area.type == 'VIEW_3D':
-				space = area.active_space
-				# FIXME: small meshes offset from their origins won't extend things far enough
-				xy = int(max(smd.m.dimensions[0],smd.m.dimensions[1]))
-				space.grid_lines = max(space.grid_lines, xy)
-				space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
+		if smd.m:
+			for area in context.screen.areas:
+				if area.type == 'VIEW_3D':
+					space = area.active_space
+					# FIXME: small meshes offset from their origins won't extend things far enough
+					xy = int(max(smd.m.dimensions[0],smd.m.dimensions[1]))
+					space.grid_lines = max(space.grid_lines, xy)
+					space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
 		if bpy.context.space_data.type == 'VIEW_3D':
 			bpy.ops.view3d.view_selected()
 		return {'FINISHED'}
@@ -1206,6 +1353,13 @@ def writeFrames():
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
 	
+	# PoseBone.matrix.translation_part() == PoseBone.head (armature-space?)
+	# PoseBone.matrix_local (bone-space, relative to rest position?)
+	# ---> unconnected barney.LeftLeg has PoseBone.location=(0,0,0) (rotate only)
+	# ---> barney.Bip01 has PoseBone.location=(-3.7,1.43,0) (translation only)
+	# PoseBone.matrix_local.translation_part() == PoseBone.location
+	# PoseBone.rotation_quaternion is ???
+	
 	if smd.jobType == 'ANIM':
 		last_frame = 0
 		for fcurve in smd.a.animation_data.action.fcurves:
@@ -1213,8 +1367,6 @@ def writeFrames():
 			last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
 	else:
 		last_frame = scene.frame_end
-		
-	output_rMat = ryz90 #* getUpAxisMat('X') # FIXME: account for bone rotation when importing a Y/X-up model
 
 	while scene.frame_current <= last_frame:
 		smd.file.write("time %i\n" % scene.frame_current)
@@ -1227,14 +1379,14 @@ def writeFrames():
 			if smd.jobType == 'ANIM':
 				pbn = smd.a.pose.bones[bone['bone'].name]
 				if pbn.parent:
-					parentRotated = pbn.parent.matrix * output_rMat
-					childRotated = pbn.matrix * output_rMat
+					parentRotated = pbn.parent.matrix * ryz90
+					childRotated = pbn.matrix * ryz90
 					rot = parentRotated.invert() * childRotated
 					pos = rot.translation_part()
 					rot = rot.to_euler()
 				else:
 					pos = pbn.matrix.translation_part()
-					rot = (pbn.matrix * output_rMat).to_euler('XYZ')
+					rot = (pbn.matrix * ryz90).to_euler('XYZ')
 
 			for i in range(3):
 				pos_str += " " + getSmdFloat(pos[i])
