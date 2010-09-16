@@ -3,12 +3,12 @@
 
 General:
 
-  * Upgraded to Blender 2.54 beta. Can no longer be used with 2.53 beta.
+  * Upgraded to Blender 2.54 beta. The script can no longer be used with 2.53 beta.
 
 
 Importer:
 
-  * Animation import (EasyPickins); but not making a release until the number of keyframes created is reduced
+  * Animation import (EasyPickins)
   * Fixed VTA import regression
   * Made bone length calculation more robust
   * Do not connect bones unless model is Z-up (temporary fix, I hope)
