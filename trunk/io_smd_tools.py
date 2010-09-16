@@ -75,6 +75,7 @@ class smd_info:
 		self.multiImport = False
 		self.in_block_comment = False
 		self.connectBones = False
+		self.upAxis = 'Z'
 		self.upAxisMat = 1 # vec * 1 == vec
 		self.cleanAnim = False
 
@@ -104,6 +105,7 @@ class qc_info:
 		self.vars = {}
 		self.ref_mesh = None # for VTA import
 		self.armature = None
+		self.upAxis = 'Z'
 		self.upAxisMat = None
 		self.numSMDs = 0
 		self.cleanAnim = False
@@ -271,7 +273,7 @@ def getUpAxisMat(axis):
 	if axis.upper() == 'Y':
 		return rMat(pi/2,4,'X')
 	if axis.upper() == 'Z':
-		return rMat(0,4,'Z')
+		return 1 # vec * 1 == vec
 	else:
 		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
 
@@ -424,6 +426,7 @@ def readBones():
 	a.show_x_ray = True
 	a.data.use_deform_envelopes = False # Envelope deformations are not exported, so hide them
 	a.data.draw_type = 'STICK'
+	a.data.smd_bone_up_axis = smd.upAxis
 	bpy.context.scene.objects.link(a)
 	for i in bpy.context.scene.objects: i.select = False #deselect all objects
 	a.select = True
@@ -624,7 +627,7 @@ def readFrames():
 			bpy.ops.graph.clean()
 			bpy.context.area.type = current_type
 	
-	if False and not smd.connectBones == 'NONE':
+	if smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
 			for child in bone.children:
@@ -632,7 +635,7 @@ def readFrames():
 				#print('%s head %s'%(child.name,vectorString(head)))
 				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and head.y > 0.1): # child head is on parent's Y-axis
 					bone.tail = child.head
-					child.connected = True
+					child.use_connect = True
 					# connect to the first valid bone only, otherwise bones already attached will be flung about the place
 					# not perfect by any means, but it leads to the right choice in most situations
 					# can't just check whether there is only one child, as there are often additional rig helper bones floating around
@@ -1073,6 +1076,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 
 		# up axis
 		if "$upaxis" in line:
+			qc.upAxis = line[1].upper()
 			qc.upAxisMat = getUpAxisMat(line[1])
 			continue
 
@@ -1084,7 +1088,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 				path = qc.cd() + appendExt(path,ext)
 			if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
 				qc.imported_smds.append(path)
-				readSMD(context,path,qc.upAxisMat,connectBones,cleanAnim, False,type,multiImport,from_qc=True)
+				readSMD(context,path,qc.upAxis,connectBones,cleanAnim, False,type,multiImport,from_qc=True)
 				qc.numSMDs += 1
 			else:
 				log.warning("Skipped repeated SMD \"%s\"\n" % getFilename(line[word_index]))
@@ -1150,7 +1154,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 	return qc.numSMDs
 
 # Parses an SMD file
-def readSMD( context, filepath, upAxisMat, connectBones, cleanAnim, newscene = False, smd_type = None, multiImport = False, from_qc = False):
+def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = False, smd_type = None, multiImport = False, from_qc = False):
 	# First, overcome Python's awful var redefinition behaviour. The smd object must be
 	# explicitly deleted at the end of the script.
 	if filepath.endswith("dmx"):
@@ -1165,8 +1169,9 @@ def readSMD( context, filepath, upAxisMat, connectBones, cleanAnim, newscene = F
 	smd.startTime = time.time()
 	smd.connectBones = connectBones
 	smd.cleanAnim = cleanAnim
-	if upAxisMat:
-		smd.upAxisMat = upAxisMat
+	if upAxis:
+		smd.upAxis = upAxis
+		smd.upAxisMat = getUpAxisMat(upAxis)
 	smd.uiTime = 0
 	if not from_qc:
 		global smd_manager
@@ -1205,11 +1210,11 @@ def readSMD( context, filepath, upAxisMat, connectBones, cleanAnim, newscene = F
 	bpy.ops.object.select_all(action='DESELECT')
 	smd.a.select = True
 
-	if upAxisMat and upAxisMat != 1:
+	if smd.upAxisMat and smd.upAxisMat != 1:
 		if smd.jobType in ['REF','ANIM_SOLO']:
-			smd.a.rotation_euler = upAxisMat.to_euler()
+			smd.a.rotation_euler = smd.upAxisMat.to_euler()
 		else:
-			smd.m.rotation_euler = upAxisMat.to_euler()
+			smd.m.rotation_euler = smd.upAxisMat.to_euler()
 			smd.m.select = True
 		bpy.context.scene.update()
 		bpy.ops.object.rotation_apply()
@@ -1238,18 +1243,16 @@ class SmdImporter(bpy.types.Operator):
 		global log
 		log = logger()
 
-		upAxisMat = getUpAxisMat(self.properties.upAxis)
-
 		self.properties.filepath = self.properties.filepath.lower()
 		cleanAnim = True # UI option can't be hidden due to Blender bug
 		if self.properties.filepath.endswith('.qc') | self.properties.filepath.endswith('.qci'):
 			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, cleanAnim, outer_qc=True)
 			bpy.context.scene.objects.active = qc.armature
 		elif self.properties.filepath.endswith('.smd'):
-			readSMD(context, self.properties.filepath, upAxisMat, self.properties.connectBones, cleanAnim, multiImport=self.properties.multiImport)
+			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, cleanAnim, multiImport=self.properties.multiImport)
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith ('.vta'):
-			readSMD(context, self.properties.filepath, False, upAxisMat, smd_type='FLEX')
+			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type='FLEX')
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith('.dmx'):
 			return {'CANCELLED'}
@@ -1382,20 +1385,17 @@ def writeFrames():
 
 		for bone in smd_bones:
 			pos_str = rot_str = ""
-			pos = bone['pos'].copy()
-			rot = vector(bone['rot'].copy())
-
-			if smd.jobType == 'ANIM':
-				pbn = smd.a.pose.bones[bone['bone'].name]
-				if pbn.parent:
-					parentRotated = pbn.parent.matrix
-					childRotated = pbn.matrix
-					rot = parentRotated.invert() * childRotated
-					pos = rot.translation_part()
-					rot = rot.to_euler()
-				else:
-					pos = pbn.matrix.translation_part()
-					rot = pbn.matrix.to_euler('XYZ')
+			pbn = smd.a.pose.bones[bone['bone'].name]
+			
+			if pbn.parent:
+				parentRotated = pbn.parent.matrix * ryz90
+				childRotated = pbn.matrix * ryz90
+				rot = parentRotated.invert() * childRotated
+				pos = rot.translation_part()
+				rot = rot.to_euler()
+			else:
+				pos = pbn.matrix.translation_part()
+				rot = (pbn.matrix * ryz90).to_euler('XYZ')
 
 			for i in range(3):
 				pos_str += " " + getSmdFloat(pos[i])
@@ -1587,7 +1587,6 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		if smd.jobType == 'FLEX':
 			writeBones(quiet=True)
 		else:
-			print(smd.a.data.smd_bone_up_axis)
 			if smd.a.data.smd_bone_up_axis != 'Z':
 				smd.a.rotation_euler = getUpAxisMat(smd.a.data.smd_bone_up_axis).invert().to_euler()
 				for object in bpy.context.scene.objects:
