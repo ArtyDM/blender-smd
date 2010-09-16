@@ -1,4 +1,25 @@
 #labels Featured
+== 0.7 - August 30th, 2010 ==
+
+General:
+
+- Upgraded to Blender 2.54 beta. Can no longer be used with 2.53 beta.
+
+
+Importer:
+
+- Animation import (EasyPickins); but not making a release until the number of
+keyframes created is reduced
+- Fixed VTA import regression
+- Made bone length calculation more robust
+- Do not connect bones unless model is Z-up (temporary fix, I hope)
+- Do not generate a warning on $animation name redefinition
+
+Exporter:
+
+- Mostly fixed animation export when imported bones are not Z-up. Configure
+target bone up axis from the Armature Properties panel.
+
 == 0.6.5 - August 30th, 2010 ==
 
 Importer:
