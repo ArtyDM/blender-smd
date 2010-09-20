@@ -84,10 +84,16 @@ class smd_info:
 		# Checks for dupe bone names due to truncation
 		self.dupeCount = {}
 		# boneIDs contains the ID-to-name mapping of *this* SMD's bones.
-		# - Key: ID (as string due to potential storage in registry)
+		# - Key: integer ID
 		# - Value: bone name (storing object itself is not safe)
-		# Use boneOfID(id) to easily look up a value from here
 		self.boneIDs = {}
+		
+		# Reverse of the above.
+		# - Key: Bone name
+		# - Value: integer ID
+		# NOTE: Not setting bone['smd_id'] anymore because I ran into problems with duplicating a bone -> 2 bones with same ID!
+		# NOTE: Also if bones get deleted (useless rigging bones in Antlion Guard for example) there will be gaps in the IDs.
+		self.boneNameToID = {}
 
 		# For recording rotation matrices. Children access their parent's matrix.
 		# USE BONE NAME STRING - MULTIPLE BONE TYPES NEED ACCESS (bone, editbone, posebone)
@@ -220,6 +226,7 @@ def appendExt(path,ext):
 		path += "." + ext
 	return path
 
+'''
 def boneOfID(id):
 	if bpy.context.mode.startswith("EDIT"):
 		boneList = smd.a.data.edit_bones
@@ -233,6 +240,7 @@ def boneOfID(id):
 
 	#log.warning("Could not find bone of ID",id) # FIXME: slow if SMD is broken
 	return None
+'''
 
 def printTimeMessage(start_time,name,job,type="SMD"):
 	elapsedtime = int(time.time() - start_time)
@@ -277,6 +285,28 @@ def getUpAxisMat(axis):
 	else:
 		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
 
+# Get a list of bone names sorted so parents come before children.
+# Also assign a unique SMD ID to every bone.
+# Changes smd.boneIDs, smd.boneNameToID, and smd.sortedBones
+# NOTE: This seems to return the same order that bones are read in.
+def sortBonesForExport():
+
+	def addBonesToSortedList(smd_id,bone,boneList):
+		boneList.append(bone.name)
+		smd.boneIDs[smd_id] = bone.name
+		smd.boneNameToID[bone.name] = smd_id
+		smd_id += 1
+		for child in bone.children:
+			smd_id = addBonesToSortedList(smd_id,child,boneList)
+		return smd_id
+
+	smd_id = 0
+	smd.sortedBones = []
+	for bone in smd.a.data.bones:
+		if not bone.parent:
+			smd_id = addBonesToSortedList(smd_id,bone,smd.sortedBones)
+
+'''
 def getBonesForSmd(armature):
 	sortedBones = sorted(armature.data.bones, key=lambda bone: bone['smd_id'])
 	matrixArmature = armature.matrix_world.copy()
@@ -299,6 +329,7 @@ def getBonesForSmd(armature):
 		boneList.append({ 'bone':bone, 'pos':bone_pos, 'rot':bone_rot })
 
 	return boneList
+'''
 
 def getRotAsEuler(thing):
 	out = vector()
@@ -379,8 +410,10 @@ def validateBones():
 
 		foundIt = False
 		for bone in smd.a.data.bones:
-			if bone['smd_name'] == smd_name:
-				smd.boneIDs[ int(values[0]) ] = bone.name
+			if bone.get('smd_name') == smd_name:
+				smd_id = int(values[0])
+				smd.boneIDs[smd_id] = bone.name
+				smd.boneNameToID[bone.name] = smd_id
 				parentID = int(values[2])
 				if parentID != -1:
 					smd.parentBones[bone.name] = smd.boneIDs[parentID] # parent in this SMD
@@ -483,26 +516,28 @@ def readBones():
 				except NameError:
 					smd.dupeCount[newBone.name] = 1 # Initialise the new name with 1 so that numbers increase sequentially
 
-		if values[2] != "-1":
-			newBone.parent = boneOfID(values[2])
+		parentID = int(values[2])
+		if parentID != -1:
+			newBone.parent = a.data.edit_bones[smd.boneIDs[parentID]]
 			smd.parentBones[newBone.name] = newBone.parent.name
 
 		# Need to keep track of which armature bone = which SMD ID
-		smd.boneIDs[ int(values[0]) ] = newBone.name # Quick lookup
-		newBone['smd_id'] = int(values[0]) # Persistent, and stored on each bone so handles deletion
+		smd_id = int(values[0])
+		smd.boneIDs[smd_id] = newBone.name # Quick lookup
+		smd.boneNameToID[newBone.name] = smd_id
 
 	# All bones parsed!
 
 	ops.object.mode_set(mode='OBJECT')
 
 def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
-	#bpy.context.scene.update()
 	ops.object.mode_set(mode='POSE', toggle=False) # smd.a -> pose mode
 	
 	cur_frame_values = {}
 	
 	frame = bpy.context.scene.frame_current
-	first_frame = last_frame_values == {}
+	frame1 = last_frame_values == {}
+	frame1 = True # comment this out to only set keyframes if the pos/rot changed enough
 		
 	for boneName in matAllPose.keys():
 		matRest = matAllRest[boneName]
@@ -516,24 +551,23 @@ def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
 		
 		# Rotation
 		rot_quat = matDelta.to_quat()
-		if not first_frame:
+		if not frame1:
 			dq = last_frame_values[boneName]['rot'].difference(rot_quat)
-		if first_frame or not (abs(dq.x)<0.000001 and abs(dq.y)<0.000001 and abs(dq.z)<0.000001):
+		if frame1 or not (dq.w==1.0 and abs(dq.x)<0.000001 and abs(dq.y)<0.000001 and abs(dq.z)<0.000001):
 			pose_bone.rotation_mode = 'QUATERNION'
 			pose_bone.rotation_quaternion = rot_quat
 			pose_bone.keyframe_insert('rotation_quaternion',-1,frame,boneName)
 		
 		# Location
 		loc = matDelta.translation_part()
-		if not first_frame:
+		if not frame1:
 			dl = last_frame_values[boneName]['loc'] - loc
-		if first_frame or dl.length>0.00001:
+		if frame1 or loc.length > 0.001 or (dl.length>0.00001):
 			pose_bone.location = loc
 			pose_bone.keyframe_insert('location',-1,frame,boneName)
 		
 		cur_frame_values[boneName] = {'rot':rot_quat.copy(), 'loc':loc.copy()}
 	
-	#bpy.context.scene.update()
 	ops.object.mode_set(mode='EDIT', toggle=False) # smd.a -> edit mode
 	
 	return cur_frame_values
@@ -548,13 +582,21 @@ def readFrames():
 	scn = bpy.context.scene
 	startFrame = bpy.context.scene.frame_current
 	scn.frame_current = 0
+	armature_was_hidden = smd.a.hide
+	smd.a.hide = False # ensure an object is visible or mode_set() can't be called on it
 	bpy.context.scene.objects.active = smd.a
 	ops.object.mode_set(mode='EDIT')
 
 	# Get a list of bone names sorted so parents come before children.
 	# Only include bones in the current SMD.
 	smd.sortedBoneNames = []
-	for bone in sorted(smd.a.data.bones, key=lambda bone: bone['smd_id']):
+	sortedBones = []
+	for bone in smd.a.data.bones:
+		if not bone.parent:
+			sortedBones.append(bone)
+			for child in bone.children_recursive: # depth-first
+				sortedBones.append(child)
+	for bone in sortedBones:
 		for key in smd.boneIDs:
 			if smd.boneIDs[key] == bone.name:
 				smd.sortedBoneNames.append(bone.name)
@@ -589,7 +631,6 @@ def readFrames():
 		ops.object.mode_set(mode='EDIT')
 
 	if smd.jobType == 'ANIM':
-		smd_bones = getBonesForSmd(smd.a)
 		smd.last_frame_values = {}
 	
 		# Get all the armature-space matrices for the bones at their rest positions
@@ -602,10 +643,11 @@ def readFrames():
 		# So keep a list of all the bone matrices up to the current frame.
 		smd.matAllPose = {}
 	
-	smd.framesCount = 0
+	smd.sawFirstTime = False
 	while True:
 		sawEnd = readFrameData()
 		applyFrameData()
+		bpy.context.scene.frame_current += 1
 		if sawEnd:
 			break
 
@@ -670,7 +712,7 @@ def readFrames():
 
 		# Generate custom bone shape; a simple sphere
 		# TODO: add axis indicators
-		bone_vis = bpy.data.meshes.get("smd_bone_vis")
+		bone_vis = bpy.data.objects.get("smd_bone_vis")
 		if not bone_vis:
 			bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
 			bone_vis = bpy.context.active_object
@@ -688,6 +730,9 @@ def readFrames():
 			if boneShouldBePoint(bone):
 				bone.tail = bone.head + (bone.tail - bone.head).normalize() * length # Resize loose bone tails based on armature size
 		ops.object.mode_set(mode='OBJECT')
+	
+	if armature_was_hidden:
+		smd.a.hide = True
 
 	print("- Imported %i frames of animation" % scn.frame_current)
 	bpy.context.scene.frame_set(startFrame)
@@ -701,14 +746,12 @@ def readFrameData():
 		values = line.split()
 
 		if values[0] == "time":
-			smd.framesCount += 1 # Foolishness because I don't want to leave at the first 'time' line, we haven't read a frame yet
-			if smd.framesCount == 1:
+			if not smd.sawFirstTime: # Foolishness because I don't want to leave at the first 'time' line, we haven't read a frame yet
+				smd.sawFirstTime = True
 				continue
-			bpy.context.scene.frame_current += 1
 			break
 
-		# Lookup the EditBone for this SMD's bone ID.  Can't call boneOfID() because
-		# bone['smd_id'] may be different than the current SMD's ID for the same bone.
+		# Lookup the EditBone for this SMD's bone ID.
 		smdID = int(values[0])
 		if not smdID in smd.boneIDs:
 			continue
@@ -730,13 +773,37 @@ def readFrameData():
 		if boneName in smd.parentBones:
 			smd.rotMats[boneName] *= smd.rotMats[smd.parentBones[boneName]] # make rotations cumulative
 
+def copyArmaturePose(arm1,arm2):
+	for bone1 in arm1.data.bones:
+		bone2 = arm2.data.edit_bones[bone1.name]
+		bone2.head = bone1.head_local
+		bone2.tail = bone1.tail_local
+		bone2.align_roll(vector([0,1,0]) * smd.rotMats[bone1.name])
+
 def applyFrameData():
 
-	if smd.jobType in [ 'ANIM', 'ANIM_SOLO' ]:
+	# The first frame of an animation-without-model is the rest pose, frames 2+ are animation frames.
+	anim_solo_frame1 = smd.jobType is 'ANIM_SOLO' and bpy.context.scene.frame_current == 0
+
+	if smd.jobType in ['ANIM','ANIM_SOLO'] and not anim_solo_frame1:
 		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
-		#pose_arm = bpy.context.scene.objects[pose_arm_name]
 		bpy.context.scene.objects.active = smd.poseArm
 		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
+
+	# If we finished reading the first frame of an animation-without-model then rewind the frame counter, set the pose for the
+	# first frame, then come back to the second frame.  The first frame then matches the rest pose and the animation has the
+	# same number of frames as the SMD.
+	if smd.jobType is 'ANIM_SOLO' and bpy.context.scene.frame_current == 1:
+		smd.matAllRest = {}
+		smd.matAllPose = {}
+		for bone in smd.a.data.bones:
+			smd.matAllRest[bone.name] = bone.matrix_local.copy()
+			smd.matAllPose[bone.name] = bone.matrix_local.copy()
+		copyArmaturePose(smd.a,smd.poseArm)
+		smd.last_frame_values = {}
+		bpy.context.scene.frame_current = 0
+		smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose, smd.last_frame_values )
+		bpy.context.scene.frame_current = 1
 
 	for boneName in smd.sortedBoneNames:
 
@@ -746,7 +813,7 @@ def applyFrameData():
 		# Set rest positions. This happens only for the first frame, but not for an animation SMD.
 
 		# rot 0 0 0 means alignment with axes
-		if smd.jobType is 'REF' or (smd.jobType is 'ANIM_SOLO' and scn.frame_current == 1):
+		if smd.jobType is 'REF' or anim_solo_frame1:
 		
 			bn = smd.a.data.edit_bones[boneName]
 
@@ -790,13 +857,13 @@ def applyFrameData():
 				
 			smd.matAllPose[boneName] = edit_bone.matrix.copy()
 	
-	if smd.jobType in ['ANIM','ANIM_SOLO']:
+	if smd.jobType in ['ANIM','ANIM_SOLO'] and not anim_solo_frame1:
 
 		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
 		bpy.context.scene.objects.active = smd.a
 		bpy.ops.object.mode_set(mode='EDIT') # smd.a -> edit mode
 
-		if bpy.context.scene.frame_current > 0:
+		if True or bpy.context.scene.frame_current > 0:
 			# Apply the frame we just finished reading to the pose bones
 			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose, smd.last_frame_values )
 			# Now matAllPose will get updated for some/all bones this upcoming frame
@@ -909,9 +976,10 @@ def readPolys():
 			weights.append( [] ) # Blank array, needed in case there's only one weightlink
 			if len(values) > 10 and values[9] != "0": # got weight links?
 				for i in range(10, 10 + (int(values[9]) * 2), 2): # The range between the first and last weightlinks (each of which is *two* values)
-					bone = boneOfID(values[i])
-					if bone:
-						vertGroup = smd.m.vertex_groups.get(bone.name)
+					boneID = int(values[i])
+					if boneID in smd.boneIDs:
+						boneName = smd.boneIDs[boneID]
+						vertGroup = smd.m.vertex_groups.get(boneName)
 						if vertGroup:
 							weights[-1].append( [ vertGroup, float(values[i+1]) ] )
 						else:
@@ -919,9 +987,10 @@ def readPolys():
 					else:
 						badWeights += 1
 			else: # Fall back on the deprecated value at the start of the line
-				bone = boneOfID(values[0])
-				if bone:
-					weights[-1].append( [smd.m.vertex_groups[bone.name], 1.0] )
+				boneID = int(values[0])
+				if boneID in smd.boneIDs:
+					boneName = smd.boneIDs[boneID]
+					weights[-1].append( [smd.m.vertex_groups[boneName], 1.0] )
 				else:
 					badWeights += 1
 
@@ -1292,35 +1361,19 @@ def writeBones(quiet=False):
 		if not quiet: print("- No skeleton to export")
 		return
 
-	top_id = -1
-	new_ids_needed = False
-
-	# See if any bones need IDs; record highest ID
-	for bone in smd.a.data.bones:
-		try:
-			top_id = max(top_id,int(bone['smd_id']))
-		except KeyError:
-			new_ids_needed = True
-
-	# Assign new IDs if needed
-	if new_ids_needed:
-		for bone in smd.a.data.bones:
-			if not bone.get('smd_id'):
-				top_id += 1
-				bone['smd_id'] = top_id # re-using lower IDs risks collision
-
 	# Write to file
-	for bone in sorted(smd.a.data.bones, key=lambda bone: bone['smd_id']):
-		line = str(bone['smd_id']) + " "
+	for boneName in smd.sortedBones:
+		line = str(smd.boneNameToID[boneName]) + " "
 
+		bone = smd.a.data.bones[boneName]
 		bone_name = bone.get('smd_name')
 		if not bone_name:
 			bone_name = bone.name
 		line += "\"" + bone_name + "\" "
 
-		try:
-			line += str(bone.parent['smd_id'])
-		except TypeError:
+		if bone.parent:
+			line += str(smd.boneNameToID[bone.parent.name])
+		else:
 			line += "-1"
 
 		smd.file.write(line + "\n")
@@ -1331,19 +1384,61 @@ def writeBones(quiet=False):
 		log.warning(smd,"Source only supports 128 bones!")
 
 # Debug
-def compareVector(v1,v2):
-	precision = 4
-	if round(v1.x,precision) != round(v2.x,precision):
-		return 1
-	if round(v1.y,precision) != round(v2.y,precision):
-		return 1
-	if round(v1.z,precision) != round(v2.z,precision):
+'''
+def compareVectorElem(e1,e2):
+	precision = 2
+	if e1 < 0.0 and e1 > -0.001:
+		e1 = 0.0
+	if e2 < 0.0 and e2 > -0.001:
+		e2 = 0.0
+	if round(e1,precision) != round(e2,precision):
 		return 1
 	return 0
-
+'''
+def compareVectorElem(e1,e2):
+	#e1 += 0.0005
+	#e2 += 0.0005
+	s1 = ('%0.06f'%e1)[:-4]
+	s2 = ('%0.06f'%e2)[:-4]
+	if s1 == '-0.00': s1 = '0.00'
+	if s2 == '-0.00': s2 = '0.00'
+	if s1 != s2:
+		return 1
+	return 0
+def compareVector(v1,v2):
+	if compareVectorElem(v1.x,v2.x):
+		return 1
+	if compareVectorElem(v1.y,v2.y):
+		return 1
+	if compareVectorElem(v1.z,v2.z):
+		return 1
+	return 0
+	
 # Debug
 def vectorString(v):
-	return "%0.04f,%0.04f,%0.04f" % (v.x,v.y,v.z)
+	return "%0.06f,%0.06f,%0.06f" % (v.x,v.y,v.z)
+
+# NOTE: added this to keep writeFrames() a bit simpler, uses smd.sortedBones and smd.boneNameToID, replaces getBonesForSMD()
+def writeRestPose():
+	smd.file.write("time 0\n")
+	for boneName in smd.sortedBones:
+		bone = smd.a.data.bones[boneName]
+		if bone.parent:
+			parentRotated = bone.parent.matrix_local * ryz90
+			childRotated = bone.matrix_local * ryz90
+			rot = parentRotated.invert() * childRotated
+			pos = rot.translation_part()
+			rot = rot.to_euler()
+		else:
+			pos = bone.matrix_local.translation_part()
+			rot = (bone.matrix_local * ryz90).to_euler('XYZ')
+
+		pos_str = rot_str = ""
+		for i in range(3):
+			pos_str += " " + getSmdFloat(pos[i])
+			rot_str += " " + getSmdFloat(rot[i])
+		smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
+	smd.file.write("end\n")
 
 # skeleton block
 def writeFrames():
@@ -1355,38 +1450,31 @@ def writeFrames():
 	if not smd.a:
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
+		
+	if smd.jobType != 'ANIM':
+		writeRestPose()
+		return
 
 	scene = bpy.context.scene
 	prev_frame = scene.frame_current
 	scene.frame_current = scene.frame_start
 	scene.frame_set(0)
 
-	smd_bones = getBonesForSmd(smd.a)
+	armature_was_hidden = smd.a.hide
+	smd.a.hide = False # ensure an object is visible or mode_set() can't be called on it
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
-	
-	# PoseBone.matrix.translation_part() == PoseBone.head (armature-space?)
-	# PoseBone.matrix_local (bone-space, relative to rest position?)
-	# ---> unconnected barney.LeftLeg has PoseBone.location=(0,0,0) (rotate only)
-	# ---> barney.Bip01 has PoseBone.location=(-3.7,1.43,0) (translation only)
-	# PoseBone.matrix_local.translation_part() == PoseBone.location
-	# PoseBone.rotation_quaternion is ???
-	
-	if smd.jobType == 'ANIM':
-		last_frame = 0
-		for fcurve in smd.a.animation_data.action.fcurves:
-			# Get the length of the action
-			last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
-	else:
-		last_frame = scene.frame_end
+		
+	last_frame = 0
+	for fcurve in smd.a.animation_data.action.fcurves:
+		# Get the length of the action
+		last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
 
 	while scene.frame_current <= last_frame:
 		smd.file.write("time %i\n" % scene.frame_current)
 
-		for bone in smd_bones:
-			pos_str = rot_str = ""
-			pbn = smd.a.pose.bones[bone['bone'].name]
-			
+		for boneName in smd.sortedBones:
+			pbn = smd.a.pose.bones[boneName]
 			if pbn.parent:
 				parentRotated = pbn.parent.matrix * ryz90
 				childRotated = pbn.matrix * ryz90
@@ -1397,14 +1485,16 @@ def writeFrames():
 				pos = pbn.matrix.translation_part()
 				rot = (pbn.matrix * ryz90).to_euler('XYZ')
 
+			pos_str = rot_str = ""
 			for i in range(3):
 				pos_str += " " + getSmdFloat(pos[i])
 				rot_str += " " + getSmdFloat(rot[i])
-			smd.file.write( str(bone['bone']['smd_id']) + pos_str + rot_str + "\n" )
+			smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
 
-		if smd.jobType != 'ANIM':
-			break
 		scene.frame_set(scene.frame_current + 1)
+
+	if armature_was_hidden:
+		smd.a.hide = True
 
 	smd.file.write("end\n")
 	scene.frame_set(prev_frame)
@@ -1449,7 +1539,7 @@ def writePolys():
 				for j in range(len(v.groups)):
 					try:
 						# There is no certainty that a bone and its vertex group will share the same ID. Thus this monster:
-						groups += " " + str(smd.a.data.bones[smd.m.vertex_groups[v.groups[j].group].name]['smd_id']) + " " + getSmdFloat(v.groups[j].weight)
+						groups += " " + str(smd.boneNameToID[smd.m.vertex_groups[v.groups[j].group].name]) + " " + getSmdFloat(v.groups[j].weight)
 					except AttributeError:
 						pass # bone doesn't have a vert group on this mesh; not necessarily a problem
 			else:
@@ -1584,6 +1674,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 
 	if smd.a:
 		bakeObj(smd.a) # MUST be baked after the mesh
+		sortBonesForExport() # Get a list of bone names sorted in the order to be exported, and assign a unique SMD ID to every bone.
 		if smd.jobType == 'FLEX':
 			writeBones(quiet=True)
 		else:
@@ -1691,6 +1782,8 @@ class SMD_PT_Scene(bpy.types.Panel):
 	bl_context = "scene"
 	bl_default_closed = True
 
+	has_test_suite = os.path.exists('C:\\SMD_Tools_Test_Suite')
+
 	def draw(self, context):
 		l = self.layout
 		scene = context.scene
@@ -1729,6 +1822,8 @@ class SMD_PT_Scene(bpy.types.Panel):
 			c.prop(scene,"smd_studiomdl_custom_path")
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
+		if self.has_test_suite:
+			l.operator(SmdTestSuite.bl_idname,text="Run test suite",icon='RADIO')
 
 class SMD_PT_Armature(bpy.types.Panel):
 	bl_label = "SMD Export"
@@ -1737,8 +1832,9 @@ class SMD_PT_Armature(bpy.types.Panel):
 	bl_context = "data"
 
 	@classmethod
-	def poll(cls,context):
-		return context.active_object.type == 'ARMATURE'
+	def poll(self,context):
+		obj = context.active_object
+		return obj != None and obj.type == 'ARMATURE'
 
 	def draw(self, context):
 		l = self.layout
@@ -1768,13 +1864,26 @@ class SmdClean(bpy.types.Operator):
 				if prop[0].startswith("smd_"):
 					del object[prop[0]]
 					self.numPropsRemoved += 1
+		
+		active_obj = bpy.context.active_object
+		active_mode = active_obj.mode if active_obj else None
 
 		for object in context.scene.objects:
 			removeProps(object)
 			if object.type == 'ARMATURE':
+				# For some reason deleting custom properties from bones doesn't work well in Edit Mode
+				bpy.context.scene.objects.active = object
+				object_mode = object.mode
+				bpy.ops.object.mode_set(mode='OBJECT')
 				for bone in object.data.bones:
 					removeProps(bone)
+				bpy.ops.object.mode_set(mode=object_mode)
 		removeProps(context.scene)
+		
+		bpy.context.scene.objects.active = active_obj
+		if active_obj != None:
+			bpy.ops.object.mode_set(mode=active_mode)
+
 		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
 		return {'FINISHED'}
 
@@ -1808,6 +1917,9 @@ class SmdExporter(bpy.types.Operator):
 		else:
 			# Get a path from the scene object
 			prop_path = context.scene.get("smd_path")
+			# Can't use a relative smd_path if the .blend file has never been saved
+			if prop_path and len(prop_path) and prop_path[1] != ':' and len(bpy.context.blend_data.filepath) == 0:
+				prop_path = None
 			if prop_path and len(prop_path):
 				if prop_path[-1] not in ['\\','/']:
 					prop_path += "\\"
@@ -1822,13 +1934,16 @@ class SmdExporter(bpy.types.Operator):
 
 		print("\nSMD EXPORTER RUNNING")
 		prev_active_ob = context.active_object
+		if prev_active_ob:
+			prev_active_hide = prev_active_ob.hide			
 		prev_selection = context.selected_objects
 
 		# store Blender mode user was in before export
 		prev_mode = bpy.context.mode
 		if prev_mode.startswith("EDIT"):
 			prev_mode = "EDIT" # remove any suffixes
-		if bpy.context.active_object:
+		if prev_active_ob:
+			prev_active_ob.hide = False # ensure an object is visible or mode_set() can't be called on it
 			ops.object.mode_set(mode='OBJECT')
 
 		# check export mode and perform appropriate jobs
@@ -1843,8 +1958,9 @@ class SmdExporter(bpy.types.Operator):
 
 		elif props.exportMode == 'SCENE':
 			for object in bpy.context.scene.objects:
-				if object.get('smd_export') != False: # can be None, which means unset
-					self.exportObject(context,object)
+				if object.type in ['MESH', 'ARMATURE']:
+					if object.data.get('smd_export') != False: # can be None, which means unset
+						self.exportObject(context,object)
 
 		elif props.exportMode == 'FILE': # can't be done until Blender scripts become able to change the scene
 			for scene in bpy.data.scenes:
@@ -1861,7 +1977,9 @@ class SmdExporter(bpy.types.Operator):
 
 		# Export jobs complete! Clean up...
 		context.scene.objects.active = prev_active_ob
-		ops.object.mode_set(mode=prev_mode)
+		if prev_active_ob:
+			ops.object.mode_set(mode=prev_mode)
+			prev_active_ob.hide = prev_active_hide
 		for object in context.scene.objects:
 			if object in prev_selection:
 				object.select = True
@@ -1959,16 +2077,179 @@ class SmdExporter(bpy.types.Operator):
 		else: # a UI element has chosen a mode for us
 			return self.execute(context)
 
+class SmdTestSuite(bpy.types.Operator):
+	bl_idname = "smd_test_suite"
+	bl_label = "Test SMD import/export"
+	bl_description = "Runs a testsuite on the importer/exporter"
+
+	def execute(self,context):
+		global log
+		log = logger()
+		
+		self.logfile = open('C:\\SMD_Tools_Test_Suite\\log.txt', 'w')
+		
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\Antlion_guard_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
+		writeSMD(context, bpy.data.objects['Antlion_guard_ref.000'],filepath='C:\\SMD_Tools_Test_Suite\\output\\Antlion_guard_reference.smd')
+		writeSMD(context, bpy.data.objects['Antlion_guard_referen'],filepath='C:\\SMD_Tools_Test_Suite\\output\\bust_floor.smd')
+		self.compareSMDs(filename='Antlion_guard_reference.smd')
+		self.compareSMDs(filename='bust_floor.smd')
+
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\buggy_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\buggy_ammo_open.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
+		writeSMD(context, bpy.data.objects['buggy_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\buggy_reference.smd')
+		writeSMD(context, bpy.data.objects['buggy_reference'],filepath='C:\\SMD_Tools_Test_Suite\\output\\buggy_ammo_open.smd')
+		self.compareSMDs(filename='buggy_reference.smd')
+		#self.compareSMDs(filename='buggy_ammo_open.smd')
+
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reload.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
+		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reference.smd')
+		writeSMD(context, bpy.data.objects['rpg_reference'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reload.smd')
+		
+		self.logfile.close()
+
+		return {'FINISHED'}
+	
+	def compareSMDs(self,filename):
+		self.filename = filename
+		file1 = 'C:\\SMD_Tools_Test_Suite\\' + filename
+		file2 = 'C:\\SMD_Tools_Test_Suite\\output\\' + filename
+		data1 = self.parseSMD(file1)
+		data2 = self.parseSMD(file2)
+		self.compareData(data1,data2)
+	
+	def parseSMD(self,filepath):
+		data = {}
+		self.file = open(filepath, 'r')
+		for line in self.file:
+			if line == "nodes\n": self.readBones(data)
+			if line == "skeleton\n": self.readFrames(data)
+			if line == "triangles\n": self.readPolys(data)
+			if line == "vertexanimation\n": self.readShapes(data)
+		self.file.close()
+		return data
+
+	def readBones(self,data):
+		data['ID_to_name'] = {}
+		data['name_to_ID'] = {}
+		data['name_to_parentID'] = {}
+		for line in self.file:
+			if line == 'end\n':
+				break
+
+			s = line.strip()
+			m = re.match('([-+]?\d+)\s+"([\S ]+)"\s+([-+]?\d+)', s)
+			values = list(m.groups())
+			
+			smd_id = int(values[0])
+			name = values[1]
+			parent_id = int(values[2])
+			
+			data['ID_to_name'][smd_id] = name
+			data['name_to_ID'][name] = smd_id
+			data['name_to_parentID'][name] = parent_id
+
+	def readFrames(self,data):
+		data['frames'] = {}
+		frameCount = 0
+		for line in self.file:
+			if line == 'end\n':
+				break
+			values = line.split()
+			if values[0] == 'time':
+				data['frames'][frameCount] = []
+				frameCount += 1
+				continue
+			smd_id = int(values[0])
+			smd_pos = vector([float(values[1]), float(values[2]), float(values[3])])
+			smd_rot = vector([float(values[4]), float(values[5]), float(values[6])])
+			data['frames'][frameCount-1].append((smd_id,smd_pos,smd_rot))
+		data['frameCount'] = frameCount
+
+	def readPolys(self,data):
+		data['materials'] = []
+		data['triangles'] = 0
+		for line in self.file:
+			line = line.rstrip("\n")
+			if line == "end" or "":
+				break
+			if not line in data['materials']:
+				data['materials'].append(line)
+			vertexCount = 0
+			for line in self.file:
+				values = line.split()
+				vertexCount += 1
+				if vertexCount == 3:
+					data['triangles'] += 1
+					break
+		
+	def compareData(self,data1,data2):
+		for key in data1:
+			if not key in data2:
+				self.fail('missing "%s" block' % key)
+		for key in data2:
+			if not key in data1:
+				self.fail('extra "%s" block' % key)
+		if 'triangles' in data1 and data1['triangles'] != data2['triangles']:
+			self.fail('triangle count mismatch got %d expected %d' % (data2['triangles'],data1['triangles']))
+		if 'materials' in data1:
+			for material in data1['materials']:
+				if not material in data2['materials']:
+					self.fail('missing material "%s"' % material)
+		if 'ID_to_name' in data1:
+			for boneName in data1['name_to_ID']:
+				if not boneName in data2['name_to_ID']:
+					self.fail('missing bone "%s"' % boneName)
+				parentName1 = parentName2 = '<none>'
+				if data1['name_to_parentID'][boneName] != -1:
+					parentName1 = data1['ID_to_name'][data1['name_to_parentID'][boneName]]
+				if data2['name_to_parentID'][boneName] != -1:
+					parentName2 = data2['ID_to_name'][data2['name_to_parentID'][boneName]]
+				if parentName1 != parentName2:
+					self.fail('parent of bone "%s" got "%s" expected "%s"' % (boneName,parentName2,parentName1))
+		if 'frameCount' in data1:
+			if data1['frameCount'] != data2['frameCount']:
+				self.fail('frame count mismatch got %d expected %d' % (data2['frameCount'],data1['frameCount']))
+			pos1 = {}
+			rot1 = {}
+			pos2 = {}
+			rot2 = {}
+			for frame in range(data1['frameCount']):
+				frameData1 = data1['frames'][frame]
+				for frameBone in frameData1:
+					pos1[data1['ID_to_name'][frameBone[0]]] = frameBone[1]
+					rot1[data1['ID_to_name'][frameBone[0]]] = frameBone[2]
+				frameData2 = data2['frames'][frame]
+				for frameBone in frameData2:
+					pos2[data2['ID_to_name'][frameBone[0]]] = frameBone[1]
+					rot2[data2['ID_to_name'][frameBone[0]]] = frameBone[2]
+				for boneName in data1['name_to_ID']:
+					if compareVector(pos1[boneName],pos2[boneName]):
+						self.fail('frame %d bone %s POS got %s expected %s' % (frame,boneName,vectorString(pos2[boneName]),vectorString(pos1[boneName])))
+					if compareVector(rot1[boneName],rot2[boneName]):
+						self.fail('frame %d bone %s ROT got %s expected %s' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
+
+	def fail(self,msg):
+		self.logfile.write('test suite fail: %s %s\n' % (self.filename, msg))
+		print('test suite fail: %s %s' % (self.filename, msg))
+
 #####################################
 #        Shared registration        #
 #####################################
 
 type = bpy.types
 
+def menu_func_import(self, context):
+	self.layout.operator(SmdImporter.bl_idname, text="Studiomdl Data (.smd, .vta, .qc)")
+
+def menu_func_export(self, context):
+	self.layout.operator(SmdExporter.bl_idname, text="Studiomdl Data (.smd, .vta)")
+
 def register():
 
-	type.INFO_MT_file_import.append(lambda self,context: self.layout.operator(SmdImporter.bl_idname, text="Studiomdl Data (.smd, .vta, .qc)"))
-	type.INFO_MT_file_export.append(lambda self,context: self.layout.operator(SmdExporter.bl_idname, text="Studiomdl Data (.smd, .vta)"))
+	type.INFO_MT_file_import.append(menu_func_import)
+	type.INFO_MT_file_export.append(menu_func_export)
 	
 	global cached_action_filter_list
 	cached_action_filter_list = 0
@@ -1993,6 +2274,10 @@ def register():
 	type.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 	
 	type.Armature.smd_bone_up_axis = EnumProperty(name="SMD Bone Up Axis",items=axes,default='Z',description="The up axis of bones in the target reference mesh")
+
+def unregister():
+	type.INFO_MT_file_import.remove(menu_func_import)
+	type.INFO_MT_file_export.remove(menu_func_export)
 
 if __name__ == "__main__":
 	register()
