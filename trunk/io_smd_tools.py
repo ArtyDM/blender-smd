@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.7",
+	"version": "0.7.1b",
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -45,13 +45,6 @@ ryz90 = ry90 * rz90
 rx90n = rMat(math.radians(-90),4,'X')
 ry90n = rMat(math.radians(-90),4,'Y')
 rz90n = rMat(math.radians(-90),4,'Z')
-
-class smd_debug:
-	def __init__(self,pos,rot):
-		self.pos = pos
-		self.rot = rot
-debug = {}
-wasImported = 0
 
 # SMD types:
 # 'REF' - $body, $model, $bodygroup (if before a $body or $model)
@@ -87,7 +80,7 @@ class smd_info:
 		# - Key: integer ID
 		# - Value: bone name (storing object itself is not safe)
 		self.boneIDs = {}
-		
+
 		# Reverse of the above.
 		# - Key: Bone name
 		# - Value: integer ID
@@ -98,7 +91,7 @@ class smd_info:
 		# For recording rotation matrices. Children access their parent's matrix.
 		# USE BONE NAME STRING - MULTIPLE BONE TYPES NEED ACCESS (bone, editbone, posebone)
 		self.rotMats = {}
-		
+
 		self.location = {}
 
 		# Animation SMD may remove some parent bones (for example SDK buggy anims remove Gun_Parent)
@@ -167,8 +160,6 @@ def getSmdFloat(fval):
 
 # joins up "quoted values" that would otherwise be delimited, removes comments
 def parseQuoteBlockedLine(line,lower=True):
-	if lower:
-		line = line.lower()
 	words = []
 	last_word_start = 0
 	in_quote = in_whitespace = False
@@ -192,7 +183,7 @@ def parseQuoteBlockedLine(line,lower=True):
 			if char == "/" and pchar == "*": # done backwards so we don't have to skip two chars
 				smd_manager.in_block_comment = False
 			continue
-		elif char == "/" and nchar == "*":
+		elif char == "/" and nchar == "*": # note: nchar, not pchar
 			smd_manager.in_block_comment = True
 			continue
 
@@ -203,6 +194,8 @@ def parseQuoteBlockedLine(line,lower=True):
 			if char in [" ","\t"]:
 				cur_word = line[last_word_start:i].strip("\"") # characters between last whitespace and here
 				if len(cur_word) > 0:
+					if (lower and os.name == 'nt') or cur_word[0] == "$":
+						cur_word = cur_word.lower()
 					words.append(cur_word)
 				last_word_start = i+1 # we are in whitespace, first new char is the next one
 
@@ -222,25 +215,9 @@ def parseQuoteBlockedLine(line,lower=True):
 	return words
 
 def appendExt(path,ext):
-	if not path.endswith("." + ext) and not path.endswith(".dmx"):
+	if not path.lower().endswith("." + ext) and not path.lower().endswith(".dmx"):
 		path += "." + ext
 	return path
-
-'''
-def boneOfID(id):
-	if bpy.context.mode.startswith("EDIT"):
-		boneList = smd.a.data.edit_bones
-	else:
-		boneList = smd.a.data.bones
-
-	id = int(id)
-	for bone in boneList:
-		if bone.get('smd_id') == id:
-			return bone
-
-	#log.warning("Could not find bone of ID",id) # FIXME: slow if SMD is broken
-	return None
-'''
 
 def printTimeMessage(start_time,name,job,type="SMD"):
 	elapsedtime = int(time.time() - start_time)
@@ -305,31 +282,6 @@ def sortBonesForExport():
 	for bone in smd.a.data.bones:
 		if not bone.parent:
 			smd_id = addBonesToSortedList(smd_id,bone,smd.sortedBones)
-
-'''
-def getBonesForSmd(armature):
-	sortedBones = sorted(armature.data.bones, key=lambda bone: bone['smd_id'])
-	matrixArmature = armature.matrix_world.copy()
-	boneList = []
-
-	for bone in sortedBones:
-		if bone.parent:
-			invParMat = bone.parent.matrix_local.copy().invert()
-			bone_pos = (invParMat * bone.matrix_local).translation_part()
-			bone_pos *= rz90n * ry90n
-			parentRotated = bone.parent.matrix_local * ryz90
-			childRotated = bone.matrix_local * ryz90
-			bone_rot = (parentRotated.invert() * childRotated).to_euler('XYZ')
-
-		else:
-			bone_pos = bone.matrix_local.translation_part()
-			bone_rot = bone.matrix_local * ryz90
-			bone_rot = bone_rot.to_euler('XYZ')
-
-		boneList.append({ 'bone':bone, 'pos':bone_pos, 'rot':bone_rot })
-
-	return boneList
-'''
 
 def getRotAsEuler(thing):
 	out = vector()
@@ -444,12 +396,12 @@ def readBones():
 			smd.a = bpy.context.active_object
 		else:
 			def isArmIn(list):
-				if smd.a: return
+				if smd.a: return # already found
 				for ob in list:
 					if ob.type == 'ARMATURE':
 						smd.a = ob
 						return True
-				
+
 			isArmIn(bpy.context.selected_objects) # armature in the selection?
 
 			for ob in bpy.context.selected_objects:
@@ -507,7 +459,7 @@ def readBones():
 			# CONFIRM: Truncation may or may not break compatibility with precompiled animation .mdls
 			# (IDs are used but names still recorded)
 			log.warning("Bone name '%s' was truncated to 32 characters." % values[1])
-			
+
 		if newBone.name != original_bone_name:
 			newBone['smd_name'] = original_bone_name # This is the bone name that will be written to the SMD.
 
@@ -542,9 +494,9 @@ def readBones():
 	ops.object.mode_set(mode='OBJECT')
 
 def applyPoseForThisFrame(matAllRest, matAllPose):
-	
+
 	frame = bpy.context.scene.frame_current
-		
+
 	for boneName in matAllPose.keys():
 		matRest = matAllRest[boneName]
 		matPose = matAllPose[boneName]
@@ -554,13 +506,13 @@ def applyPoseForThisFrame(matAllRest, matAllPose):
 			matRest = matAllRest[parentName].copy().invert() * matRest
 			matPose = matAllPose[parentName].copy().invert() * matPose
 		matDelta = matRest.copy().invert() * matPose
-		
+
 		# Rotation
 		rot_quat = matDelta.to_quat()
 		pose_bone.rotation_mode = 'QUATERNION'
 		pose_bone.rotation_quaternion = rot_quat
 		pose_bone.keyframe_insert('rotation_quaternion',-1,frame,boneName)
-		
+
 		# Location
 		loc = matDelta.translation_part()
 		pose_bone.location = loc
@@ -629,7 +581,7 @@ def readFrames():
 		if not a.animation_data:
 			a.animation_data_create()
 		a.animation_data.action = bpy.data.actions.new(smd.jobName)
-		
+
 		# Create a new armature we can pose in edit-mode with each frame of animation.
 		# This is only needed until the matrix math gets sorted out.
 		ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -652,13 +604,13 @@ def readFrames():
 		smd.a.select = True
 		bpy.context.scene.objects.active = smd.a
 		ops.object.mode_set(mode='EDIT')
-	
+
 	readFrameData() # Read in all the frames
 	if smd.jobType in ['REF','ANIM_SOLO']:
 		assert smd.a.mode == 'EDIT'
 		applyFrameData(smd.frameData[0],restPose=True)
 	if smd.jobType in ['ANIM','ANIM_SOLO']:
-	
+
 		# Get all the armature-space matrices for the bones at their rest positions
 		smd.matAllRest = {}
 		for bone in smd.a.data.bones:
@@ -686,7 +638,7 @@ def readFrames():
 
 	if smd.jobType in ['ANIM','ANIM_SOLO']:
 		scn.frame_end = scn.frame_current
-		
+
 		# Remove the pose armature
 		bpy.context.scene.objects.unlink(pose_arm)
 		arm_data = pose_arm.data
@@ -710,7 +662,7 @@ def readFrames():
 					break
 
 	ops.object.mode_set(mode='OBJECT')
-	
+
 	def boneShouldBePoint(bone):
 		if smd.connectBones == 'ALL':
 			return True
@@ -756,7 +708,7 @@ def readFrames():
 			if boneShouldBePoint(bone):
 				bone.tail = bone.head + (bone.tail - bone.head).normalize() * length # Resize loose bone tails based on armature size
 		ops.object.mode_set(mode='OBJECT')
-	
+
 	if armature_was_hidden:
 		smd.a.hide = True
 
@@ -766,7 +718,7 @@ def readFrames():
 def readFrameData():
 	smd.frameData = []
 	frameData = {}
-	sawFirstTime = False
+	HaveReadFrame = False
 	for line in smd.file:
 
 		if line == "end\n":
@@ -776,11 +728,10 @@ def readFrameData():
 		values = line.split()
 
 		if values[0] == "time":
-			if not sawFirstTime: # Foolishness because I don't want to leave at the first 'time' line, we haven't read a frame yet
-				sawFirstTime = True
-				continue
-			smd.frameData.append(frameData)
-			frameData = {}
+			if HaveReadFrame:
+				smd.frameData.append(frameData)
+				frameData = {}
+			HaveReadFrame = True
 			continue
 
 		# Lookup the EditBone for this SMD's bone ID.
@@ -827,7 +778,7 @@ def applyFrameData(frameData, restPose=False):
 
 		# rot 0 0 0 means alignment with axes
 		if restPose:
-		
+
 			bn = smd.a.data.edit_bones[boneName]
 
 			if bn.parent:
@@ -844,7 +795,7 @@ def applyFrameData(frameData, restPose=False):
 				bn.head = smd_pos # LOCATION WITH NO PARENT
 				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
 				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
-				
+
 				# $upaxis Y
 				if False:
 					upAxisMat = rMat(-math.pi/2,3,'X')
@@ -856,22 +807,22 @@ def applyFrameData(frameData, restPose=False):
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
 		else:
-					
+
 			edit_bone = smd.poseArm.data.edit_bones[boneName]
-			
+
 			if boneName in smd.parentBones:
 				parentName = smd.parentBones[boneName]
 				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
 				edit_bone.head = edit_bone.parent.head + (smd_pos * rotMats[parentName])
 				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])			
-			else: 
+				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
+			else:
 				edit_bone.head = smd_pos # LOCATION WITH NO PARENT
 				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
 				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
-				
+
 			matAllPose[boneName] = edit_bone.matrix.copy()
-	
+
 	if not restPose:
 		smd.matAllPose.append(matAllPose)
 
@@ -924,7 +875,7 @@ def readPolys():
 	for mat in bpy.data.materials:
 		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
 		smdNameToMatName[smd_name] = mat.name
-		
+
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
 	# and one for the vertices on each polygon that loops three times. We're entering the poly one now.
@@ -1065,7 +1016,7 @@ def readPolys():
 def readShapes():
 	if smd.jobType is not 'FLEX':
 		return
-	
+
 	if not smd.m:
 		try:
 			smd.m = qc.ref_mesh
@@ -1175,7 +1126,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 
 		def loadSMD(word_index,ext,type, multiImport=False):
 			path = line[word_index]
-			if line[word_index][1] == ":":
+			if line[word_index][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = appendExt(path,ext)
 			else:
 				path = qc.cd() + appendExt(path,ext)
@@ -1209,7 +1160,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 			if not "{" in line and len(line) > 3: # an advanced $sequence using an existing $animation, or anim redefinition
 				loadSMD(2,"smd",'ANIM')
 			continue
-		
+
 		# flex animation
 		if "flexfile" in line:
 			loadSMD(1,"vta",'FLEX')
@@ -1230,7 +1181,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 
 		# QC inclusion
 		if "$include" in line:
-			if line[1][1] == ":": # absolute path
+			if line[1][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = appendExt(line[1], "qci")
 			else:
 				path = filedir + appendExt(line[1], "qci") # special case: ignores dir stack
@@ -1273,7 +1224,7 @@ def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = Fals
 	try:
 		smd.file = file = open(filepath, 'r')
 	except IOError: # TODO: work out why errors are swallowed if I don't do this!
-		message = "Could not open SMD file \"{}\"".format(smd.jobName)
+		message = "Could not open SMD file \"{}\"\n\t{}".format(smd.jobName,filepath)
 		if smd_type: # called from QC import
 			log.warning(message + " - skipping!")
 			print("\t" + filepath)
@@ -1336,7 +1287,8 @@ class SmdImporter(bpy.types.Operator):
 		global log
 		log = logger()
 
-		self.properties.filepath = self.properties.filepath.lower()
+		if os.name == 'nt': # windows only
+			self.properties.filepath = self.properties.filepath.lower()
 		cleanAnim = True # UI option can't be hidden due to Blender bug
 		if self.properties.filepath.endswith('.qc') | self.properties.filepath.endswith('.qci'):
 			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, cleanAnim, outer_qc=True)
@@ -1348,11 +1300,11 @@ class SmdImporter(bpy.types.Operator):
 			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type='FLEX')
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith('.dmx'):
-			return {'CANCELLED'}
+			return 'CANCELLED'
 			self.report('ERROR',"DMX import not supported")
 		else:
 			self.report('ERROR',"File format not recognised")
-			return {'CANCELLED'}
+			return 'CANCELLED'
 
 		log.errorReport("imported",self)
 		if smd.m:
@@ -1365,11 +1317,11 @@ class SmdImporter(bpy.types.Operator):
 					space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
 		if bpy.context.space_data.type == 'VIEW_3D':
 			bpy.ops.view3d.view_selected()
-		return {'FINISHED'}
+		return 'FINISHED'
 
 	def invoke(self, context, event):
 		bpy.context.window_manager.add_fileselect(self)
-		return {'RUNNING_MODAL'}
+		return 'RUNNING_MODAL'
 
 class Smd_OT_ImportTextures(bpy.types.Operator):
 	bl_idname = "smd_import_textures"
@@ -1394,7 +1346,7 @@ class Smd_OT_ImportTextures(bpy.types.Operator):
 			return image
 		except:
 			print('error loading %s' % filepath)
-	
+
 	def tryImageName(self, dir, basename, ext):
 		filepath = os.path.join(dir,basename+ext)
 		#print('trying %s' % filepath)
@@ -1403,7 +1355,7 @@ class Smd_OT_ImportTextures(bpy.types.Operator):
 			return image
 		if os.path.exists(filepath) and os.path.isfile(filepath):
 			return self.loadImage(filepath)
-	
+
 	def materialUsesImage(self, material, image):
 		for tex_slot in material.texture_slots:
 			if tex_slot and tex_slot.texture and tex_slot.texture.type == 'IMAGE' and tex_slot.texture.image == image:
@@ -1417,40 +1369,40 @@ class Smd_OT_ImportTextures(bpy.types.Operator):
 		if not os.path.isdir(dirpath):
 			dirpath = os.path.dirname(dirpath)
 
-		object = context.object
-		for mat_slot in object.material_slots:
-			material = mat_slot.material
-			mat_name = material['smd_name'] if material.get('smd_name') else material.name
-			mat_basename, mat_ext = os.path.splitext(mat_name)
-			if len(mat_ext) != 4:
-				mat_ext = ''
-			tryExt = []
-			if mat_ext != '':
-				tryExt.append( mat_ext )
-			if mat_ext != '.tga':
-				tryExt.append( '.tga' )
-			if mat_ext != '.bmp':
-				tryExt.append( '.bmp' )
-			for ext in tryExt:
-				image = self.tryImageName(dirpath,mat_basename,ext)
-				if image:
-					break
-			if image and not self.materialUsesImage(material,image):
-				for tex_slot in material.texture_slots:
-					if not tex_slot:
-						texture = bpy.data.textures.new(mat_name,type='IMAGE')
-						texture.image = image
-						tex_slot = material.texture_slots.add()
-						tex_slot.texture = texture
-						tex_slot.texture_coords = 'UV'
-						#tex_slot.uv_layer = 'UVTex'
+		for object in context.scene.objects:
+			for mat_slot in object.material_slots:
+				material = mat_slot.material
+				mat_name = material['smd_name'] if material.get('smd_name') else material.name
+				mat_basename, mat_ext = os.path.splitext(mat_name)
+				if len(mat_ext) != 4:
+					mat_ext = ''
+				tryExt = []
+				if mat_ext != '':
+					tryExt.append( mat_ext )
+				if mat_ext != '.tga':
+					tryExt.append( '.tga' )
+				if mat_ext != '.bmp':
+					tryExt.append( '.bmp' )
+				for ext in tryExt:
+					image = self.tryImageName(dirpath,mat_basename,ext)
+					if image:
 						break
-				
+				if image and not self.materialUsesImage(material,image):
+					for tex_slot in material.texture_slots:
+						if not tex_slot:
+							texture = bpy.data.textures.new(mat_name,type='IMAGE')
+							texture.image = image
+							tex_slot = material.texture_slots.add()
+							tex_slot.texture = texture
+							tex_slot.texture_coords = 'UV'
+							#tex_slot.uv_layer = 'UVTex'
+							break
+
 		return 'FINISHED'
 
 	def invoke(self, context, event):
 		context.window_manager.add_fileselect(self)
-		return {'RUNNING_MODAL'}
+		return 'RUNNING_MODAL'
 
 class SMD_PT_material(bpy.types.Panel):
 	bl_label = "SMD Import"
@@ -1502,43 +1454,6 @@ def writeBones(quiet=False):
 	if len(smd.a.data.bones) > 128:
 		log.warning(smd,"Source only supports 128 bones!")
 
-# Debug
-'''
-def compareVectorElem(e1,e2):
-	precision = 2
-	if e1 < 0.0 and e1 > -0.001:
-		e1 = 0.0
-	if e2 < 0.0 and e2 > -0.001:
-		e2 = 0.0
-	if round(e1,precision) != round(e2,precision):
-		return 1
-	return 0
-def compareVectorElem(e1,e2):
-	#e1 += 0.0005
-	#e2 += 0.0005
-	s1 = ('%0.06f'%e1)[:-3]
-	s2 = ('%0.06f'%e2)[:-3]
-	if s1 == '-0.000': s1 = '0.000'
-	if s2 == '-0.000': s2 = '0.000'
-	if s1 != s2:
-		return 1
-	return 0
-'''
-def compareVectorElem(e1,e2):
-	return e1 - e2 > 0.001
-def compareVector(v1,v2):
-	if compareVectorElem(v1.x,v2.x):
-		return 1
-	if compareVectorElem(v1.y,v2.y):
-		return 1
-	if compareVectorElem(v1.z,v2.z):
-		return 1
-	return 0
-	
-# Debug
-def vectorString(v):
-	return "%0.06f,%0.06f,%0.06f" % (v.x,v.y,v.z)
-
 # NOTE: added this to keep writeFrames() a bit simpler, uses smd.sortedBones and smd.boneNameToID, replaces getBonesForSMD()
 def writeRestPose():
 	smd.file.write("time 0\n")
@@ -1571,7 +1486,7 @@ def writeFrames():
 	if not smd.a:
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
-		
+
 	if smd.jobType != 'ANIM':
 		writeRestPose()
 		return
@@ -1584,7 +1499,7 @@ def writeFrames():
 	smd.a.hide = False # ensure an object is visible or mode_set() can't be called on it
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
-		
+
 	#last_frame = 0
 	#for fcurve in smd.a.animation_data.action.fcurves:
 		# Get the length of the action
@@ -1793,7 +1708,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		smd.a = object
 	else:
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in [mesh,armature]")
-		
+
 	smd.file = open(filepath, 'w')
 	if not quiet: print("\nSMD EXPORTER: now working on",smd.jobName)
 	smd.file.write("version 1\n")
@@ -1908,8 +1823,6 @@ class SMD_PT_Scene(bpy.types.Panel):
 	bl_context = "scene"
 	bl_default_closed = True
 
-	has_test_suite = os.path.exists('C:\\SMD_Tools_Test_Suite')
-
 	def draw(self, context):
 		l = self.layout
 		scene = context.scene
@@ -1948,8 +1861,8 @@ class SMD_PT_Scene(bpy.types.Panel):
 			c.prop(scene,"smd_studiomdl_custom_path")
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
-		if self.has_test_suite:
-			l.operator(SmdTestSuite.bl_idname,text="Run test suite",icon='RADIO')
+		if smd_test_suite:
+			l.operator(smd_test_suite.SmdTestSuite.bl_idname,text="Run test suite",icon='FILE_TICK')
 
 class SMD_PT_Armature(bpy.types.Panel):
 	bl_label = "SMD Export"
@@ -1959,8 +1872,7 @@ class SMD_PT_Armature(bpy.types.Panel):
 
 	@classmethod
 	def poll(self,context):
-		obj = context.active_object
-		return obj != None and obj.type == 'ARMATURE'
+		return context.active_object.type == 'ARMATURE' # the panel isn't displayed unless there is an active object
 
 	def draw(self, context):
 		l = self.layout
@@ -1990,7 +1902,7 @@ class SmdClean(bpy.types.Operator):
 				if prop[0].startswith("smd_"):
 					del object[prop[0]]
 					self.numPropsRemoved += 1
-		
+
 		active_obj = bpy.context.active_object
 		active_mode = active_obj.mode if active_obj else None
 
@@ -2005,13 +1917,13 @@ class SmdClean(bpy.types.Operator):
 					removeProps(bone)
 				bpy.ops.object.mode_set(mode=object_mode)
 		removeProps(context.scene)
-		
+
 		bpy.context.scene.objects.active = active_obj
 		if active_obj != None:
 			bpy.ops.object.mode_set(mode=active_mode)
 
 		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
-		return {'FINISHED'}
+		return 'FINISHED'
 
 class SmdExporter(bpy.types.Operator):
 	bl_idname = "export.smd"
@@ -2035,25 +1947,33 @@ class SmdExporter(bpy.types.Operator):
 
 		if props.exportMode == 'NONE':
 			self.report('ERROR',"Programmer error: bpy.ops.export.smd called without exportMode")
-			return {'CANCELLED'}
+			return 'CANCELLED'
 
+		# Handle export root path
 		if len(props.filepath):
 			# We've got a file path from the file selector, write it and continue
 			context.scene['smd_path'] = getFileDir(props.filepath)
 		else:
 			# Get a path from the scene object
-			prop_path = context.scene.get("smd_path")
-			# Can't use a relative smd_path if the .blend file has never been saved
-			if prop_path and len(prop_path) and prop_path[1] != ':' and len(bpy.context.blend_data.filepath) == 0:
-				prop_path = None
-			if prop_path and len(prop_path):
-				if prop_path[-1] not in ['\\','/']:
-					prop_path += "\\"
-				props.filepath = prop_path
-			else:
+			export_root = context.scene.get("smd_path")
+
+			# No root defined, pop up a file select
+			if not export_root:
 				props.filename = "<folder select>"
 				context.window_manager.add_fileselect(self)
-				return {'RUNNING_MODAL'}
+				return 'RUNNING_MODAL'
+
+			if export_root.startswith("//") and not bpy.context.blend_data.filepath:
+				self.report('ERROR',"Relative scene output path, but .blend not saved")
+				return 'CANCELLED'
+
+			if export_root[-1] not in ['\\','/']: # append trailing slash
+				if os.name == 'nt':
+					export_root += "\\"
+				else:
+					export_root += "/"
+
+			props.filepath = export_root
 
 		global log
 		log = logger()
@@ -2061,7 +1981,7 @@ class SmdExporter(bpy.types.Operator):
 		print("\nSMD EXPORTER RUNNING")
 		prev_active_ob = context.active_object
 		if prev_active_ob:
-			prev_active_hide = prev_active_ob.hide			
+			prev_active_hide = prev_active_ob.hide
 		prev_selection = context.selected_objects
 
 		# store Blender mode user was in before export
@@ -2084,9 +2004,8 @@ class SmdExporter(bpy.types.Operator):
 
 		elif props.exportMode == 'SCENE':
 			for object in bpy.context.scene.objects:
-				if object.type in ['MESH', 'ARMATURE']:
-					if object.data.get('smd_export') != False: # can be None, which means unset
-						self.exportObject(context,object)
+				if object.smd_export:
+					self.exportObject(context,object)
 
 		elif props.exportMode == 'FILE': # can't be done until Blender scripts become able to change the scene
 			for scene in bpy.data.scenes:
@@ -2113,7 +2032,7 @@ class SmdExporter(bpy.types.Operator):
 				object.select = False
 		if self.countSMDs == 0:
 			log.error(self,"Found no valid objects for export")
-			return {'CANCELLED'}
+			return 'CANCELLED'
 
 		# ...and compile the QC
 		if context.scene.smd_qc_compile:
@@ -2124,7 +2043,7 @@ class SmdExporter(bpy.types.Operator):
 
 				if branch == 'CUSTOM':
 					studiomdl_path = context.scene.smd_studiomdl_custom_path = bpy.path.abspath(context.scene.smd_studiomdl_custom_path)
-					
+
 				if branch in ['ep1','source2007','orangebox']:
 					studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
 				if branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm']:
@@ -2148,28 +2067,27 @@ class SmdExporter(bpy.types.Operator):
 		if context.scene.smd_qc_compile:
 			jobMessage += " and QC compiled"
 		log.errorReport(jobMessage,self)
-		return {'FINISHED'}
+		return 'FINISHED'
 
 	# indirection to support batch exporting
 	def exportObject(self,context,object,flex=False):
 		props = self.properties
 
 		# handle subfolder
-		subdir = object.get('smd_subdir')
-		if not subdir or len(subdir) == 0:
-			if object.type == 'ARMATURE':
-				subdir = "anims"
-			else:
-				subdir = ""
-		object['smd_subdir'] = subdir = subdir.lstrip("/") # don't want //s here!
+		if len(object.smd_subdir) == 0 and object.type == 'ARMATURE':
+			object.smd_subdir = "anims"
+		object.smd_subdir = object.smd_subdir.lstrip("/") # don't want //s here!
+
+		if props.exportMode != 'ALL_ACTIONS' and object.type == 'ARMATURE' and not object.animation_data:
+			return; # otherwise we create a folder but put nothing in it
 
 		# assemble filename
-		path = bpy.path.abspath(getFileDir(props.filepath.lower()) + subdir)
+		path = bpy.path.abspath(getFileDir(props.filepath) + subdir)
 		if path and path[-1] not in ['/','\\']:
-			path += "\\"
-
-		if path[1] != ":":
-			raise Exception("Due to a current Blender bug, you must save your work after undoing anything before export is possible.")
+			if os.name is 'nt':
+				path += "\\"
+			else:
+				path += "/"
 
 		if not os.path.exists(path):
 			os.makedirs(path)
@@ -2199,177 +2117,9 @@ class SmdExporter(bpy.types.Operator):
 	def invoke(self, context, event):
 		if self.properties.exportMode == 'NONE':
 			bpy.ops.wm.call_menu(name="SMD_MT_ExportChoice")
-			return {'PASS_THROUGH'}
+			return 'PASS_THROUGH'
 		else: # a UI element has chosen a mode for us
 			return self.execute(context)
-
-class SmdTestSuite(bpy.types.Operator):
-	bl_idname = "smd_test_suite"
-	bl_label = "Test SMD import/export"
-	bl_description = "Runs a test suite on the importer/exporter"
-
-	def execute(self,context):
-		global log
-		log = logger()
-		
-		self.logfile = open('C:\\SMD_Tools_Test_Suite\\log.txt', 'w')
-		
-		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\Antlion_guard_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['Antlion_guard_ref.000'],filepath='C:\\SMD_Tools_Test_Suite\\output\\Antlion_guard_reference.smd')
-		writeSMD(context, bpy.data.objects['Antlion_guard_referen'],filepath='C:\\SMD_Tools_Test_Suite\\output\\bust_floor.smd')
-		self.compareSMDs(filename='Antlion_guard_reference.smd')
-		self.compareSMDs(filename='bust_floor.smd')
-
-		# sourcesdk_content\hl2\modelsrc\Buggy
-		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\buggy_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\buggy_ammo_open.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['buggy_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\buggy_reference.smd')
-		writeSMD(context, bpy.data.objects['buggy_reference'],filepath='C:\\SMD_Tools_Test_Suite\\output\\buggy_ammo_open.smd')
-		self.compareSMDs(filename='buggy_reference.smd')
-		#self.compareSMDs(filename='buggy_ammo_open.smd')
-
-		# sourcesdk_content\hl2\modelsrc\weapons\v_rocket_launcher
-		# rpg_reference.smd has a too-long material name
-		# rpg_reload.smd (originally reload.smd) doesn't list every bone for each frame
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reload.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reference.smd')
-		writeSMD(context, bpy.data.objects['rpg_reference'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reload.smd')
-		self.compareSMDs(filename='rpg_reference.smd')
-		self.compareSMDs(filename='rpg_reload.smd')
-
-		# ANIM_SOLO test
-		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-
-		self.logfile.close()
-
-		return {'FINISHED'}
-	
-	def compareSMDs(self,filename):
-		self.filename = filename
-		file1 = 'C:\\SMD_Tools_Test_Suite\\' + filename
-		file2 = 'C:\\SMD_Tools_Test_Suite\\output\\' + filename
-		data1 = self.parseSMD(file1)
-		data2 = self.parseSMD(file2)
-		self.compareData(data1,data2)
-	
-	def parseSMD(self,filepath):
-		data = {}
-		self.file = open(filepath, 'r')
-		for line in self.file:
-			if line == "nodes\n": self.readBones(data)
-			if line == "skeleton\n": self.readFrames(data)
-			if line == "triangles\n": self.readPolys(data)
-			if line == "vertexanimation\n": self.readShapes(data)
-		self.file.close()
-		return data
-
-	def readBones(self,data):
-		data['ID_to_name'] = {}
-		data['name_to_ID'] = {}
-		data['name_to_parentID'] = {}
-		for line in self.file:
-			if line == 'end\n':
-				break
-
-			s = line.strip()
-			m = re.match('([-+]?\d+)\s+"([\S ]+)"\s+([-+]?\d+)', s)
-			values = list(m.groups())
-			
-			smd_id = int(values[0])
-			name = values[1]
-			parent_id = int(values[2])
-			
-			data['ID_to_name'][smd_id] = name
-			data['name_to_ID'][name] = smd_id
-			data['name_to_parentID'][name] = parent_id
-
-	def readFrames(self,data):
-		data['frames'] = {}
-		frameCount = 0
-		for line in self.file:
-			if line == 'end\n':
-				break
-			values = line.split()
-			if values[0] == 'time':
-				data['frames'][frameCount] = []
-				frameCount += 1
-				continue
-			smd_id = int(values[0])
-			smd_pos = vector([float(values[1]), float(values[2]), float(values[3])])
-			smd_rot = vector([float(values[4]), float(values[5]), float(values[6])])
-			data['frames'][frameCount-1].append((smd_id,smd_pos,smd_rot))
-		data['frameCount'] = frameCount
-
-	def readPolys(self,data):
-		data['materials'] = []
-		data['triangles'] = 0
-		for line in self.file:
-			line = line.rstrip("\n")
-			if line == "end" or "":
-				break
-			if not line in data['materials']:
-				data['materials'].append(line)
-			vertexCount = 0
-			for line in self.file:
-				values = line.split()
-				vertexCount += 1
-				if vertexCount == 3:
-					data['triangles'] += 1
-					break
-		
-	def compareData(self,data1,data2):
-		for key in data1:
-			if not key in data2:
-				self.fail('missing "%s" block' % key)
-		for key in data2:
-			if not key in data1:
-				self.fail('extra "%s" block' % key)
-		if 'triangles' in data1 and data1['triangles'] != data2['triangles']:
-			self.fail('triangle count mismatch got %d expected %d' % (data2['triangles'],data1['triangles']))
-		if 'materials' in data1:
-			for material in data1['materials']:
-				if not material in data2['materials']:
-					self.fail('missing material "%s"' % material)
-		if 'ID_to_name' in data1:
-			for boneName in data1['name_to_ID']:
-				if not boneName in data2['name_to_ID']:
-					self.fail('missing bone "%s"' % boneName)
-				parentName1 = parentName2 = '<none>'
-				if data1['name_to_parentID'][boneName] != -1:
-					parentName1 = data1['ID_to_name'][data1['name_to_parentID'][boneName]]
-				if data2['name_to_parentID'][boneName] != -1:
-					parentName2 = data2['ID_to_name'][data2['name_to_parentID'][boneName]]
-				if parentName1 != parentName2:
-					self.fail('parent of bone "%s" got "%s" expected "%s"' % (boneName,parentName2,parentName1))
-		if 'frameCount' in data1:
-			if data1['frameCount'] != data2['frameCount']:
-				self.fail('frame count mismatch got %d expected %d' % (data2['frameCount'],data1['frameCount']))
-			pos1 = {}
-			rot1 = {}
-			pos2 = {}
-			rot2 = {}
-			for frame in range(data1['frameCount']):
-				frameData1 = data1['frames'][frame]
-				for frameBone in frameData1:
-					pos1[data1['ID_to_name'][frameBone[0]]] = frameBone[1]
-					rot1[data1['ID_to_name'][frameBone[0]]] = frameBone[2]
-				frameData2 = data2['frames'][frame]
-				for frameBone in frameData2:
-					pos2[data2['ID_to_name'][frameBone[0]]] = frameBone[1]
-					rot2[data2['ID_to_name'][frameBone[0]]] = frameBone[2]
-				for boneName in data1['name_to_ID']:
-					if compareVector(pos1[boneName],pos2[boneName]):
-						self.fail('frame %d bone %s POS got %s expected %s' % (frame,boneName,vectorString(pos2[boneName]),vectorString(pos1[boneName])))
-					if compareVector(rot1[boneName],rot2[boneName]):
-						self.fail('frame %d bone %s ROT got %s expected %s' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
-
-	def fail(self,msg):
-		self.logfile.write('test suite fail: %s %s\n' % (self.filename, msg))
-		print('test suite fail: %s %s' % (self.filename, msg))
 
 #####################################
 #        Shared registration        #
@@ -2384,10 +2134,9 @@ def menu_func_export(self, context):
 	self.layout.operator(SmdExporter.bl_idname, text="Studiomdl Data (.smd, .vta)")
 
 def register():
-
 	type.INFO_MT_file_import.append(menu_func_import)
 	type.INFO_MT_file_export.append(menu_func_export)
-	
+
 	global cached_action_filter_list
 	cached_action_filter_list = 0
 
@@ -2409,7 +2158,7 @@ def register():
 	type.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	type.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	type.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
-	
+
 	type.Armature.smd_bone_up_axis = EnumProperty(name="SMD Bone Up Axis",items=axes,default='Z',description="The up axis of bones in the target reference mesh")
 
 def unregister():
@@ -2418,3 +2167,10 @@ def unregister():
 
 if __name__ == "__main__":
 	register()
+
+# this must come last; needs direct function/object access
+try:
+	import smd_test_suite
+	bpy.types.register(smd_test_suite.SmdTestSuite)
+except:
+	smd_test_suite = False
