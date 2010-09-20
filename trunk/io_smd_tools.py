@@ -541,13 +541,9 @@ def readBones():
 
 	ops.object.mode_set(mode='OBJECT')
 
-def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
-	
-	cur_frame_values = {}
+def applyPoseForThisFrame(matAllRest, matAllPose):
 	
 	frame = bpy.context.scene.frame_current
-	first_frame = last_frame_values == {}
-	first_frame = True
 		
 	for boneName in matAllPose.keys():
 		matRest = matAllRest[boneName]
@@ -561,33 +557,24 @@ def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
 		
 		# Rotation
 		rot_quat = matDelta.to_quat()
-		if not first_frame:
-			dq = last_frame_values[boneName]['rot'].difference(rot_quat)
-		if first_frame or not (abs(dq.x)<0.000001 and abs(dq.y)<0.000001 and abs(dq.z)<0.000001):
-			pose_bone.rotation_mode = 'QUATERNION'
-			pose_bone.rotation_quaternion = rot_quat
-			pose_bone.keyframe_insert('rotation_quaternion',-1,frame,boneName)
+		pose_bone.rotation_mode = 'QUATERNION'
+		pose_bone.rotation_quaternion = rot_quat
+		pose_bone.keyframe_insert('rotation_quaternion',-1,frame,boneName)
 		
 		# Location
 		loc = matDelta.translation_part()
-		if not first_frame:
-			dl = last_frame_values[boneName]['loc'] - loc
-		if first_frame or dl.length>0.00001:
-			pose_bone.location = loc
-			pose_bone.keyframe_insert('location',-1,frame,boneName)
-		
-		cur_frame_values[boneName] = {'rot':rot_quat.copy(), 'loc':loc.copy()}
-		
-	return cur_frame_values
+		pose_bone.location = loc
+		pose_bone.keyframe_insert('location',-1,frame,boneName)
 
 def cleanFCurves():
 
-	return # ********
+	return # <<<<<<==============
 
 	if not smd_manager.cleanAnim:
 		return
 
-	# Example of removing a keyframe if it is the "same" as the previous and next ones
+	# Example of removing a keyframe if it is the "same" as the previous and next ones.
+	# Don't know what Blender considers the same (to give an orange line in the dopesheet).
 	for fcurve in smd.a.animation_data.action.fcurves:
 		last_frame = len(fcurve.keyframe_points)
 		i = 1
@@ -691,9 +678,8 @@ def readFrames():
 		bpy.context.scene.objects.active = smd.a
 		bpy.ops.object.mode_set(mode='POSE') # smd.a -> pose mode
 		bpy.context.scene.frame_set(0)
-		smd.last_frame_values = {}
 		for i in range(len(smd.frameData)):
-			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose[i], smd.last_frame_values )
+			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose[i] )
 			bpy.context.scene.frame_current += 1
 
 	# All frames read
