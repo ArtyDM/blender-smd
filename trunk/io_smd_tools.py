@@ -531,13 +531,11 @@ def readBones():
 	ops.object.mode_set(mode='OBJECT')
 
 def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
-	ops.object.mode_set(mode='POSE', toggle=False) # smd.a -> pose mode
 	
 	cur_frame_values = {}
 	
 	frame = bpy.context.scene.frame_current
-	frame1 = last_frame_values == {}
-	frame1 = True # comment this out to only set keyframes if the pos/rot changed enough
+	first_frame = last_frame_values == {}
 		
 	for boneName in matAllPose.keys():
 		matRest = matAllRest[boneName]
@@ -551,25 +549,23 @@ def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
 		
 		# Rotation
 		rot_quat = matDelta.to_quat()
-		if not frame1:
+		if not first_frame:
 			dq = last_frame_values[boneName]['rot'].difference(rot_quat)
-		if frame1 or not (dq.w==1.0 and abs(dq.x)<0.000001 and abs(dq.y)<0.000001 and abs(dq.z)<0.000001):
+		if first_frame or not (abs(dq.x)<0.000001 and abs(dq.y)<0.000001 and abs(dq.z)<0.000001):
 			pose_bone.rotation_mode = 'QUATERNION'
 			pose_bone.rotation_quaternion = rot_quat
 			pose_bone.keyframe_insert('rotation_quaternion',-1,frame,boneName)
 		
 		# Location
 		loc = matDelta.translation_part()
-		if not frame1:
+		if not first_frame:
 			dl = last_frame_values[boneName]['loc'] - loc
-		if frame1 or loc.length > 0.001 or (dl.length>0.00001):
+		if first_frame or dl.length>0.00001:
 			pose_bone.location = loc
 			pose_bone.keyframe_insert('location',-1,frame,boneName)
 		
 		cur_frame_values[boneName] = {'rot':rot_quat.copy(), 'loc':loc.copy()}
-	
-	ops.object.mode_set(mode='EDIT', toggle=False) # smd.a -> edit mode
-	
+		
 	return cur_frame_values
 
 def readFrames():
@@ -638,18 +634,28 @@ def readFrames():
 		for bone in smd.a.data.bones:
 			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
-		# Every bone must be listed for the first frame of an animation.
-		# After the first frame a bone may not be listed in the SMD if it didn't change from a previous frame.
-		# So keep a list of all the bone matrices up to the current frame.
-		smd.matAllPose = {}
+		smd.matAllPose = []
 	
-	smd.sawFirstTime = False
-	while True:
-		sawEnd = readFrameData()
-		applyFrameData()
-		bpy.context.scene.frame_current += 1
-		if sawEnd:
-			break
+	# Read in all the frames
+	readFrameData()
+	if smd.jobType in ['REF','ANIM_SOLO']:
+		# smd.a.mode=='EDIT'
+		applyFrameData(smd.frameData[0],restPose=True)
+	if smd.jobType in ['ANIM','ANIM_SOLO']:
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
+		bpy.context.scene.objects.active = smd.poseArm
+		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
+		for i in range(len(smd.frameData)):
+			applyFrameData(smd.frameData[i])
+			bpy.context.scene.frame_current += 1
+
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
+		bpy.context.scene.objects.active = smd.a
+		bpy.ops.object.mode_set(mode='POSE') # smd.a -> pose mode
+		bpy.context.scene.frame_set(0)
+		for i in range(len(smd.frameData)):
+			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose[i], smd.last_frame_values )
+			bpy.context.scene.frame_current += 1
 
 	# All frames read
 
@@ -738,18 +744,24 @@ def readFrames():
 	bpy.context.scene.frame_set(startFrame)
 
 def readFrameData():
+	smd.frameData = []
+	frameData = {}
+	sawFirstTime = False
 	for line in smd.file:
 
 		if line == "end\n":
-			return True
+			smd.frameData.append(frameData)
+			break
 
 		values = line.split()
 
 		if values[0] == "time":
-			if not smd.sawFirstTime: # Foolishness because I don't want to leave at the first 'time' line, we haven't read a frame yet
-				smd.sawFirstTime = True
+			if not sawFirstTime: # Foolishness because I don't want to leave at the first 'time' line, we haven't read a frame yet
+				sawFirstTime = True
 				continue
-			break
+			smd.frameData.append(frameData)
+			frameData = {}
+			continue
 
 		# Lookup the EditBone for this SMD's bone ID.
 		smdID = int(values[0])
@@ -763,110 +775,85 @@ def readFrameData():
 		# Where the bone should be, local to its parent
 		smd_pos = vector([float(values[1]), float(values[2]), float(values[3])])
 		smd_rot = vector([float(values[4]), float(values[5]), float(values[6])])
-		
-		smd.location[boneName] = smd_pos
 
 		# A bone's rotation matrix is used only by its children, a symptom of the transition from Source's 1D bones to Blender's 2D bones.
 		# Also, the floats are inversed to transition them from Source (DirectX; left-handed) to Blender (OpenGL; right-handed)
-		smd.rotMats[boneName] = rMat(-smd_rot.x, 3,'X') * rMat(-smd_rot.y, 3,'Y') * rMat(-smd_rot.z, 3,'Z')
-		
-		if boneName in smd.parentBones:
-			smd.rotMats[boneName] *= smd.rotMats[smd.parentBones[boneName]] # make rotations cumulative
+		rotMat = rMat(-smd_rot.x, 3,'X') * rMat(-smd_rot.y, 3,'Y') * rMat(-smd_rot.z, 3,'Z')
 
-def copyArmaturePose(arm1,arm2):
-	for bone1 in arm1.data.bones:
-		bone2 = arm2.data.edit_bones[bone1.name]
-		bone2.head = bone1.head_local
-		bone2.tail = bone1.tail_local
-		bone2.align_roll(vector([0,1,0]) * smd.rotMats[bone1.name])
+		frameData[boneName] = {'pos':smd_pos, 'rot':rotMat}
 
-def applyFrameData():
+	# Every bone must be listed for the first frame of an animation.
+	# After the first frame a bone may not be listed in the SMD if it didn't change from a previous frame.
+	for i in range(1,len(smd.frameData)):
+		for boneName in smd.sortedBoneNames:
+			if not boneName in smd.frameData[i]:
+				smd.frameData[i][boneName] = smd.frameData[i-1][boneName]
 
-	# The first frame of an animation-without-model is the rest pose, frames 2+ are animation frames.
-	anim_solo_frame1 = smd.jobType is 'ANIM_SOLO' and bpy.context.scene.frame_current == 0
+def applyFrameData(frameData, restPose=False):
 
-	if smd.jobType in ['ANIM','ANIM_SOLO'] and not anim_solo_frame1:
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
-		bpy.context.scene.objects.active = smd.poseArm
-		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
+	# smd.rotMats holds the last valid parent-relative matrix we read in.  This holds the armature-relative matrix.
+	rotMats = {}
 
-	# If we finished reading the first frame of an animation-without-model then rewind the frame counter, set the pose for the
-	# first frame, then come back to the second frame.  The first frame then matches the rest pose and the animation has the
-	# same number of frames as the SMD.
-	if smd.jobType is 'ANIM_SOLO' and bpy.context.scene.frame_current == 1:
-		smd.matAllRest = {}
-		smd.matAllPose = {}
-		for bone in smd.a.data.bones:
-			smd.matAllRest[bone.name] = bone.matrix_local.copy()
-			smd.matAllPose[bone.name] = bone.matrix_local.copy()
-		copyArmaturePose(smd.a,smd.poseArm)
-		smd.last_frame_values = {}
-		bpy.context.scene.frame_current = 0
-		smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose, smd.last_frame_values )
-		bpy.context.scene.frame_current = 1
+	if not restPose:
+		matAllPose = {}
 
 	for boneName in smd.sortedBoneNames:
 
-		smd_pos = smd.location[boneName]
+		smd_pos = frameData[boneName]['pos']
+		rotMats[boneName] = frameData[boneName]['rot']
 
 		# *************************************************
 		# Set rest positions. This happens only for the first frame, but not for an animation SMD.
 
 		# rot 0 0 0 means alignment with axes
-		if smd.jobType is 'REF' or anim_solo_frame1:
+		if restPose:
 		
 			bn = smd.a.data.edit_bones[boneName]
 
 			if bn.parent:
-				bn.head = bn.parent.head + (smd_pos * smd.rotMats[bn.parent.name])
-				bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[boneName])
-				bn.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+				rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
+				bn.head = bn.parent.head + (smd_pos * rotMats[bn.parent.name])
+				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
+				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
 
 				# $upaxis Y
 				if False:
-					bn.tail = bn.head + (vector([0,-1,0]) * smd.rotMats[boneName]) # maya bones point down X
-					bn.align_roll(vector([0,0,1]) * smd.rotMats[boneName])
+					bn.tail = bn.head + (vector([0,-1,0]) * rotMats[boneName]) # maya bones point down X
+					bn.align_roll(vector([0,0,1]) * rotMats[boneName])
 			else:
 				bn.head = smd_pos # LOCATION WITH NO PARENT
-				bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[boneName])
-				bn.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
+				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
 				
 				# $upaxis Y
 				if False:
 					upAxisMat = rMat(-math.pi/2,3,'X')
 					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
-					smd.rotMats[boneName] = upAxisMat * smd.rotMats[boneName]
-					bn.tail = bn.head + (vector([1,0,0]) * smd.rotMats[boneName])
-					bn.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+					rotMats[boneName] = upAxisMat * rotMats[boneName]
+					bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
+					bn.align_roll(vector([0,1,0]) * rotMats[boneName])
 
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
-		elif smd.jobType in [ 'ANIM', 'ANIM_SOLO' ]:
+		else:
 					
 			edit_bone = smd.poseArm.data.edit_bones[boneName]
 			
 			if boneName in smd.parentBones:
 				parentName = smd.parentBones[boneName]
-				edit_bone.head = edit_bone.parent.head + (smd_pos * smd.rotMats[parentName])
-				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * smd.rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * smd.rotMats[boneName])			
+				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
+				edit_bone.head = edit_bone.parent.head + (smd_pos * rotMats[parentName])
+				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
+				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])			
 			else: 
 				edit_bone.head = smd_pos # LOCATION WITH NO PARENT
-				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * smd.rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * smd.rotMats[boneName])
+				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
+				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
 				
-			smd.matAllPose[boneName] = edit_bone.matrix.copy()
+			matAllPose[boneName] = edit_bone.matrix.copy()
 	
-	if smd.jobType in ['ANIM','ANIM_SOLO'] and not anim_solo_frame1:
-
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
-		bpy.context.scene.objects.active = smd.a
-		bpy.ops.object.mode_set(mode='EDIT') # smd.a -> edit mode
-
-		if True or bpy.context.scene.frame_current > 0:
-			# Apply the frame we just finished reading to the pose bones
-			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose, smd.last_frame_values )
-			# Now matAllPose will get updated for some/all bones this upcoming frame
+	if not restPose:
+		smd.matAllPose.append(matAllPose)
 
 # triangles block
 def readPolys():
@@ -1394,17 +1381,19 @@ def compareVectorElem(e1,e2):
 	if round(e1,precision) != round(e2,precision):
 		return 1
 	return 0
-'''
 def compareVectorElem(e1,e2):
 	#e1 += 0.0005
 	#e2 += 0.0005
-	s1 = ('%0.06f'%e1)[:-4]
-	s2 = ('%0.06f'%e2)[:-4]
-	if s1 == '-0.00': s1 = '0.00'
-	if s2 == '-0.00': s2 = '0.00'
+	s1 = ('%0.06f'%e1)[:-3]
+	s2 = ('%0.06f'%e2)[:-3]
+	if s1 == '-0.000': s1 = '0.000'
+	if s2 == '-0.000': s2 = '0.000'
 	if s1 != s2:
 		return 1
 	return 0
+'''
+def compareVectorElem(e1,e2):
+	return e1 - e2 > 0.001
 def compareVector(v1,v2):
 	if compareVectorElem(v1.x,v2.x):
 		return 1
@@ -1428,7 +1417,7 @@ def writeRestPose():
 			childRotated = bone.matrix_local * ryz90
 			rot = parentRotated.invert() * childRotated
 			pos = rot.translation_part()
-			rot = rot.to_euler()
+			rot = rot.to_euler('XYZ')
 		else:
 			pos = bone.matrix_local.translation_part()
 			rot = (bone.matrix_local * ryz90).to_euler('XYZ')
@@ -1480,7 +1469,7 @@ def writeFrames():
 				childRotated = pbn.matrix * ryz90
 				rot = parentRotated.invert() * childRotated
 				pos = rot.translation_part()
-				rot = rot.to_euler()
+				rot = rot.to_euler('XYZ')
 			else:
 				pos = pbn.matrix.translation_part()
 				rot = (pbn.matrix * ryz90).to_euler('XYZ')
@@ -2106,6 +2095,8 @@ class SmdTestSuite(bpy.types.Operator):
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reload.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
 		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reference.smd')
 		writeSMD(context, bpy.data.objects['rpg_reference'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reload.smd')
+		self.compareSMDs(filename='rpg_reference.smd')
+		self.compareSMDs(filename='rpg_reload.smd')
 		
 		self.logfile.close()
 
