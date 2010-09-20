@@ -1371,6 +1371,101 @@ class SmdImporter(bpy.types.Operator):
 		bpy.context.window_manager.add_fileselect(self)
 		return {'RUNNING_MODAL'}
 
+class Smd_OT_ImportTextures(bpy.types.Operator):
+	bl_idname = "smd_import_textures"
+	bl_label = "Import textures"
+	bl_description = "Browse to a directory to import textures from"
+
+	filepath = StringProperty(name="Directory:", description="Directory to search for texture image files", maxlen=1024, default="", subtype='DIR_PATH')
+	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+	filter_image = BoolProperty(name="Filter images", description="", default=True, options={'HIDDEN'})
+
+	def findLoadedImage(self, filepath):
+		for image in bpy.data.images:
+			if image.type == 'IMAGE':
+				filepath2 = os.path.abspath(bpy.path.abspath(image.filepath))
+				if filepath == filepath2:
+					return image
+
+	def loadImage(self, filepath):
+		#print('loading %s' % filepath)
+		try:
+			image = bpy.data.images.load(filepath)
+			return image
+		except:
+			print('error loading %s' % filepath)
+	
+	def tryImageName(self, dir, basename, ext):
+		filepath = os.path.join(dir,basename+ext)
+		#print('trying %s' % filepath)
+		image = self.findLoadedImage(filepath)
+		if image:
+			return image
+		if os.path.exists(filepath) and os.path.isfile(filepath):
+			return self.loadImage(filepath)
+	
+	def materialUsesImage(self, material, image):
+		for tex_slot in material.texture_slots:
+			if tex_slot and tex_slot.texture and tex_slot.texture.type == 'IMAGE' and tex_slot.texture.image == image:
+				return True
+
+	def execute(self, context):
+		# Get an absolute pathname to look for image files in.
+		# If the .blend file was never saved then bpy.path.abspath(path) will be relative to the current working directory (unless 'path' is already absolute).
+		# Strip off the filename if there is one since there is no proper Blender directory-select dialog.
+		dirpath = os.path.abspath(bpy.path.abspath(self.filepath))
+		if not os.path.isdir(dirpath):
+			dirpath = os.path.dirname(dirpath)
+
+		object = context.object
+		for mat_slot in object.material_slots:
+			material = mat_slot.material
+			mat_name = material['smd_name'] if material.get('smd_name') else material.name
+			mat_basename, mat_ext = os.path.splitext(mat_name)
+			if len(mat_ext) != 4:
+				mat_ext = ''
+			tryExt = []
+			if mat_ext != '':
+				tryExt.append( mat_ext )
+			if mat_ext != '.tga':
+				tryExt.append( '.tga' )
+			if mat_ext != '.bmp':
+				tryExt.append( '.bmp' )
+			for ext in tryExt:
+				image = self.tryImageName(dirpath,mat_basename,ext)
+				if image:
+					break
+			if image and not self.materialUsesImage(material,image):
+				for tex_slot in material.texture_slots:
+					if not tex_slot:
+						texture = bpy.data.textures.new(mat_name,type='IMAGE')
+						texture.image = image
+						tex_slot = material.texture_slots.add()
+						tex_slot.texture = texture
+						tex_slot.texture_coords = 'UV'
+						#tex_slot.uv_layer = 'UVTex'
+						break
+				
+		return 'FINISHED'
+
+	def invoke(self, context, event):
+		context.window_manager.add_fileselect(self)
+		return {'RUNNING_MODAL'}
+
+class SMD_PT_material(bpy.types.Panel):
+	bl_label = "SMD Import"
+	bl_space_type = 'PROPERTIES'
+	bl_region_type = 'WINDOW'
+	bl_context = "material"
+
+	@classmethod
+	def poll(cls, context):
+		return context.material is not None
+
+	def draw(self, context):
+		layout = self.layout
+		layout.operator(Smd_OT_ImportTextures.bl_idname,text='Import textures',icon='TEXTURE')
+
 ########################
 #        Export        #
 ########################
