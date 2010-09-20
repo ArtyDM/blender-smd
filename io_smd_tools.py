@@ -392,6 +392,17 @@ def scanSMD():
 
 	smd.file.seek(0,0) # rewind to start of file
 
+def uniqueName(name, nameList, limit):
+	if name not in nameList and len(name) <= limit:
+		return name
+	name_orig = name[:limit-3]
+	i = 1
+	name = '%s_%.2d' % (name_orig, i)
+	while name in nameList:
+		i += 1
+		name = '%s_%.2d' % (name_orig, i)
+	return name
+
 # Runs instead of readBones if an armature already exists, testing the current SMD's nodes block against it.
 def validateBones():
 	countBones = 0
@@ -410,12 +421,12 @@ def validateBones():
 
 		foundIt = False
 		for bone in smd.a.data.bones:
-			if bone.get('smd_name') == smd_name:
+			if bone.get('smd_name') == smd_name or bone.name == smd_name:
 				smd_id = int(values[0])
 				smd.boneIDs[smd_id] = bone.name
 				smd.boneNameToID[bone.name] = smd_id
 				parentID = int(values[2])
-				if parentID != -1:
+				if parentID in smd.boneIDs:
 					smd.parentBones[bone.name] = smd.boneIDs[parentID] # parent in this SMD
 				#print("found bone #%s %s"%(values[0],smd_name))
 				foundIt = True
@@ -496,9 +507,9 @@ def readBones():
 			# CONFIRM: Truncation may or may not break compatibility with precompiled animation .mdls
 			# (IDs are used but names still recorded)
 			log.warning("Bone name '%s' was truncated to 32 characters." % values[1])
-
-		# This is the bone name that will be written to the SMD.
-		newBone['smd_name'] = original_bone_name
+			
+		if newBone.name != original_bone_name:
+			newBone['smd_name'] = original_bone_name # This is the bone name that will be written to the SMD.
 
 		# Now check if this newly-truncated name is a dupe of another
 		# FIXME: this will stop working once a name has been duped 9 times!
@@ -536,6 +547,7 @@ def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
 	
 	frame = bpy.context.scene.frame_current
 	first_frame = last_frame_values == {}
+	first_frame = True
 		
 	for boneName in matAllPose.keys():
 		matRest = matAllRest[boneName]
@@ -567,6 +579,34 @@ def applyPoseForThisFrame(matAllRest, matAllPose, last_frame_values):
 		cur_frame_values[boneName] = {'rot':rot_quat.copy(), 'loc':loc.copy()}
 		
 	return cur_frame_values
+
+def cleanFCurves():
+
+	return # ********
+
+	if not smd_manager.cleanAnim:
+		return
+
+	# Example of removing a keyframe if it is the "same" as the previous and next ones
+	for fcurve in smd.a.animation_data.action.fcurves:
+		last_frame = len(fcurve.keyframe_points)
+		i = 1
+		while i < last_frame - 1:
+			ptPrev = fcurve.keyframe_points[i-1]
+			ptCur  = fcurve.keyframe_points[i]
+			ptNext = fcurve.keyframe_points[i+1]
+			if abs(ptPrev.co[1] - ptCur.co[1]) <= 0.0001 and abs(ptCur.co[1] - ptNext.co[1]) <= 0.0001:
+				fcurve.keyframe_points.remove(ptCur,fast=True)
+				last_frame -= 1
+			else:
+				i += 1
+
+	if 0:
+		# the code below crashes Blender when the import finishes
+		current_type = bpy.context.area.type
+		bpy.context.area.type = 'GRAPH_EDITOR'
+		bpy.ops.graph.clean()
+		bpy.context.area.type = current_type
 
 def readFrames():
 	# We only care about the pose data in some SMD types
@@ -625,23 +665,20 @@ def readFrames():
 		smd.a.select = True
 		bpy.context.scene.objects.active = smd.a
 		ops.object.mode_set(mode='EDIT')
-
-	if smd.jobType == 'ANIM':
-		smd.last_frame_values = {}
+	
+	readFrameData() # Read in all the frames
+	if smd.jobType in ['REF','ANIM_SOLO']:
+		assert smd.a.mode == 'EDIT'
+		applyFrameData(smd.frameData[0],restPose=True)
+	if smd.jobType in ['ANIM','ANIM_SOLO']:
 	
 		# Get all the armature-space matrices for the bones at their rest positions
 		smd.matAllRest = {}
 		for bone in smd.a.data.bones:
 			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
+		# Step 1: set smd.poseArm pose and store the armature-space matrices in smd.matAllPose for each frame
 		smd.matAllPose = []
-	
-	# Read in all the frames
-	readFrameData()
-	if smd.jobType in ['REF','ANIM_SOLO']:
-		# smd.a.mode=='EDIT'
-		applyFrameData(smd.frameData[0],restPose=True)
-	if smd.jobType in ['ANIM','ANIM_SOLO']:
 		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
 		bpy.context.scene.objects.active = smd.poseArm
 		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
@@ -649,10 +686,12 @@ def readFrames():
 			applyFrameData(smd.frameData[i])
 			bpy.context.scene.frame_current += 1
 
+		# Step 2: set smd.a pose and set keyframes where desired for each frame
 		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
 		bpy.context.scene.objects.active = smd.a
 		bpy.ops.object.mode_set(mode='POSE') # smd.a -> pose mode
 		bpy.context.scene.frame_set(0)
+		smd.last_frame_values = {}
 		for i in range(len(smd.frameData)):
 			smd.last_frame_values = applyPoseForThisFrame( smd.matAllRest, smd.matAllPose[i], smd.last_frame_values )
 			bpy.context.scene.frame_current += 1
@@ -668,13 +707,8 @@ def readFrames():
 		bpy.data.objects.remove(pose_arm)
 		bpy.data.armatures.remove(arm_data)
 
-		if 0 and smd_manager.cleanAnim:
-			# the code below crashes Blender when the import finishes
-			current_type = bpy.context.area.type
-			bpy.context.area.type = 'GRAPH_EDITOR'
-			bpy.ops.graph.clean()
-			bpy.context.area.type = current_type
-	
+		cleanFCurves()
+
 	if smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
@@ -900,6 +934,11 @@ def readPolys():
 	uvs = []
 	mats = []
 
+	smdNameToMatName = {}
+	for mat in bpy.data.materials:
+		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
+		smdNameToMatName[smd_name] = mat.name
+		
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
 	# and one for the vertices on each polygon that loops three times. We're entering the poly one now.
@@ -912,20 +951,25 @@ def readPolys():
 			break
 
 		# Parsing the poly's material
-		line = line[:21] # Max 21 chars in a Blender material name :-(
-		mat = bpy.data.materials.get(line) # Do we have this material already?
+		original_mat_name = line
+		if original_mat_name in smdNameToMatName:
+			mat_name = smdNameToMatName[original_mat_name]
+		else:
+			mat_name = uniqueName(line,bpy.data.materials.keys(),21) # Max 21 chars in a Blender material name :-(
+			smdNameToMatName[original_mat_name] = mat_name
+		mat = bpy.data.materials.get(mat_name) # Do we have this material already?
 		if mat:
 			if md.materials.get(mat.name): # Look for it on this mesh
 				for i in range(len(md.materials)):
-					if md.materials[i].name == line: # No index() func on PropertyRNA :-(
+					if md.materials[i].name == mat_name: # No index() func on PropertyRNA :-(
 						mat_ind = i
 						break
 			else: # material exists, but not on this mesh
 				md.materials.append(mat)
 				mat_ind = len(md.materials) - 1
 		else: # material does not exist
-			print("- New material: %s" % line)
-			mat = bpy.data.materials.new(line)
+			print("- New material: %s" % mat_name)
+			mat = bpy.data.materials.new(mat_name)
 			md.materials.append(mat)
 			# Give it a random colour
 			randCol = []
@@ -937,6 +981,13 @@ def readPolys():
 			else:
 				smd.m.draw_type = 'SOLID'
 			mat_ind = len(md.materials) - 1
+			if len(original_mat_name) > 21: # Save the original name as a custom property.
+				log.warning("Material name '%s' was truncated to 21 characters." % original_mat_name)
+				md.materials[mat_ind]['smd_name'] = original_mat_name
+
+		# Would need to do this if the material already existed, but the material will be a shared copy so this step is redundant.
+		#if len(original_mat_name) > 21:
+		#	md.materials[mat_ind]['smd_name'] = original_mat_name
 
 		# Store index for later application to faces
 		mats.append(mat_ind)
@@ -1446,21 +1497,24 @@ def writeFrames():
 
 	scene = bpy.context.scene
 	prev_frame = scene.frame_current
-	scene.frame_current = scene.frame_start
-	scene.frame_set(0)
+	#scene.frame_current = scene.frame_start
 
 	armature_was_hidden = smd.a.hide
 	smd.a.hide = False # ensure an object is visible or mode_set() can't be called on it
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
 		
-	last_frame = 0
-	for fcurve in smd.a.animation_data.action.fcurves:
+	#last_frame = 0
+	#for fcurve in smd.a.animation_data.action.fcurves:
 		# Get the length of the action
-		last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
+	#	last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
+	start_frame, last_frame = smd.a.animation_data.action.frame_range
+	start_frame = int(start_frame)
+	last_frame = int(last_frame)
+	scene.frame_set(start_frame)
 
 	while scene.frame_current <= last_frame:
-		smd.file.write("time %i\n" % scene.frame_current)
+		smd.file.write("time %i\n" % (scene.frame_current-start_frame))
 
 		for boneName in smd.sortedBones:
 			pbn = smd.a.pose.bones[boneName]
@@ -1496,7 +1550,9 @@ def writePolys():
 	face_index = 0
 	for face in md.faces:
 		if smd.m.material_slots:
-			smd.file.write(smd.m.material_slots[face.material_index].name + "\n")
+			mat = smd.m.material_slots[face.material_index].material
+			mat_name = mat['smd_name'] if mat.get('smd_name') else mat.name
+			smd.file.write(mat_name + "\n")
 		else:
 			smd.file.write(smd.jobName + "\n")
 		for i in range(3):
@@ -2069,7 +2125,7 @@ class SmdExporter(bpy.types.Operator):
 class SmdTestSuite(bpy.types.Operator):
 	bl_idname = "smd_test_suite"
 	bl_label = "Test SMD import/export"
-	bl_description = "Runs a testsuite on the importer/exporter"
+	bl_description = "Runs a test suite on the importer/exporter"
 
 	def execute(self,context):
 		global log
@@ -2077,6 +2133,7 @@ class SmdTestSuite(bpy.types.Operator):
 		
 		self.logfile = open('C:\\SMD_Tools_Test_Suite\\log.txt', 'w')
 		
+		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\Antlion_guard_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
 		writeSMD(context, bpy.data.objects['Antlion_guard_ref.000'],filepath='C:\\SMD_Tools_Test_Suite\\output\\Antlion_guard_reference.smd')
@@ -2084,6 +2141,8 @@ class SmdTestSuite(bpy.types.Operator):
 		self.compareSMDs(filename='Antlion_guard_reference.smd')
 		self.compareSMDs(filename='bust_floor.smd')
 
+		# sourcesdk_content\hl2\modelsrc\Buggy
+		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\buggy_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\buggy_ammo_open.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
 		writeSMD(context, bpy.data.objects['buggy_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\buggy_reference.smd')
@@ -2091,13 +2150,19 @@ class SmdTestSuite(bpy.types.Operator):
 		self.compareSMDs(filename='buggy_reference.smd')
 		#self.compareSMDs(filename='buggy_ammo_open.smd')
 
+		# sourcesdk_content\hl2\modelsrc\weapons\v_rocket_launcher
+		# rpg_reference.smd has a too-long material name
+		# rpg_reload.smd (originally reload.smd) doesn't list every bone for each frame
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
 		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\rpg_reload.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
 		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reference.smd')
 		writeSMD(context, bpy.data.objects['rpg_reference'],filepath='C:\\SMD_Tools_Test_Suite\\output\\rpg_reload.smd')
 		self.compareSMDs(filename='rpg_reference.smd')
 		self.compareSMDs(filename='rpg_reload.smd')
-		
+
+		# ANIM_SOLO test
+		readSMD(context, filepath='C:\\SMD_Tools_Test_Suite\\bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+
 		self.logfile.close()
 
 		return {'FINISHED'}
