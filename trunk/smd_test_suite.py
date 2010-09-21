@@ -1,10 +1,11 @@
 import bpy, os, io_smd_tools
 from io_smd_tools import *
 
-test_suite_root = "C:\\SMD_Tools_Test_Suite\\"
+test_suite_root = os.path.normpath('/SMD_Tools_Test_Suite')
 
 def compareVectorElem(e1,e2):
 	return e1 - e2 > 0.001
+
 def compareVector(v1,v2):
 	if compareVectorElem(v1.x,v2.x):
 		return 1
@@ -17,12 +18,6 @@ def compareVector(v1,v2):
 def vectorString(v):
 	return "%0.06f,%0.06f,%0.06f" % (v.x,v.y,v.z)
 	
-class smd_debug:
-	def __init__(self,pos,rot):
-		self.pos = pos
-		self.rot = rot
-debug = {}
-wasImported = 0
 
 class SmdTestSuite(bpy.types.Operator):
 	bl_idname = "smd_test_suite"
@@ -33,46 +28,46 @@ class SmdTestSuite(bpy.types.Operator):
 		if not os.path.exists(test_suite_root):
 			os.makedirs(test_suite_root)
 		
-		self.logfile = open(test_suite_root+'log.txt', 'w')
+		self.logfile = open(self.ipath('log.txt'), 'w')
 		
 		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
-		readSMD(context, filepath=test_suite_root+'Antlion_guard_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath=test_suite_root+'bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['Antlion_guard_ref.000'],filepath=test_suite_root+'output\\Antlion_guard_reference.smd')
-		writeSMD(context, bpy.data.objects['Antlion_guard_referen'],filepath=test_suite_root+'output\\bust_floor.smd')
+		readSMD(context, filepath=self.ipath('Antlion_guard_reference.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath=self.ipath('bust_floor.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
+		writeSMD(context, bpy.data.objects['Antlion_guard_ref.000'],filepath=self.opath('Antlion_guard_reference.smd'))
+		writeSMD(context, bpy.data.objects['Antlion_guard_referen'],filepath=self.opath('bust_floor.smd'))
 		self.compareSMDs(filename='Antlion_guard_reference.smd')
 		self.compareSMDs(filename='bust_floor.smd')
 
 		# sourcesdk_content\hl2\modelsrc\Buggy
 		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example
-		readSMD(context, filepath=test_suite_root+'buggy_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath=test_suite_root+'buggy_ammo_open.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['buggy_reference.001'],filepath=test_suite_root+'output\\buggy_reference.smd')
-		writeSMD(context, bpy.data.objects['buggy_reference'],filepath=test_suite_root+'output\\buggy_ammo_open.smd')
+		readSMD(context, filepath=self.ipath('buggy_reference.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath=self.ipath('buggy_ammo_open.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
+		writeSMD(context, bpy.data.objects['buggy_reference.001'],filepath=self.opath('buggy_reference.smd'))
+		writeSMD(context, bpy.data.objects['buggy_reference'],filepath=self.opath('buggy_ammo_open.smd'))
 		self.compareSMDs(filename='buggy_reference.smd')
 		#self.compareSMDs(filename='buggy_ammo_open.smd')
 
 		# sourcesdk_content\hl2\modelsrc\weapons\v_rocket_launcher
 		# rpg_reference.smd has a too-long material name
 		# rpg_reload.smd (originally reload.smd) doesn't list every bone for each frame
-		readSMD(context, filepath=test_suite_root+'rpg_reference.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath=test_suite_root+'rpg_reload.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath=test_suite_root+'output\\rpg_reference.smd')
-		writeSMD(context, bpy.data.objects['rpg_reference'],filepath=test_suite_root+'output\\rpg_reload.smd')
+		readSMD(context, filepath=self.ipath('rpg_reference.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath=self.ipath('rpg_reload.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
+		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath=self.opath('rpg_reference.smd'))
+		writeSMD(context, bpy.data.objects['rpg_reference'],filepath=self.opath('rpg_reload.smd'))
 		self.compareSMDs(filename='rpg_reference.smd')
 		self.compareSMDs(filename='rpg_reload.smd')
 
 		# ANIM_SOLO test
-		readSMD(context, filepath=test_suite_root+'bust_floor.smd', upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		readSMD(context, filepath=self.ipath('bust_floor.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
 
 		self.logfile.close()
-		
+
 		return {'FINISHED'}
 	
 	def compareSMDs(self,filename):
 		self.filename = filename
-		file1 = test_suite_root+'' + filename
-		file2 = test_suite_root+'output\\' + filename
+		file1 = self.ipath(filename)
+		file2 = self.opath(filename)
 		data1 = self.parseSMD(file1)
 		data2 = self.parseSMD(file2)
 		self.compareData(data1,data2)
@@ -191,3 +186,9 @@ class SmdTestSuite(bpy.types.Operator):
 	def fail(self,msg):
 		self.logfile.write('test suite fail: %s %s\n' % (self.filename, msg))
 		print('test suite fail: %s %s' % (self.filename, msg))
+
+	def ipath(self,filename):
+		return os.path.join(test_suite_root,filename)
+	def opath(self,filename):
+		return os.path.join(test_suite_root,'output',filename)
+
