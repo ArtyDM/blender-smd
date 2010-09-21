@@ -25,6 +25,10 @@ class SmdTestSuite(bpy.types.Operator):
 	bl_description = "Runs a test suite on the importer/exporter"
 
 	def execute(self,context):
+		#if not getattr(io_smd_tools,'log',None): # won't exist if the importer/exporter hasn't been run yet
+		#	setattr(io_smd_tools,'log',logger())
+		io_smd_tools.log = logger()
+		
 		if not os.path.exists(test_suite_root):
 			os.makedirs(test_suite_root)
 		

@@ -145,6 +145,8 @@ class logger:
 		else:
 			caller.report('INFO',str(caller.countSMDs) + " SMDs " + jobName + " in " + str(round(time.time() - self.startTime,1)) + " seconds")
 
+log = None # Initialize this so it is easier for smd_test_suite to access
+
 ##################################
 #        Shared utilities        #
 ##################################
