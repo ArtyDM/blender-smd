@@ -801,8 +801,8 @@ def applyFrameData(frameData, restPose=False):
 					upAxisMat = rMat(-math.pi/2,3,'X')
 					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
 					rotMats[boneName] = upAxisMat * rotMats[boneName]
-					bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
-					bn.align_roll(vector([0,1,0]) * rotMats[boneName])
+					bn.tail = bn.head + (vector([0,-1,0]) * rotMats[boneName])
+					bn.align_roll(vector([0,0,1]) * rotMats[boneName])
 
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
@@ -1328,7 +1328,8 @@ class Smd_OT_ImportTextures(bpy.types.Operator):
 	bl_label = "Import textures"
 	bl_description = "Browse to a directory to import textures from"
 
-	filepath = StringProperty(name="Directory:", description="Directory to search for texture image files", maxlen=1024, default="", subtype='DIR_PATH')
+	# Properties used by the file browser
+	directory = StringProperty(name="Directory:", description="Directory to search for texture image files", maxlen=1024, default="", subtype='DIR_PATH')
 	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
 	filter_image = BoolProperty(name="Filter images", description="", default=True, options={'HIDDEN'})
 
@@ -1363,11 +1364,9 @@ class Smd_OT_ImportTextures(bpy.types.Operator):
 
 	def execute(self, context):
 		# Get an absolute pathname to look for image files in.
-		# If the .blend file was never saved then bpy.path.abspath(path) will be relative to the current working directory (unless 'path' is already absolute).
-		# Strip off the filename if there is one since there is no proper Blender directory-select dialog.
-		dirpath = os.path.abspath(bpy.path.abspath(self.filepath))
-		if not os.path.isdir(dirpath):
-			dirpath = os.path.dirname(dirpath)
+		# self.directory is always absolute even when the .blend file is unsaved
+		dirpath = self.directory
+		print(dirpath)
 
 		for object in context.scene.objects:
 			for mat_slot in object.material_slots:
