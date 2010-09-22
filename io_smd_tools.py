@@ -654,7 +654,8 @@ def readFrames():
 
 		cleanFCurves()
 
-	if smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
+	if smd.jobType in ['REF','ANIM_SOLO'] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
+		assert smd.a.mode == 'EDIT'
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
 			for child in bone.children:
@@ -676,7 +677,8 @@ def readFrames():
 
 		childConnect = False
 		for child in bone.children:
-			if child.head == bone.tail:
+			#if child.head == bone.tail:
+			if child.use_connect:
 				return False
 		return True
 
@@ -706,14 +708,18 @@ def readFrames():
 			bpy.context.scene.objects.unlink(bone_vis) # don't want the user deleting this
 			bpy.context.scene.objects.active = smd.a
 
-		for bone in a.pose.bones:
-			if boneShouldBePoint(bone):
-				bone.custom_shape = bone_vis # apply bone shape
-
+		bsbp = {}
 		ops.object.mode_set(mode='EDIT')
 		for bone in smd.a.data.edit_bones:
-			if boneShouldBePoint(bone):
+			bsbp[bone.name] = boneShouldBePoint(bone)
+			if bsbp[bone.name]:
 				bone.tail = bone.head + (bone.tail - bone.head).normalize() * length # Resize loose bone tails based on armature size
+
+		ops.object.mode_set(mode='POSE')
+		for bone in a.pose.bones:
+			if bsbp[bone.name]:
+				bone.custom_shape = bone_vis # apply bone shape
+
 		ops.object.mode_set(mode='OBJECT')
 
 	if armature_was_hidden:
