@@ -165,6 +165,10 @@ def parseQuoteBlockedLine(line,lower=True):
 	words = []
 	last_word_start = 0
 	in_quote = in_whitespace = False
+	
+	# The last char of the last line in the file was missed
+	if line[-1] != '\n':
+		line += '\n'
 
 	for i in range(len(line)):
 		char = line[i]
@@ -176,7 +180,8 @@ def parseQuoteBlockedLine(line,lower=True):
 
 		# line comment - precedence over block comment
 		if (char == "/" and nchar == "/") or char in ['#',';']:
-			i = i-1 # last word will be caught after the loop
+			if i > 0:
+				i = i-1 # last word will be caught after the loop
 			break # nothing more this line
 
 		#block comment
