@@ -675,7 +675,6 @@ def readFrames():
 		if smd.connectBones == 'ALL':
 			return True
 
-		childConnect = False
 		for child in bone.children:
 			#if child.head == bone.tail:
 			if child.use_connect:
@@ -696,6 +695,8 @@ def readFrames():
 			dimensions.append(maxs[i] - mins[i])
 
 		length = (dimensions[0] + dimensions[1] + dimensions[2]) / 600 # very small indeed, but a custom bone is used for display
+		if length < 0.001: # Blender silently deletes bones whose length is <= 0.000001
+			length = 0.001 # could be only a single bone (static prop for example)
 
 		# Generate custom bone shape; a simple sphere
 		# TODO: add axis indicators
