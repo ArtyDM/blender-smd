@@ -425,13 +425,15 @@ def readBones():
 			return
 
 	# Got this far? Then this is a fresh import which needs a new armature.
+	if bpy.context.active_object:
+		bpy.ops.object.mode_set(mode='OBJECT',toggle=False)
 	a = smd.a = bpy.data.objects.new(smd_manager.jobName,bpy.data.armatures.new(smd_manager.jobName))
 	a.show_x_ray = True
 	a.data.use_deform_envelopes = False # Envelope deformations are not exported, so hide them
 	a.data.draw_type = 'STICK'
 	a.data.smd_bone_up_axis = smd.upAxis
 	bpy.context.scene.objects.link(a)
-	for i in bpy.context.scene.objects: i.select = False #deselect all objects
+	for i in bpy.context.selected_objects: i.select = False #deselect all objects
 	a.select = True
 	bpy.context.scene.objects.active = a
 	try:
@@ -597,7 +599,7 @@ def readFrames():
 		smd.poseArm = pose_arm = bpy.data.objects.new(pose_arm_name,pose_arm_data)
 		bpy.context.scene.objects.link(pose_arm)
 		#bpy.context.scene.update()
-		for i in bpy.context.scene.objects: i.select = False #deselect all objects
+		for i in bpy.context.selected_objects: i.select = False #deselect all objects
 		pose_arm.select = True
 		bpy.context.scene.objects.active = pose_arm
 		ops.object.mode_set(mode='EDIT', toggle=False)
@@ -1734,7 +1736,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		else:
 			if smd.a.data.smd_bone_up_axis != 'Z':
 				smd.a.rotation_euler = getUpAxisMat(smd.a.data.smd_bone_up_axis).invert().to_euler()
-				for object in bpy.context.scene.objects:
+				for object in bpy.context.selected_objects:
 					object.select = False
 				smd.a.select = True
 				bpy.ops.object.rotation_apply() # this doesn't affect the armature post-export because it's already been baked
