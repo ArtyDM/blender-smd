@@ -706,7 +706,7 @@ def readFrames():
 		if not bone_vis:
 			bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
 			bone_vis = bpy.context.active_object
-			bone_vis.data.name = "smd_bone_vis"
+			bone_vis.name = bone_vis.data.name = "smd_bone_vis"
 			bone_vis.use_fake_user = True
 			bpy.context.scene.objects.unlink(bone_vis) # don't want the user deleting this
 			bpy.context.scene.objects.active = smd.a
