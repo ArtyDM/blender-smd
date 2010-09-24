@@ -2097,7 +2097,7 @@ class SmdExporter(bpy.types.Operator):
 			return; # otherwise we create a folder but put nothing in it
 
 		# assemble filename
-		path = bpy.path.abspath(getFileDir(props.filepath) + subdir)
+		path = bpy.path.abspath(getFileDir(props.filepath) + object.smd_subdir)
 		if path and path[-1] not in ['/','\\']:
 			if os.name is 'nt':
 				path += "\\"
