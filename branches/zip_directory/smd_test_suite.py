@@ -100,23 +100,14 @@ class SmdTestSuite(bpy.types.Operator):
 				if object.type == 'ARMATURE':
 					self.newestArmatureObj = object
 		objWrite = None
-		#assert self.context.mode == 'OBJECT'
-		#for object in self.context.selected_objects:
-		#	object.select = False
 		for object in self.context.scene.objects:
 			#if object.name == 'smd_bone_vis': continue
 			if object == self.newestArmatureObj and jobType == 'ANIM':
-				#object.select = True
-				#self.context.scene.objects.active = object
-				#print('1 active_object is ',bpy.context.active_object)
 				if objWrite:
 					self.fail('trying to write unexpected extra object ', object)
 				else:
 					objWrite = object
 			elif object.type == 'MESH' and jobType == 'REF' and object in newObjects:
-				#object.select = True
-				#self.context.scene.objects.active = object
-				#print('2 active_object is ',bpy.context.active_object)
 				if objWrite:
 					self.fail('trying to write unexpected extra object ', object)
 				else:

@@ -126,7 +126,6 @@ def readBones():
 	a.show_x_ray = True
 	a.data.use_deform_envelopes = False # Envelope deformations are not exported, so hide them
 	a.data.draw_type = 'STICK'
-	a.data.smd_bone_up_axis = smd.upAxis
 	bpy.context.scene.objects.link(a)
 	for i in bpy.context.selected_objects: i.select = False #deselect all objects
 	a.select = True
@@ -378,7 +377,7 @@ def readFrames():
 				return False
 		return True
 
-	if smd.jobType in ['REF','ANIM_SOLO']:
+	if smd.jobType in ['REF','ANIM_SOLO'] and len(smd.a.data.bones) > 1:
 		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
@@ -478,6 +477,17 @@ def applyFrameData(frameData, restPose=False):
 
 	if not restPose:
 		matAllPose = {}
+		
+	if smd_manager.upAxis == 'Z':
+		tail_vec = vector([1,0,0])
+		roll_vec = vector([0,1,0])
+	elif smd_manager.upAxis == 'Y':
+		tail_vec = vector([0,-1,0])
+		roll_vec = vector([0,0,1])
+	elif smd_manager.upAxis == 'X':
+		# FIXME: same as Z for now
+		tail_vec = vector([1,0,0])
+		roll_vec = vector([0,1,0])
 
 	for boneName in smd.sortedBoneNames:
 
@@ -495,25 +505,18 @@ def applyFrameData(frameData, restPose=False):
 			if bn.parent:
 				rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
 				bn.head = bn.parent.head + (smd_pos * rotMats[bn.parent.name])
-				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
-				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
-
-				# $upaxis Y
-				if False:
-					bn.tail = bn.head + (vector([0,-1,0]) * rotMats[boneName]) # maya bones point down X
-					bn.align_roll(vector([0,0,1]) * rotMats[boneName])
+				bn.tail = bn.head + (tail_vec * rotMats[boneName])
+				bn.align_roll(roll_vec * rotMats[boneName])
 			else:
-				bn.head = smd_pos # LOCATION WITH NO PARENT
-				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
-				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
-
-				# $upaxis Y
-				if False:
-					upAxisMat = rMat(-math.pi/2,3,'X')
+				if smd_manager.upAxis in ['Z','X']: # FIXME: X probably need same treatment as Y
+					bn.head = smd_pos
+					bn.tail = bn.head + (tail_vec * rotMats[boneName])
+					bn.align_roll(roll_vec * rotMats[boneName])
+				elif smd_manager.upAxis == 'Y':
 					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
-					rotMats[boneName] = upAxisMat * rotMats[boneName]
-					bn.tail = bn.head + (vector([0,-1,0]) * rotMats[boneName])
-					bn.align_roll(vector([0,0,1]) * rotMats[boneName])
+					rotMats[boneName] = getUpAxisMat('X') * rotMats[boneName]
+					bn.tail = bn.head + (tail_vec * rotMats[boneName])
+					bn.align_roll(roll_vec * rotMats[boneName])
 
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
@@ -528,7 +531,7 @@ def applyFrameData(frameData, restPose=False):
 				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
 				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
 			else:
-				edit_bone.head = smd_pos # LOCATION WITH NO PARENT
+				edit_bone.head = smd_pos
 				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
 				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
 
@@ -981,8 +984,14 @@ class SmdImporter(bpy.types.Operator):
 	bl_label = "Import SMD/VTA/QC"
 	bl_options = {'REGISTER', 'UNDO'}
 
+	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
+	if bpy.app.build_revision != 'unknown' and int(bpy.app.build_revision) >= 32095:
+		filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+		filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
+	
+	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
 	doAnim = BoolProperty(name="Import animations (slow)", description="This process now works, but needs optimisation", default=True)
 	#cleanAnim = BoolProperty(name="Clean animation curves",description="Removes closely-spaced keyframes. Recommended, but is slightly destructive.",default=True)
@@ -1017,6 +1026,7 @@ class SmdImporter(bpy.types.Operator):
 
 		log.errorReport("imported",self)
 		if smd.m:
+			smd.m.select = True
 			for area in context.screen.areas:
 				if area.type == 'VIEW_3D':
 					space = area.active_space
