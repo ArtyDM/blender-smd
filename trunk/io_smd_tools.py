@@ -425,12 +425,14 @@ def readBones():
 			return
 
 	# Got this far? Then this is a fresh import which needs a new armature.
+	if bpy.context.active_object:
+		bpy.ops.object.mode_set(mode='OBJECT',toggle=False)
 	a = smd.a = bpy.data.objects.new(smd_manager.jobName,bpy.data.armatures.new(smd_manager.jobName))
 	a.show_x_ray = True
 	a.data.use_deform_envelopes = False # Envelope deformations are not exported, so hide them
 	a.data.draw_type = 'STICK'
 	bpy.context.scene.objects.link(a)
-	for i in bpy.context.scene.objects: i.select = False #deselect all objects
+	for i in bpy.context.selected_objects: i.select = False #deselect all objects
 	a.select = True
 	bpy.context.scene.objects.active = a
 	try:
@@ -596,7 +598,7 @@ def readFrames():
 		smd.poseArm = pose_arm = bpy.data.objects.new(pose_arm_name,pose_arm_data)
 		bpy.context.scene.objects.link(pose_arm)
 		#bpy.context.scene.update()
-		for i in bpy.context.scene.objects: i.select = False #deselect all objects
+		for i in bpy.context.selected_objects: i.select = False #deselect all objects
 		pose_arm.select = True
 		bpy.context.scene.objects.active = pose_arm
 		ops.object.mode_set(mode='EDIT', toggle=False)
@@ -1289,8 +1291,14 @@ class SmdImporter(bpy.types.Operator):
 	bl_label = "Import SMD/VTA/QC"
 	bl_options = {'REGISTER', 'UNDO'}
 
+	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
+	if bpy.app.build_revision != 'unknown' and int(bpy.app.build_revision) >= 32095:
+		filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+		filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
+	
+	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
 	doAnim = BoolProperty(name="Import animations (slow)", description="This process now works, but needs optimisation", default=True)
 	#cleanAnim = BoolProperty(name="Clean animation curves",description="Removes closely-spaced keyframes. Recommended, but is slightly destructive.",default=True)
@@ -1755,6 +1763,9 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		else:
 			writeBones()
 			writeFrames()
+	elif smd.jobType in ['REF','PHYS']:
+		writeBones()
+		writeFrames()
 
 	if smd.m:
 		if smd.jobType in ['REF','PHYS']:
