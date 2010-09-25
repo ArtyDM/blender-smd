@@ -798,7 +798,7 @@ def unregister():
 	del Scene.smd_qc_compile
 	del Scene.smd_studiomdl_branch
 	del Scene.smd_studiomdl_custom_path
-	del Scene.smd_bone_up_axis
+	del Scene.smd_up_axis
 	Object = bpy.types.Object
 	del Object.smd_export
 	del Object.smd_subdir
