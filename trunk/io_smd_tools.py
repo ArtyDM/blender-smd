@@ -323,6 +323,8 @@ def getRotAsEuler(thing):
 		log.error(smd,thing.name,"uses an unknown rotation mode.")
 	return out
 
+axes = (('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis'))
+
 ########################
 #        Import        #
 ########################
@@ -705,7 +707,7 @@ def readFrames():
 		if not bone_vis:
 			bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
 			bone_vis = bpy.context.active_object
-			bone_vis.name = "smd_bone_vis"
+			bone_vis.data.name = bone_vis.name = "smd_bone_vis"
 			bone_vis.use_fake_user = True
 			bpy.context.scene.objects.unlink(bone_vis) # don't want the user deleting this
 			bpy.context.scene.objects.active = smd.a
@@ -818,8 +820,9 @@ def applyFrameData(frameData, restPose=False):
 					bn.tail = bn.head + (tail_vec * rotMats[boneName])
 					bn.align_roll(roll_vec * rotMats[boneName])
 				elif smd_manager.upAxis == 'Y':
+					upAxisMat = rMat(-math.pi/2,3,'X')
 					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
-					rotMats[boneName] = getUpAxisMat('X') * rotMats[boneName]
+					rotMats[boneName] = upAxisMat * rotMats[boneName]
 					bn.tail = bn.head + (tail_vec * rotMats[boneName])
 					bn.align_roll(roll_vec * rotMats[boneName])
 
@@ -833,12 +836,12 @@ def applyFrameData(frameData, restPose=False):
 				parentName = smd.parentBones[boneName]
 				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
 				edit_bone.head = edit_bone.parent.head + (smd_pos * rotMats[parentName])
-				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
+				edit_bone.tail = edit_bone.head + (tail_vec * rotMats[boneName])
+				edit_bone.align_roll(roll_vec * rotMats[boneName])
 			else:
 				edit_bone.head = smd_pos
-				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
+				edit_bone.tail = edit_bone.head + (tail_vec * rotMats[boneName])
+				edit_bone.align_roll(roll_vec * rotMats[boneName])
 
 			matAllPose[boneName] = edit_bone.matrix.copy()
 
@@ -958,9 +961,9 @@ def readPolys():
 			# TODO: transform coords to flip model onto Blender XZY, possibly scale it too
 
 			# Read co-ordinates and normals
-			for i in range(1,4): # Should be 1,3??? Why do I need 1,4?
+			for i in range(1,4): # 0 is deprecated bone weight value
 				cos.append( float(values[i]) )
-				norms.append( float(values[i+3]) )
+				norms.append( float(values[i+3]) ) # Blender currenty ignores this data!
 
 			# Can't do these in the above for loop since there's only two
 			uvs.append( float(values[7]) )
@@ -1003,7 +1006,7 @@ def readPolys():
 
 		# Fast add!
 		md.vertices.foreach_set("co",cos)
-		md.vertices.foreach_set("normal",norms)
+		md.vertices.foreach_set("normal",norms) # Blender currently ignores this data!
 		md.faces.foreach_set("material_index", mats)
 		md.uv_textures[0].data.foreach_set("uv",uvs)
 
@@ -1273,18 +1276,13 @@ def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = Fals
 	bpy.ops.object.select_all(action='DESELECT')
 	smd.a.select = True
 
-	if smd.upAxisMat and smd.upAxisMat != 1:
-		if smd.jobType in ['REF','ANIM_SOLO']:
-			smd.a.rotation_euler = smd.upAxisMat.to_euler()
-		else:
-			smd.m.rotation_euler = smd.upAxisMat.to_euler()
-			smd.m.select = True
+	if smd.m and smd.upAxisMat and smd.upAxisMat != 1:
+		smd.m.rotation_euler = smd.upAxisMat.to_euler()
+		smd.m.select = True
 		bpy.context.scene.update()
 		bpy.ops.object.rotation_apply()
 
 	printTimeMessage(smd.startTime,smd.jobName,"import")
-
-axes = (('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis'))
 
 class SmdImporter(bpy.types.Operator):
 	bl_idname = "import.smd"
@@ -1569,6 +1567,12 @@ def writePolys():
 	smd.file.write("triangles\n")
 	md = smd.m.data
 	face_index = 0
+	
+	sharp_verts = []
+	for edge in md.edges:
+		if edge.use_edge_sharp:
+			sharp_verts.extend(edge.vertices)
+	
 	for face in md.faces:
 		if smd.m.material_slots:
 			mat = smd.m.material_slots[face.material_index].material
@@ -1581,10 +1585,15 @@ def writePolys():
 			# Vertex locations, normal directions
 			verts = norms = ""
 			v = md.vertices[face.vertices[i]]
+			
+			if face.vertices[i] in sharp_verts:
+				normal = face.normal
+			else:
+				normal = v.normal
 
 			for j in range(3):
 				verts += " " + getSmdFloat(v.co[j])
-				norms += " " + getSmdFloat(v.normal[j])
+				norms += " " + getSmdFloat(normal[j])
 
 			# UVs
 			if len(md.uv_textures):
@@ -1666,7 +1675,7 @@ def bakeObj(in_object):
 	
 	bi['disabled_modifiers'] = []
 	bpy.context.scene.objects.link(baked)
-	bpy.context.scene.objects.active = baked	
+	bpy.context.scene.objects.active = baked
 	for object in bpy.context.selected_objects:
 		object.select = False
 	baked.select = True
@@ -1733,8 +1742,8 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 	smd.jobType = smd_type
 	smd.startTime = time.time()
 	smd.uiTime = 0
-	mesh_was_hidden = False
-
+	arm_was_hidden = mesh_was_hidden = False
+	
 	if object.type == 'MESH':
 		if not smd.jobType:
 			smd.jobType = 'REF'
@@ -1756,16 +1765,16 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 	smd.file.write("version 1\n")
 
 	if smd.a:
+		if smd.a.hide:
+			smd.a.hide = False
+			arm_was_hidden = True
+
 		bakeObj(smd.a) # MUST be baked after the mesh
 		sortBonesForExport() # Get a list of bone names sorted in the order to be exported, and assign a unique SMD ID to every bone.
-		if smd.jobType == 'FLEX':
-			writeBones(quiet=True)
-		else:
-			writeBones()
-			writeFrames()
-	elif smd.jobType in ['REF','PHYS']:
-		writeBones()
-		writeFrames()
+
+	# these write empty blocks if no armature is found. Required!
+	writeBones(quiet = smd.jobType == 'FLEX')
+	writeFrames()
 
 	if smd.m:
 		if smd.jobType in ['REF','PHYS']:
@@ -1774,8 +1783,9 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 			writeShapes()
 
 	unBake()
-
 	smd.file.close()
+	if arm_was_hidden:
+		smd.a.hide = True
 	if mesh_was_hidden:
 		smd.m.hide = True
 	if not quiet: printTimeMessage(smd.startTime,smd.jobName,"export")
