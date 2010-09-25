@@ -425,15 +425,12 @@ def readBones():
 			return
 
 	# Got this far? Then this is a fresh import which needs a new armature.
-	if bpy.context.active_object:
-		bpy.ops.object.mode_set(mode='OBJECT',toggle=False)
 	a = smd.a = bpy.data.objects.new(smd_manager.jobName,bpy.data.armatures.new(smd_manager.jobName))
 	a.show_x_ray = True
 	a.data.use_deform_envelopes = False # Envelope deformations are not exported, so hide them
 	a.data.draw_type = 'STICK'
-	a.data.smd_bone_up_axis = smd.upAxis
 	bpy.context.scene.objects.link(a)
-	for i in bpy.context.selected_objects: i.select = False #deselect all objects
+	for i in bpy.context.scene.objects: i.select = False #deselect all objects
 	a.select = True
 	bpy.context.scene.objects.active = a
 	try:
@@ -599,7 +596,7 @@ def readFrames():
 		smd.poseArm = pose_arm = bpy.data.objects.new(pose_arm_name,pose_arm_data)
 		bpy.context.scene.objects.link(pose_arm)
 		#bpy.context.scene.update()
-		for i in bpy.context.selected_objects: i.select = False #deselect all objects
+		for i in bpy.context.scene.objects: i.select = False #deselect all objects
 		pose_arm.select = True
 		bpy.context.scene.objects.active = pose_arm
 		ops.object.mode_set(mode='EDIT', toggle=False)
@@ -683,7 +680,7 @@ def readFrames():
 				return False
 		return True
 
-	if smd.jobType in ['REF','ANIM_SOLO']:
+	if smd.jobType in ['REF','ANIM_SOLO'] and len(smd.a.data.bones) > 1:
 		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
@@ -706,7 +703,7 @@ def readFrames():
 		if not bone_vis:
 			bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
 			bone_vis = bpy.context.active_object
-			bone_vis.name = bone_vis.data.name = "smd_bone_vis"
+			bone_vis.name = "smd_bone_vis"
 			bone_vis.use_fake_user = True
 			bpy.context.scene.objects.unlink(bone_vis) # don't want the user deleting this
 			bpy.context.scene.objects.active = smd.a
@@ -783,6 +780,17 @@ def applyFrameData(frameData, restPose=False):
 
 	if not restPose:
 		matAllPose = {}
+		
+	if smd_manager.upAxis == 'Z':
+		tail_vec = vector([1,0,0])
+		roll_vec = vector([0,1,0])
+	elif smd_manager.upAxis == 'Y':
+		tail_vec = vector([0,-1,0])
+		roll_vec = vector([0,0,1])
+	elif smd_manager.upAxis == 'X':
+		# FIXME: same as Z for now
+		tail_vec = vector([1,0,0])
+		roll_vec = vector([0,1,0])
 
 	for boneName in smd.sortedBoneNames:
 
@@ -800,25 +808,18 @@ def applyFrameData(frameData, restPose=False):
 			if bn.parent:
 				rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
 				bn.head = bn.parent.head + (smd_pos * rotMats[bn.parent.name])
-				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
-				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
-
-				# $upaxis Y
-				if False:
-					bn.tail = bn.head + (vector([0,-1,0]) * rotMats[boneName]) # maya bones point down X
-					bn.align_roll(vector([0,0,1]) * rotMats[boneName])
+				bn.tail = bn.head + (tail_vec * rotMats[boneName])
+				bn.align_roll(roll_vec * rotMats[boneName])
 			else:
-				bn.head = smd_pos # LOCATION WITH NO PARENT
-				bn.tail = bn.head + (vector([1,0,0]) * rotMats[boneName])
-				bn.align_roll(vector([0,1,0]) * rotMats[boneName])
-
-				# $upaxis Y
-				if False:
-					upAxisMat = rMat(-math.pi/2,3,'X')
+				if smd_manager.upAxis in ['Z','X']: # FIXME: X probably need same treatment as Y
+					bn.head = smd_pos
+					bn.tail = bn.head + (tail_vec * rotMats[boneName])
+					bn.align_roll(roll_vec * rotMats[boneName])
+				elif smd_manager.upAxis == 'Y':
 					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
-					rotMats[boneName] = upAxisMat * rotMats[boneName]
-					bn.tail = bn.head + (vector([0,-1,0]) * rotMats[boneName])
-					bn.align_roll(vector([0,0,1]) * rotMats[boneName])
+					rotMats[boneName] = getUpAxisMat('X') * rotMats[boneName]
+					bn.tail = bn.head + (tail_vec * rotMats[boneName])
+					bn.align_roll(roll_vec * rotMats[boneName])
 
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
@@ -833,7 +834,7 @@ def applyFrameData(frameData, restPose=False):
 				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
 				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
 			else:
-				edit_bone.head = smd_pos # LOCATION WITH NO PARENT
+				edit_bone.head = smd_pos
 				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
 				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
 
@@ -1324,6 +1325,7 @@ class SmdImporter(bpy.types.Operator):
 
 		log.errorReport("imported",self)
 		if smd.m:
+			smd.m.select = True
 			for area in context.screen.areas:
 				if area.type == 'VIEW_3D':
 					space = area.active_space
@@ -1648,50 +1650,67 @@ def writeShapes():
 	print("- Exported",num_shapes,"vertex animations")
 	return
 
-def bakeObj(object):
+# Creates a duplicate datablock with object transformations and modifiers applied
+def bakeObj(in_object):
 	bi = {}
-	bi['object'] = object
+	bi['src'] = in_object
+	baked = bi['baked'] = in_object.copy()
+	
+	bi['disabled_modifiers'] = []
+	bpy.context.scene.objects.link(baked)
+	bpy.context.scene.objects.active = baked	
+	for object in bpy.context.selected_objects:
+		object.select = False
+	baked.select = True
+	
+	for mod in baked.modifiers:
+		if mod.type == 'ARMATURE':
+			mod.show_render = False # the mesh will be baked in rendering mode
+		
+	if baked.type == 'MESH':
+		smd.m = baked
+		baked.data = baked.create_mesh(bpy.context.scene,True,'RENDER') # the important command
 
-	# make a new datablock and back up user settings
-	bi['user_data'] = object.data
-	bi['baked_data'] = object.data = object.data.copy()
-	bi['loc'] = object.location.copy()
-	bi['rot'] = object.rotation_euler.copy()
-	bi['scale'] = object.scale.copy()
-
-	if object.type == 'MESH':
 		# quads > tris
-		bpy.ops.object.mode_set(mode='OBJECT')
-		bpy.context.scene.objects.active = object
-		object.select=True
 		bpy.ops.object.mode_set(mode='EDIT')
 		bpy.ops.mesh.select_all(action='SELECT')
 		bpy.ops.mesh.quads_convert_to_tris()
 		bpy.ops.object.mode_set(mode='OBJECT')
 
-		if object.parent or object.find_armature(): # don't translate standalone meshes
+		if baked.parent or baked.find_armature(): # do not translate standalone meshes (and never translate armatures)
 			bpy.ops.object.location_apply()
-
-	# Do rot and scale on both meshes and armatures
+			
+	elif baked.type == 'ARMATURE':
+		baked.data = in_object.data.copy()
+		smd.a = baked
+	
 	bpy.ops.object.rotation_apply()
 	bpy.ops.object.scale_apply()
-
+	
+	if bpy.context.scene.smd_up_axis != 'Z':
+		# Object rotation is in local space, requiring this second rotation_apply() step
+		baked.rotation_mode = 'QUATERNION'
+		baked.rotation_quaternion = getUpAxisMat(bpy.context.scene.smd_up_axis).invert().to_quat()
+		bpy.ops.object.rotation_apply()
+	
 	smd.bakeInfo.append(bi) # save to manager
 
 def unBake():
 	for bi in smd.bakeInfo:
-		object = bi['object']
-
-		object.data = bi['user_data']
-		object.location = bi['loc']
-		object.rotation_euler = bi['rot']
-		object.scale = bi['scale']
-
-		if object.type == 'MESH':
-			bpy.data.meshes.remove(bi['baked_data'])
-		elif object.type == 'ARMATURE':
-			bpy.data.armatures.remove(bi['baked_data'])
-
+		baked_data = bi['baked'].data
+		type = bi['baked'].type
+		bpy.ops.object.mode_set(mode='OBJECT')
+		
+		bpy.context.scene.objects.unlink(bi['baked'])
+		bpy.data.objects.remove(bi['baked'])
+		
+		if type == 'MESH':
+			bpy.data.meshes.remove(baked_data)
+			smd.m = bi['src']
+		elif type == 'ARMATURE':
+			bpy.data.armatures.remove(baked_data)
+			smd.a = bi['src']
+		
 		del bi
 
 # Creates an SMD file
@@ -1734,12 +1753,6 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		if smd.jobType == 'FLEX':
 			writeBones(quiet=True)
 		else:
-			if smd.a.data.smd_bone_up_axis != 'Z':
-				smd.a.rotation_euler = getUpAxisMat(smd.a.data.smd_bone_up_axis).invert().to_euler()
-				for object in bpy.context.selected_objects:
-					object.select = False
-				smd.a.select = True
-				bpy.ops.object.rotation_apply() # this doesn't affect the armature post-export because it's already been baked
 			writeBones()
 			writeFrames()
 
@@ -1846,6 +1859,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		SMD_MT_ExportChoice.draw(self,context)
 
 		l.prop(scene,"smd_path",text="Output Folder")
+		l.prop(scene,"smd_up_axis",text="Target Up Axis")
 
 		validObs = []
 		for object in scene.objects:
@@ -1896,7 +1910,6 @@ class SMD_PT_Armature(bpy.types.Panel):
 
 		l.prop(arm,"smd_subdir",text="Export Subfolder")
 		l.prop(arm,"smd_action_filter",text="Action Filter")
-		l.prop(arm.data,"smd_bone_up_axis",text="Target Up Axis")
 
 		self.embed_arm = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -2169,12 +2182,12 @@ def register():
 	)
 	type.Scene.smd_studiomdl_branch = EnumProperty(name="Studiomdl Branch",items=src_branches,description="The Source tool branch to compile with",default='orangebox')
 	type.Scene.smd_studiomdl_custom_path = StringProperty(name="Studiomdl Path",description="User-defined path to Studiomdl, for Custom compiles.",subtype="FILE_PATH")
+	type.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
 
 	type.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	type.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	type.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 
-	type.Armature.smd_bone_up_axis = EnumProperty(name="SMD Bone Up Axis",items=axes,default='Z',description="The up axis of bones in the target reference mesh")
 
 def unregister():
 	type.INFO_MT_file_import.remove(menu_func_import)
