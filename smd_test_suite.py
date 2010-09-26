@@ -1,13 +1,13 @@
 bl_addon_info = {
 	"name": "SMD Tools Test Suite",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.7.1b",
+	"version": (0, 8),
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "Properties > Scene",
 	"wiki_url": "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools",
 	"tracker_url": "http://developer.valvesoftware.com/wiki/Talk:Blender_SMD_Tools",
-	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
+	"description": "Run tests on SMD Tools."}
 
 import bpy, os, io_smd_tools
 from io_smd_tools import *
@@ -119,7 +119,7 @@ class SmdTestSuite(bpy.types.Operator):
 			return False
 		objects = []
 		objects += self.context.scene.objects
-		readSMD(self.context, filepath=inFile, upAxis=inAxis, connectBones=connectBones, cleanAnim=False, newscene=False, multiImport=multiImport)
+		readSMD(self.context, filepath=inFile, upAxis=inAxis, connectBones=connectBones, newscene=False, multiImport=multiImport)
 		newObjects = []
 		for object in self.context.scene.objects:
 			if not object in objects:
