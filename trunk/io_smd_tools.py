@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.7.1b",
+	"version": "0.8",
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -70,7 +70,6 @@ class smd_info:
 		self.connectBones = False
 		self.upAxis = 'Z'
 		self.upAxisMat = 1 # vec * 1 == vec
-		self.cleanAnim = False
 
 		self.bakeInfo = []
 
@@ -107,7 +106,6 @@ class qc_info:
 		self.upAxis = 'Z'
 		self.upAxisMat = None
 		self.numSMDs = 0
-		self.cleanAnim = False
 
 		self.in_block_comment = False
 
@@ -528,35 +526,6 @@ def applyPoseForThisFrame(matAllRest, matAllPose):
 		pose_bone.location = loc
 		pose_bone.keyframe_insert('location',-1,frame,boneName)
 
-def cleanFCurves():
-
-	return # <<<<<<==============
-
-	if not smd_manager.cleanAnim:
-		return
-
-	# Example of removing a keyframe if it is the "same" as the previous and next ones.
-	# Don't know what Blender considers the same (to give an orange line in the dopesheet).
-	for fcurve in smd.a.animation_data.action.fcurves:
-		last_frame = len(fcurve.keyframe_points)
-		i = 1
-		while i < last_frame - 1:
-			ptPrev = fcurve.keyframe_points[i-1]
-			ptCur  = fcurve.keyframe_points[i]
-			ptNext = fcurve.keyframe_points[i+1]
-			if abs(ptPrev.co[1] - ptCur.co[1]) <= 0.0001 and abs(ptCur.co[1] - ptNext.co[1]) <= 0.0001:
-				fcurve.keyframe_points.remove(ptCur,fast=True)
-				last_frame -= 1
-			else:
-				i += 1
-
-	if 0:
-		# the code below crashes Blender when the import finishes
-		current_type = bpy.context.area.type
-		bpy.context.area.type = 'GRAPH_EDITOR'
-		bpy.ops.graph.clean()
-		bpy.context.area.type = current_type
-
 def readFrames():
 	# We only care about the pose data in some SMD types
 	if smd.jobType not in [ 'REF', 'ANIM', 'ANIM_SOLO' ]:
@@ -655,7 +624,12 @@ def readFrames():
 		bpy.data.objects.remove(pose_arm)
 		bpy.data.armatures.remove(arm_data)
 
-		cleanFCurves()
+		# the code below crashes Blender when the import finishes
+		if 0:
+			current_type = bpy.context.area.type
+			bpy.context.area.type = 'GRAPH_EDITOR'
+			bpy.ops.graph.clean()
+			bpy.context.area.type = current_type
 
 	if smd.jobType in ['REF','ANIM_SOLO'] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		assert smd.a.mode == 'EDIT'
@@ -1089,7 +1063,7 @@ def readShapes():
 	print("- Imported",num_shapes-1,"flex shapes") # -1 because the first shape is the reference position
 
 # Parses a QC file
-def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_qc = False):
+def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False):
 	filename = getFilename(filepath)
 	filedir = getFileDir(filepath)
 
@@ -1100,7 +1074,6 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 		qc.startTime = time.time()
 		qc.jobName = filename
 		qc.root_filedir = filedir
-		qc.cleanAnim = cleanAnim
 		if newscene:
 			bpy.context.screen.scene = bpy.data.scenes.new(filename) # BLENDER BUG: this currently doesn't update bpy.context.scene
 		else:
@@ -1154,7 +1127,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 				path = qc.cd() + appendExt(path,ext)
 			if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
 				qc.imported_smds.append(path)
-				readSMD(context,path,qc.upAxis,connectBones,cleanAnim, False,type,multiImport,from_qc=True)
+				readSMD(context,path,qc.upAxis,connectBones,False,type,multiImport,from_qc=True)
 				qc.numSMDs += 1
 			else:
 				log.warning("Skipped repeated SMD \"%s\"\n" % getFilename(line[word_index]))
@@ -1208,10 +1181,10 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 			else:
 				path = filedir + appendExt(line[1], "qci") # special case: ignores dir stack
 			try:
-				readQC(context,path,False, doAnim, connectBones, cleanAnim)
+				readQC(context,path,False, doAnim, connectBones)
 			except IOError:
 				if not line[1].endswith("qci"):
-					readQC(context,path[:-3]+"qc",False, doAnim, connectBones, cleanAnim)
+					readQC(context,path[:-3]+"qc",False, doAnim, connectBones)
 
 	file.close()
 
@@ -1220,7 +1193,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, cleanAnim, outer_
 	return qc.numSMDs
 
 # Parses an SMD file
-def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = False, smd_type = None, multiImport = False, from_qc = False):
+def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, multiImport = False, from_qc = False):
 	# First, overcome Python's awful var redefinition behaviour. The smd object must be
 	# explicitly deleted at the end of the script.
 	if filepath.endswith("dmx"):
@@ -1234,7 +1207,6 @@ def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = Fals
 	smd.multiImport = multiImport
 	smd.startTime = time.time()
 	smd.connectBones = connectBones
-	smd.cleanAnim = cleanAnim
 	if upAxis:
 		smd.upAxis = upAxis
 		smd.upAxisMat = getUpAxisMat(upAxis)
@@ -1292,14 +1264,12 @@ class SmdImporter(bpy.types.Operator):
 	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
-	if bpy.app.build_revision != 'unknown' and int(bpy.app.build_revision) >= 32095:
-		filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
-		filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
+	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
 	
 	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
 	doAnim = BoolProperty(name="Import animations (slow)", description="This process now works, but needs optimisation", default=True)
-	#cleanAnim = BoolProperty(name="Clean animation curves",description="Removes closely-spaced keyframes. Recommended, but is slightly destructive.",default=True)
 	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up'. Ignored for QCs.")
 	connectionEnum = ( ('NONE','Do not connect (sphere bones)','All bones will be unconnected spheres'),
 	('COMPATIBILITY','Connect retaining compatibility','Only connect bones that will not break compatibility with existing SMDs'),
@@ -1312,12 +1282,11 @@ class SmdImporter(bpy.types.Operator):
 
 		if os.name == 'nt': # windows only
 			self.properties.filepath = self.properties.filepath.lower()
-		cleanAnim = True # UI option can't be hidden due to Blender bug
 		if self.properties.filepath.endswith('.qc') | self.properties.filepath.endswith('.qci'):
-			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, cleanAnim, outer_qc=True)
+			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, outer_qc=True)
 			bpy.context.scene.objects.active = qc.armature
 		elif self.properties.filepath.endswith('.smd'):
-			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, cleanAnim, multiImport=self.properties.multiImport)
+			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, multiImport=self.properties.multiImport)
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith ('.vta'):
 			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type='FLEX')
@@ -1672,7 +1641,7 @@ def bakeObj(in_object):
 	
 	for mod in baked.modifiers:
 		if mod.type == 'ARMATURE':
-			mod.show_render = False # the mesh will be baked in rendering mode
+			mod.show_viewport = False # the mesh will be baked in preview mode
 		
 	if baked.type == 'MESH':
 		smd.m = baked
@@ -1686,7 +1655,7 @@ def bakeObj(in_object):
 			edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
 			edgesplit.use_edge_angle = False
 		
-		baked.data = baked.create_mesh(bpy.context.scene,True,'RENDER') # the important command
+		baked.data = baked.create_mesh(bpy.context.scene,True,'PREVIEW') # the important command
 
 		# quads > tris
 		bpy.ops.object.mode_set(mode='EDIT')
