@@ -343,9 +343,10 @@ def scanSMD():
 
 	if smd.jobType == None:
 		print("- This is a skeltal animation or pose") # No triangles, no flex - must be animation
-		for object in bpy.context.scene.objects:
-			if object.type == 'ARMATURE':
-				smd.jobType = 'ANIM'
+		if not smd.multiImport:
+			for object in bpy.context.scene.objects:
+				if object.type == 'ARMATURE':
+					smd.jobType = 'ANIM'
 		if smd.jobType == None: # support importing animations on their own
 			smd.jobType = 'ANIM_SOLO'
 
@@ -592,12 +593,12 @@ def readFrames():
 
 		# Get all the armature-space matrices for the bones at their rest positions
 		smd.matAllRest = {}
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
 		for bone in smd.a.data.bones:
 			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
 		# Step 1: set smd.poseArm pose and store the armature-space matrices in smd.matAllPose for each frame
 		smd.matAllPose = []
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
 		bpy.context.scene.objects.active = smd.poseArm
 		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
 		for i in range(len(smd.frameData)):
@@ -765,6 +766,8 @@ def applyFrameData(frameData, restPose=False):
 	elif smd_manager.upAxis == 'Y':
 		tail_vec = vector([0,-1,0])
 		roll_vec = vector([0,0,1])
+		tail_vec = vector([1,0,0])
+		roll_vec = vector([0,1,0])
 	elif smd_manager.upAxis == 'X':
 		# FIXME: same as Z for now
 		tail_vec = vector([1,0,0])
@@ -789,6 +792,7 @@ def applyFrameData(frameData, restPose=False):
 				bn.tail = bn.head + (tail_vec * rotMats[boneName])
 				bn.align_roll(roll_vec * rotMats[boneName])
 			else:
+				'''
 				if smd_manager.upAxis in ['Z','X']: # FIXME: X probably need same treatment as Y
 					bn.head = smd_pos
 					bn.tail = bn.head + (tail_vec * rotMats[boneName])
@@ -799,7 +803,11 @@ def applyFrameData(frameData, restPose=False):
 					rotMats[boneName] = upAxisMat * rotMats[boneName]
 					bn.tail = bn.head + (tail_vec * rotMats[boneName])
 					bn.align_roll(roll_vec * rotMats[boneName])
-
+				'''
+				bn.head = smd_pos
+				bn.tail = bn.head + (tail_vec * rotMats[boneName])
+				bn.align_roll(roll_vec * rotMats[boneName])
+				
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
 		else:
@@ -818,6 +826,23 @@ def applyFrameData(frameData, restPose=False):
 				edit_bone.align_roll(roll_vec * rotMats[boneName])
 
 			matAllPose[boneName] = edit_bone.matrix.copy()
+
+	if smd_manager.upAxis == 'Y':
+		#upAxisMat = rMat(-math.pi/2,3,'X')
+		upAxisMat = rx90n
+		for boneName in smd.sortedBoneNames:
+			if restPose:
+				bone = smd.a.data.edit_bones[boneName]
+			else:
+				bone = smd.poseArm.data.edit_bones[boneName]
+			z_axis = bone.z_axis
+			bone.head *= upAxisMat
+			bone.tail *= upAxisMat
+			#bone.align_roll(roll_vec * rotMats[boneName] * upAxisMat)
+			bone.align_roll(z_axis * upAxisMat) # same as above
+
+			if not restPose:
+				matAllPose[boneName] = bone.matrix.copy()
 
 	if not restPose:
 		smd.matAllPose.append(matAllPose)
@@ -1003,6 +1028,9 @@ def readPolys():
 		if smd.jobType != 'PHYS':
 			ops.mesh.faces_shade_smooth()
 		ops.object.mode_set(mode='OBJECT')
+
+		if smd_manager.upAxis == 'Y':
+			md.transform(rx90)
 
 		if badWeights:
 			log.warning(badWeights,"vertices weighted to invalid bones!")
@@ -1247,13 +1275,13 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 	file.close()
 	bpy.ops.object.select_all(action='DESELECT')
 	smd.a.select = True
-
+	'''
 	if smd.m and smd.upAxisMat and smd.upAxisMat != 1:
 		smd.m.rotation_euler = smd.upAxisMat.to_euler()
 		smd.m.select = True
 		bpy.context.scene.update()
 		bpy.ops.object.rotation_apply()
-
+	'''
 	printTimeMessage(smd.startTime,smd.jobName,"import")
 
 class SmdImporter(bpy.types.Operator):
@@ -1456,10 +1484,21 @@ def writeRestPose():
 			childRotated = bone.matrix_local * ryz90
 			rot = parentRotated.invert() * childRotated
 			pos = rot.translation_part()
-			rot = rot.to_euler('XYZ')
+
+			if bpy.context.scene.smd_up_axis == 'Y':
+				#pos = rx90n * pos
+				#rot = (rx90n * rot).to_euler()
+				pass
 		else:
-			pos = bone.matrix_local.translation_part()
-			rot = (bone.matrix_local * ryz90).to_euler('XYZ')
+			#pos = (bone.matrix_local * ryz90).translation_part()
+			#rot = (bone.matrix_local * ryz90)
+			rot = bone.matrix_local * ryz90
+			pos = rot.translation_part()
+
+			if bpy.context.scene.smd_up_axis == 'Y':
+				pos = rx90n * pos
+				rot = rx90n * rot
+		rot = rot.to_euler('XYZ')
 
 		pos_str = rot_str = ""
 		for i in range(3):
@@ -1511,10 +1550,16 @@ def writeFrames():
 				childRotated = pbn.matrix * ryz90
 				rot = parentRotated.invert() * childRotated
 				pos = rot.translation_part()
-				rot = rot.to_euler('XYZ')
 			else:
-				pos = pbn.matrix.translation_part()
-				rot = (pbn.matrix * ryz90).to_euler('XYZ')
+				#pos = pbn.matrix.translation_part()
+				#rot = (pbn.matrix * ryz90)
+				rot = pbn.matrix * ryz90
+				pos = rot.translation_part()
+
+				if bpy.context.scene.smd_up_axis == 'Y':
+					pos = rx90n * pos
+					rot = rx90n * rot
+			rot = rot.to_euler('XYZ')
 
 			pos_str = rot_str = ""
 			for i in range(3):
@@ -1663,6 +1708,9 @@ def bakeObj(in_object):
 		bpy.ops.mesh.quads_convert_to_tris()
 		bpy.ops.object.mode_set(mode='OBJECT')
 
+		if bpy.context.scene.smd_up_axis == 'Y':
+			baked.data.transform(rx90n)
+
 		if baked.parent or baked.find_armature(): # do not translate standalone meshes (and never translate armatures)
 			bpy.ops.object.location_apply()
 			
@@ -1673,11 +1721,13 @@ def bakeObj(in_object):
 	bpy.ops.object.rotation_apply()
 	bpy.ops.object.scale_apply()
 	
+	'''
 	if bpy.context.scene.smd_up_axis != 'Z':
 		# Object rotation is in local space, requiring this second rotation_apply() step
 		baked.rotation_mode = 'QUATERNION'
 		baked.rotation_quaternion = getUpAxisMat(bpy.context.scene.smd_up_axis).invert().to_quat()
 		bpy.ops.object.rotation_apply()
+	'''
 	
 	smd.bakeInfo.append(bi) # save to manager
 
@@ -1841,6 +1891,21 @@ class SMD_PT_Scene(bpy.types.Panel):
 	bl_context = "scene"
 	bl_default_closed = True
 
+	def __init__(self, context):
+		#print('SMD_PT_Scene __init__')
+		# A new instance of this class gets created for *every* draw operation!
+		self.smd_test_suite = None
+		if bpy.utils.addon_check('smd_test_suite')[1]:
+			try:
+				import smd_test_suite # addon must be "enabled", don't try to load it this way
+				self.smd_test_suite = smd_test_suite.available()
+			except:
+				pass
+
+	def __del__(self):
+		#print('SMD_PT_Scene __del__')
+		pass
+
 	def draw(self, context):
 		l = self.layout
 		scene = context.scene
@@ -1880,8 +1945,8 @@ class SMD_PT_Scene(bpy.types.Panel):
 			c.prop(scene,"smd_studiomdl_custom_path")
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
-		if smd_test_suite:
-			l.operator(smd_test_suite.SmdTestSuite.bl_idname,text="Run test suite",icon='FILE_TICK')
+		if self.smd_test_suite:
+			l.operator(self.smd_test_suite,text="Run test suite",icon='FILE_TICK')
 
 class SMD_PT_Armature(bpy.types.Panel):
 	bl_label = "SMD Export"
@@ -2182,13 +2247,16 @@ def register():
 def unregister():
 	type.INFO_MT_file_import.remove(menu_func_import)
 	type.INFO_MT_file_export.remove(menu_func_export)
+	Scene = bpy.types.Scene
+	del Scene.smd_path
+	del Scene.smd_qc_compile
+	del Scene.smd_studiomdl_branch
+	del Scene.smd_studiomdl_custom_path
+	del Scene.smd_up_axis
+	Object = bpy.types.Object
+	del Object.smd_export
+	del Object.smd_subdir
+	del Object.smd_action_filter
 
 if __name__ == "__main__":
-	register()
-
-# this must come last; needs direct function/object access
-try:
-	import smd_test_suite
-	bpy.types.register(smd_test_suite.SmdTestSuite)
-except:
-	smd_test_suite = False
+    register()
