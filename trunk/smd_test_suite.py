@@ -1,7 +1,23 @@
+bl_addon_info = {
+	"name": "SMD Tools Test Suite",
+	"author": "Tom Edwards, EasyPickins",
+	"version": "0.7.1b",
+	"blender": (2, 5, 4),
+	"category": "Import/Export",
+	"location": "Properties > Scene",
+	"wiki_url": "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools",
+	"tracker_url": "http://developer.valvesoftware.com/wiki/Talk:Blender_SMD_Tools",
+	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
+
 import bpy, os, io_smd_tools
 from io_smd_tools import *
 
-test_suite_root = os.path.normpath('/SMD_Tools_Test_Suite')
+test_suite_root = os.path.abspath('/SMD_Tools_Test_Suite')
+
+def available():
+	if not os.path.exists(test_suite_root):
+		return None
+	return SmdTestSuite.bl_idname
 
 def compareVectorElem(e1,e2):
 	return e1 - e2 > 0.001
@@ -29,51 +45,111 @@ class SmdTestSuite(bpy.types.Operator):
 		#	setattr(io_smd_tools,'log',logger())
 		io_smd_tools.log = logger()
 		
-		if not os.path.exists(test_suite_root):
-			os.makedirs(test_suite_root)
+		if not available():
+			self.report('ERROR',"can't find the test suite directory")
+			return {'CANCELLED'}
 		
 		self.logfile = open(self.ipath('log.txt'), 'w')
 		
+		self.context = context
+		self.newestArmatureObj = None
+		
 		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
-		readSMD(context, filepath=self.ipath('Antlion_guard_reference.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath=self.ipath('bust_floor.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['Antlion_guard_ref.000'],filepath=self.opath('Antlion_guard_reference.smd'))
-		writeSMD(context, bpy.data.objects['Antlion_guard_referen'],filepath=self.opath('bust_floor.smd'))
-		self.compareSMDs(filename='Antlion_guard_reference.smd')
-		self.compareSMDs(filename='bust_floor.smd')
+		# some polygons go missing
+		self.runTest('Antlion_guard_reference.smd', 'REF', connectBones='NONE', multiImport=True)
+		self.runTest('bust_floor.smd', 'ANIM', connectBones='NONE', multiImport=False)
 
 		# sourcesdk_content\hl2\modelsrc\Buggy
-		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example
-		readSMD(context, filepath=self.ipath('buggy_reference.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath=self.ipath('buggy_ammo_open.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['buggy_reference.001'],filepath=self.opath('buggy_reference.smd'))
-		writeSMD(context, bpy.data.objects['buggy_reference'],filepath=self.opath('buggy_ammo_open.smd'))
-		self.compareSMDs(filename='buggy_reference.smd')
-		#self.compareSMDs(filename='buggy_ammo_open.smd')
+		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example, so lots of differences on export
+		self.runTest('buggy_reference.smd', 'REF', connectBones='NONE', multiImport=True)
+		self.runTest('buggy_ammo_open.smd', 'ANIM', connectBones='NONE', multiImport=False)
 
 		# sourcesdk_content\hl2\modelsrc\weapons\v_rocket_launcher
 		# rpg_reference.smd has a too-long material name
 		# rpg_reload.smd (originally reload.smd) doesn't list every bone for each frame
-		readSMD(context, filepath=self.ipath('rpg_reference.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
-		readSMD(context, filepath=self.ipath('rpg_reload.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=False)
-		writeSMD(context, bpy.data.objects['rpg_reference.001'],filepath=self.opath('rpg_reference.smd'))
-		writeSMD(context, bpy.data.objects['rpg_reference'],filepath=self.opath('rpg_reload.smd'))
-		self.compareSMDs(filename='rpg_reference.smd')
-		self.compareSMDs(filename='rpg_reload.smd')
+		self.runTest('rpg_reference.smd', 'REF', connectBones='NONE', multiImport=True)
+		self.runTest('rpg_reload.smd', 'ANIM', connectBones='NONE', multiImport=False)
 
 		# ANIM_SOLO test
-		readSMD(context, filepath=self.ipath('bust_floor.smd'), upAxis='Z', connectBones='NONE', cleanAnim=False, newscene=False, multiImport=True)
+		self.runTest('bust_floor.smd', 'ANIM', connectBones='NONE', multiImport=True)
+
+		# DOW2
+		self.runTest('dreadnought_main.smd', 'REF', connectBones='NONE', multiImport=True)
+
+		# connectBones tests
+		# DOW2
+		self.runTest('dreadnought_main.smd', 'REF', connectBones='COMPATIBILITY', multiImport=True)
+		
+		self.runTest('no-such-file.smd', 'REF', connectBones='NONE', multiImport=True)
+		
+		'''
+		for length in [0.001,0.01,0.1,1]:
+			io_smd_tools.min_bone_length = length
+			self.runTest('dreadnought_main.smd', 'REF', connectBones='NONE', multiImport=True)
+
+		for length in [0.001,0.01,0.1,1]:
+			io_smd_tools.min_bone_length = length
+			self.runTest('deff-dread.smd', 'REF', connectBones='NONE', multiImport=True)
+		'''
+		
+		# Y-up tests
+		self.runTest('heavy_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTest('heavy_anim2.smd', 'ANIM', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=False)
+
+		# import Z-up, export to Y-up, import Y-up as Z-up, export Z-up and compare to original
+		self.logfile.write('---------- Antlion_guard_reference.smd Z -> Y - > Z----------\n')
+		self.runTestAux(self.ipath('Antlion_guard_reference.smd'), self.opath('ZY_Antlion_guard_reference.smd'), 'REF', inAxis='Z', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('ZY_Antlion_guard_reference.smd'), self.opath('YZ_Antlion_guard_reference.smd'), 'REF', inAxis='Y', outAxis='Z', connectBones='NONE', multiImport=True)
+		self.compareSMDs(self.ipath('Antlion_guard_reference.smd'),self.opath('YZ_Antlion_guard_reference.smd'))
 
 		self.logfile.close()
 
 		return {'FINISHED'}
 	
-	def compareSMDs(self,filename):
-		self.filename = filename
-		file1 = self.ipath(filename)
-		file2 = self.opath(filename)
-		data1 = self.parseSMD(file1)
-		data2 = self.parseSMD(file2)
+	def runTest(self,filename,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
+		self.logfile.write('---------- %s ----------\n' % filename)
+		inFile = self.ipath(filename)
+		outFile = self.opath(filename)
+		if self.runTestAux(inFile,outFile,jobType,inAxis,outAxis,connectBones,multiImport):
+			self.compareSMDs(inFile,outFile)
+
+	def runTestAux(self,inFile,outFile,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
+		if not os.path.exists(inFile):
+			self.fail('skipping missing test file: ' + inFile)
+			return False
+		objects = []
+		objects += self.context.scene.objects
+		readSMD(self.context, filepath=inFile, upAxis=inAxis, connectBones=connectBones, cleanAnim=False, newscene=False, multiImport=multiImport)
+		newObjects = []
+		for object in self.context.scene.objects:
+			if not object in objects:
+				print('new object ', object.name, ':', object.type)
+				newObjects.append(object)
+				if object.type == 'ARMATURE':
+					self.newestArmatureObj = object
+		objWrite = None
+		for object in self.context.scene.objects:
+			#if object.name == 'smd_bone_vis': continue
+			if object == self.newestArmatureObj and jobType == 'ANIM':
+				if objWrite:
+					self.fail('trying to write unexpected extra object ', object)
+				else:
+					objWrite = object
+			elif object.type == 'MESH' and jobType == 'REF' and object in newObjects:
+				if objWrite:
+					self.fail('trying to write unexpected extra object ', object)
+				else:
+					objWrite = object
+		if objWrite:
+			bpy.context.scene.smd_up_axis = outAxis
+			writeSMD(self.context, objWrite, filepath=outFile)
+			return True
+		return False
+
+	def compareSMDs(self,inFile,outFile):
+		self.filename = outFile
+		data1 = self.parseSMD(inFile)
+		data2 = self.parseSMD(outFile)
 		self.compareData(data1,data2)
 	
 	def parseSMD(self,filepath):
@@ -188,11 +264,22 @@ class SmdTestSuite(bpy.types.Operator):
 						self.fail('frame %d bone %s ROT got %s expected %s' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
 
 	def fail(self,msg):
-		self.logfile.write('test suite fail: %s %s\n' % (self.filename, msg))
+		self.logfile.write('%s\n' % msg)
 		print('test suite fail: %s %s' % (self.filename, msg))
 
 	def ipath(self,filename):
 		return os.path.join(test_suite_root,filename)
+
 	def opath(self,filename):
 		return os.path.join(test_suite_root,'output',filename)
 
+def register():
+	print('smd_test_suite register')
+	pass
+
+def unregister():
+	print('smd_test_suite unregister')
+	pass
+
+if __name__ == "__main__":
+    register()
