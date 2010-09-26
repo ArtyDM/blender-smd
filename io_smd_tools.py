@@ -46,13 +46,13 @@ rx90n = rMat(math.radians(-90),4,'X')
 ry90n = rMat(math.radians(-90),4,'Y')
 rz90n = rMat(math.radians(-90),4,'Z')
 
-# SMD types:
-# 'REF' - $body, $model, $bodygroup (if before a $body or $model)
-# 'REF_ADD' - $bodygroup, $lod->replacemodel
-# 'PHYS' - $collisionmesh, $collisionjoints
-# 'ANIM' - $sequence, $animation
-# 'ANIM_SOLO' - for importing animations to scenes without an existing armature
-# 'FLEX' - $model VTA
+# SMD types
+REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
+REF_ADD = 0x2 # $bodygroup, $lod->replacemodel
+PHYS = 0x3 # $collisionmesh, $collisionjoints
+ANIM = 0x4 # $sequence, $animation
+ANIM_SOLO = 0x5 # for importing animations to scenes without an existing armature
+FLEX = 0x6 # $model VTA
 
 # I hate Python's var redefinition habits
 class smd_info:
@@ -331,12 +331,12 @@ axes = (('X','X','X axis'),('Y','Y','Y axis'),('Z','Z','Z axis'))
 def scanSMD():
 	for line in smd.file:
 		if line == "triangles\n":
-			smd.jobType = 'REF'
+			smd.jobType = REF
 			print("- This is a mesh")
 			break
 		if line == "vertexanimation\n":
 			print("- This is a flex animation library")
-			smd.jobType = 'FLEX'
+			smd.jobType = FLEX
 			break
 
 	# Finished the file
@@ -346,9 +346,9 @@ def scanSMD():
 		if not smd.multiImport:
 			for object in bpy.context.scene.objects:
 				if object.type == 'ARMATURE':
-					smd.jobType = 'ANIM'
+					smd.jobType = ANIM
 		if smd.jobType == None: # support importing animations on their own
-			smd.jobType = 'ANIM_SOLO'
+			smd.jobType = ANIM_SOLO
 
 	smd.file.seek(0,0) # rewind to start of file
 
@@ -420,8 +420,8 @@ def readBones():
 
 			isArmIn(bpy.context.scene.objects) # armature in the scene at all?
 		if smd.a:
-			if smd.jobType == 'REF':
-				smd.jobType = 'REF_ADD'
+			if smd.jobType == REF:
+				smd.jobType = REF_ADD
 			validateBones()
 			return
 
@@ -529,7 +529,7 @@ def applyPoseForThisFrame(matAllRest, matAllPose):
 
 def readFrames():
 	# We only care about the pose data in some SMD types
-	if smd.jobType not in [ 'REF', 'ANIM', 'ANIM_SOLO' ]:
+	if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
 		return
 
 	a = smd.a
@@ -557,7 +557,7 @@ def readFrames():
 				smd.sortedBoneNames.append(bone.name)
 				break
 
-	if smd.jobType in ['ANIM','ANIM_SOLO']:
+	if smd.jobType in [ANIM,ANIM_SOLO]:
 		if not a.animation_data:
 			a.animation_data_create()
 		a.animation_data.action = bpy.data.actions.new(smd.jobName)
@@ -586,10 +586,10 @@ def readFrames():
 		ops.object.mode_set(mode='EDIT')
 
 	readFrameData() # Read in all the frames
-	if smd.jobType in ['REF','ANIM_SOLO']:
+	if smd.jobType in [REF,ANIM_SOLO]:
 		assert smd.a.mode == 'EDIT'
 		applyFrameData(smd.frameData[0],restPose=True)
-	if smd.jobType in ['ANIM','ANIM_SOLO']:
+	if smd.jobType in [ANIM,ANIM_SOLO]:
 
 		# Get all the armature-space matrices for the bones at their rest positions
 		smd.matAllRest = {}
@@ -616,7 +616,7 @@ def readFrames():
 
 	# All frames read
 
-	if smd.jobType in ['ANIM','ANIM_SOLO']:
+	if smd.jobType in [ANIM,ANIM_SOLO]:
 		scn.frame_end = scn.frame_current
 
 		# Remove the pose armature
@@ -632,7 +632,7 @@ def readFrames():
 			bpy.ops.graph.clean()
 			bpy.context.area.type = current_type
 
-	if smd.jobType in ['REF','ANIM_SOLO'] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
+	if smd.jobType in [REF,ANIM_SOLO] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		assert smd.a.mode == 'EDIT'
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
@@ -659,7 +659,7 @@ def readFrames():
 				return False
 		return True
 
-	if smd.jobType in ['REF','ANIM_SOLO'] and len(smd.a.data.bones) > 1:
+	if smd.jobType in [REF,ANIM_SOLO] and len(smd.a.data.bones) > 1:
 		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
@@ -851,11 +851,11 @@ def applyFrameData(frameData, restPose=False):
 
 # triangles block
 def readPolys():
-	if smd.jobType not in [ 'REF', 'REF_ADD', 'PHYS' ]:
+	if smd.jobType not in [ REF, REF_ADD, PHYS ]:
 		return
 
 	# Create a new mesh object, disable double-sided rendering, link it to the current scene
-	if smd.jobType == 'REF' and not smd.jobName.lower().find("reference") and not smd.jobName.lower().endswith("ref"):
+	if smd.jobType == REF and not smd.jobName.lower().find("reference") and not smd.jobName.lower().endswith("ref"):
 		meshName = smd.jobName + " ref"
 	else:
 		meshName = smd.jobName
@@ -864,7 +864,7 @@ def readPolys():
 	smd.m.data.show_double_sided = False
 	smd.m.parent = smd.a
 	bpy.context.scene.objects.link(smd.m)
-	if smd.jobType == 'REF':
+	if smd.jobType == REF:
 		try:
 			qc.ref_mesh = smd.m # for VTA import
 		except NameError:
@@ -936,7 +936,7 @@ def readPolys():
 			for i in range(3):
 				randCol.append(random.uniform(.4,1))
 			mat.diffuse_color = randCol
-			if smd.jobType != 'PHYS':
+			if smd.jobType != PHYS:
 				mat.use_face_texture = True # in case the uninitated user wants a quick rendering
 			else:
 				smd.m.draw_type = 'SOLID'
@@ -1027,7 +1027,7 @@ def readPolys():
 		bpy.context.scene.objects.active = smd.m
 		ops.object.mode_set(mode='EDIT')
 		ops.mesh.remove_doubles()
-		if smd.jobType != 'PHYS':
+		if smd.jobType != PHYS:
 			ops.mesh.faces_shade_smooth()
 		ops.object.mode_set(mode='OBJECT')
 
@@ -1040,7 +1040,7 @@ def readPolys():
 
 # vertexanimation block
 def readShapes():
-	if smd.jobType is not 'FLEX':
+	if smd.jobType is not FLEX:
 		return
 
 	if not smd.m:
@@ -1164,17 +1164,17 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 
 		# meshes
 		if "$body" in line or "$model" in line:
-			loadSMD(2,"smd",'REF',True) # create new armature no matter what
+			loadSMD(2,"smd",REF,True) # create new armature no matter what
 			continue
 		if "replacemodel" in line:
-			loadSMD(2,"smd",'REF_ADD')
+			loadSMD(2,"smd",REF_ADD)
 			continue
 		if "$bodygroup" in line:
 			in_bodygroup = True
 			continue
 		if in_bodygroup:
 			if "studio" in line:
-				loadSMD(1,"smd",'REF') # bodygroups can be used to define skeleton
+				loadSMD(1,"smd",REF) # bodygroups can be used to define skeleton
 				continue
 			if "}" in line:
 				in_bodygroup = False
@@ -1183,12 +1183,12 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 		# skeletal animations
 		if doAnim and ("$sequence" in line or "$animation" in line):
 			if not "{" in line and len(line) > 3: # an advanced $sequence using an existing $animation, or anim redefinition
-				loadSMD(2,"smd",'ANIM')
+				loadSMD(2,"smd",ANIM)
 			continue
 
 		# flex animation
 		if "flexfile" in line:
-			loadSMD(1,"vta",'FLEX')
+			loadSMD(1,"vta",FLEX)
 			continue
 
 		# naming shapes
@@ -1201,7 +1201,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 
 		# physics mesh
 		if "$collisionmodel" in line or "$collisionjoints" in line:
-			loadSMD(1,"smd",'PHYS')
+			loadSMD(1,"smd",PHYS)
 			continue
 
 		# QC inclusion
@@ -1294,7 +1294,7 @@ class SmdImporter(bpy.types.Operator):
 	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
-	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+	#filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
 	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
 	
 	# Custom properties
@@ -1319,7 +1319,7 @@ class SmdImporter(bpy.types.Operator):
 			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, multiImport=self.properties.multiImport)
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith ('.vta'):
-			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type='FLEX')
+			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith('.dmx'):
 			return 'CANCELLED'
@@ -1511,7 +1511,7 @@ def writeRestPose():
 
 # skeleton block
 def writeFrames():
-	if smd.jobType == 'FLEX': # writeShapes() does its own skeleton block
+	if smd.jobType == FLEX: # writeShapes() does its own skeleton block
 		return
 
 	smd.file.write("skeleton\n")
@@ -1520,7 +1520,7 @@ def writeFrames():
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
 
-	if smd.jobType != 'ANIM':
+	if smd.jobType != ANIM:
 		writeRestPose()
 		return
 
@@ -1767,7 +1767,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 	
 	if object.type == 'MESH':
 		if not smd.jobType:
-			smd.jobType = 'REF'
+			smd.jobType = REF
 		smd.m = object
 		bakeObj(smd.m)
 		smd.a = smd.m.find_armature()
@@ -1776,7 +1776,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 			mesh_was_hidden = True
 	elif object.type == 'ARMATURE':
 		if not smd.jobType:
-			smd.jobType = 'ANIM'
+			smd.jobType = ANIM
 		smd.a = object
 	else:
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in [mesh,armature]")
@@ -1794,13 +1794,13 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		sortBonesForExport() # Get a list of bone names sorted in the order to be exported, and assign a unique SMD ID to every bone.
 
 	# these write empty blocks if no armature is found. Required!
-	writeBones(quiet = smd.jobType == 'FLEX')
+	writeBones(quiet = smd.jobType == FLEX)
 	writeFrames()
 
 	if smd.m:
-		if smd.jobType in ['REF','PHYS']:
+		if smd.jobType in [REF,PHYS]:
 			writePolys()
-		elif smd.jobType == 'FLEX' and smd.m.data.shape_keys:
+		elif smd.jobType == FLEX and smd.m.data.shape_keys:
 			writeShapes()
 
 	unBake()
@@ -1894,10 +1894,9 @@ class SMD_PT_Scene(bpy.types.Panel):
 	bl_default_closed = True
 
 	def __init__(self, context):
-		#print('SMD_PT_Scene __init__')
 		# A new instance of this class gets created for *every* draw operation!
 		self.smd_test_suite = None
-		if bpy.utils.addon_check('smd_test_suite')[1]:
+		if 1: #bpy.utils.addon_check('smd_test_suite')[1]:
 			try:
 				import smd_test_suite # addon must be "enabled", don't try to load it this way
 				self.smd_test_suite = smd_test_suite.available()
@@ -2182,7 +2181,7 @@ class SmdExporter(bpy.types.Operator):
 			writeSMD(context, object, path + ".smd")
 			self.countSMDs += 1
 			if object.data.shape_keys and len(object.data.shape_keys.keys) > 1:
-				writeSMD(context, object, path + ".vta", 'FLEX')
+				writeSMD(context, object, path + ".vta", FLEX)
 				self.countSMDs += 1
 		elif object.type == 'ARMATURE' and object.animation_data:
 			ad = object.animation_data
@@ -2192,10 +2191,10 @@ class SmdExporter(bpy.types.Operator):
 					for action in bpy.data.actions:
 						if not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1:
 							ad.action = action
-							writeSMD(context,object,path + action.name + ".smd",'ANIM')
+							writeSMD(context,object,path + action.name + ".smd",ANIM)
 							self.countSMDs += 1
 				else:
-					writeSMD(context,object,path + ad.action.name + ".smd",'ANIM')
+					writeSMD(context,object,path + ad.action.name + ".smd",ANIM)
 					self.countSMDs += 1
 				ad.action = prev_action
 
