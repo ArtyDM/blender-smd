@@ -38,9 +38,10 @@ def scanSMD():
 
 	if smd.jobType == None:
 		print("- This is a skeltal animation or pose") # No triangles, no flex - must be animation
-		for object in bpy.context.scene.objects:
-			if object.type == 'ARMATURE':
-				smd.jobType = 'ANIM'
+		if not smd.multiImport:
+			for object in bpy.context.scene.objects:
+				if object.type == 'ARMATURE':
+					smd.jobType = 'ANIM'
 		if smd.jobType == None: # support importing animations on their own
 			smd.jobType = 'ANIM_SOLO'
 
@@ -308,6 +309,7 @@ def readFrames():
 		bpy.context.scene.objects.active = smd.a
 		ops.object.mode_set(mode='EDIT')
 
+	print('readFrames: upaxis is ',smd.upAxis,' jobType is ',smd.jobType)
 	readFrameData() # Read in all the frames
 	if smd.jobType in ['REF','ANIM_SOLO']:
 		assert smd.a.mode == 'EDIT'
@@ -316,12 +318,12 @@ def readFrames():
 
 		# Get all the armature-space matrices for the bones at their rest positions
 		smd.matAllRest = {}
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
 		for bone in smd.a.data.bones:
 			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
 		# Step 1: set smd.poseArm pose and store the armature-space matrices in smd.matAllPose for each frame
 		smd.matAllPose = []
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
 		bpy.context.scene.objects.active = smd.poseArm
 		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
 		for i in range(len(smd.frameData)):
@@ -350,7 +352,7 @@ def readFrames():
 
 		cleanFCurves()
 
-	if smd.jobType in ['REF','ANIM_SOLO'] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
+	if False and smd.jobType in ['REF','ANIM_SOLO'] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		assert smd.a.mode == 'EDIT'
 		for bone in smd.a.data.edit_bones:
 			m1 = bone.matrix.copy().invert()
@@ -377,7 +379,7 @@ def readFrames():
 				return False
 		return True
 
-	if smd.jobType in ['REF','ANIM_SOLO'] and len(smd.a.data.bones) > 1:
+	if False and smd.jobType in ['REF','ANIM_SOLO'] and len(smd.a.data.bones) > 1:
 		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
@@ -484,6 +486,8 @@ def applyFrameData(frameData, restPose=False):
 	elif smd_manager.upAxis == 'Y':
 		tail_vec = vector([0,-1,0])
 		roll_vec = vector([0,0,1])
+		tail_vec = vector([1,0,0])
+		roll_vec = vector([0,1,0])
 	elif smd_manager.upAxis == 'X':
 		# FIXME: same as Z for now
 		tail_vec = vector([1,0,0])
@@ -508,6 +512,7 @@ def applyFrameData(frameData, restPose=False):
 				bn.tail = bn.head + (tail_vec * rotMats[boneName])
 				bn.align_roll(roll_vec * rotMats[boneName])
 			else:
+				'''
 				if smd_manager.upAxis in ['Z','X']: # FIXME: X probably need same treatment as Y
 					bn.head = smd_pos
 					bn.tail = bn.head + (tail_vec * rotMats[boneName])
@@ -517,7 +522,11 @@ def applyFrameData(frameData, restPose=False):
 					rotMats[boneName] = getUpAxisMat('X') * rotMats[boneName]
 					bn.tail = bn.head + (tail_vec * rotMats[boneName])
 					bn.align_roll(roll_vec * rotMats[boneName])
-
+				'''
+				bn.head = smd_pos
+				bn.tail = bn.head + (tail_vec * rotMats[boneName])
+				bn.align_roll(roll_vec * rotMats[boneName])
+				
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
 		else:
@@ -528,14 +537,31 @@ def applyFrameData(frameData, restPose=False):
 				parentName = smd.parentBones[boneName]
 				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
 				edit_bone.head = edit_bone.parent.head + (smd_pos * rotMats[parentName])
-				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
+				edit_bone.tail = edit_bone.head + (tail_vec * rotMats[boneName])
+				edit_bone.align_roll(roll_vec * rotMats[boneName])
 			else:
 				edit_bone.head = smd_pos
-				edit_bone.tail = edit_bone.head + (vector([1,0,0]) * rotMats[boneName])
-				edit_bone.align_roll(vector([0,1,0]) * rotMats[boneName])
+				edit_bone.tail = edit_bone.head + (tail_vec * rotMats[boneName])
+				edit_bone.align_roll(roll_vec * rotMats[boneName])
 
 			matAllPose[boneName] = edit_bone.matrix.copy()
+
+	if smd_manager.upAxis == 'Y':
+		#upAxisMat = rMat(-math.pi/2,3,'X')
+		upAxisMat = rx90n
+		for boneName in smd.sortedBoneNames:
+			if restPose:
+				bone = smd.a.data.edit_bones[boneName]
+			else:
+				bone = smd.poseArm.data.edit_bones[boneName]
+			z_axis = bone.z_axis
+			bone.head *= upAxisMat
+			bone.tail *= upAxisMat
+			#bone.align_roll(roll_vec * rotMats[boneName] * upAxisMat)
+			bone.align_roll(z_axis * upAxisMat) # same as above
+
+			if not restPose:
+				matAllPose[boneName] = bone.matrix.copy()
 
 	if not restPose:
 		smd.matAllPose.append(matAllPose)
@@ -721,6 +747,9 @@ def readPolys():
 		if smd.jobType != 'PHYS':
 			ops.mesh.faces_shade_smooth()
 		ops.object.mode_set(mode='OBJECT')
+
+		if smd_manager.upAxis == 'Y':
+			md.transform(rx90)
 
 		if badWeights:
 			log.warning(badWeights,"vertices weighted to invalid bones!")
@@ -967,7 +996,7 @@ def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = Fals
 	file.close()
 	bpy.ops.object.select_all(action='DESELECT')
 	smd.a.select = True
-
+	'''
 	if smd.upAxisMat and smd.upAxisMat != 1:
 		if smd.jobType in ['REF','ANIM_SOLO']:
 			smd.a.rotation_euler = smd.upAxisMat.to_euler()
@@ -976,7 +1005,7 @@ def readSMD( context, filepath, upAxis, connectBones, cleanAnim, newscene = Fals
 			smd.m.select = True
 		bpy.context.scene.update()
 		bpy.ops.object.rotation_apply()
-
+	'''
 	printTimeMessage(smd.startTime,smd.jobName,"import")
 
 class SmdImporter(bpy.types.Operator):

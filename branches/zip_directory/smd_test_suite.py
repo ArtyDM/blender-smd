@@ -42,7 +42,7 @@ class SmdTestSuite(bpy.types.Operator):
 		
 		self.context = context
 		self.newestArmatureObj = None
-
+		'''
 		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
 		# some polygons go missing
 		self.runTest('Antlion_guard_reference.smd', 'REF', connectBones='NONE', multiImport=True)
@@ -71,6 +71,7 @@ class SmdTestSuite(bpy.types.Operator):
 		
 		self.runTest('no-such-file.smd', 'REF', connectBones='NONE', multiImport=True)
 		'''
+		'''
 		for length in [0.001,0.01,0.1,1]:
 			io_smd_tools.min_bone_length = length
 			self.runTest('dreadnought_main.smd', 'REF', connectBones='NONE', multiImport=True)
@@ -79,19 +80,35 @@ class SmdTestSuite(bpy.types.Operator):
 			io_smd_tools.min_bone_length = length
 			self.runTest('deff-dread.smd', 'REF', connectBones='NONE', multiImport=True)
 		'''
+		
+		# Y-up tests
+		self.runTest('heavy_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTest('heavy_anim2.smd', 'ANIM', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=False)
+
+		# import Z-up, export to Y-up, import Y-up as Z-up, export Z-up and compare to original
+		self.logfile.write('---------- Antlion_guard_reference.smd Z -> Y - > Z----------\n')
+		self.runTestAux(self.ipath('Antlion_guard_reference.smd'), self.opath('ZY_Antlion_guard_reference.smd'), 'REF', inAxis='Z', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('ZY_Antlion_guard_reference.smd'), self.opath('YZ_Antlion_guard_reference.smd'), 'REF', inAxis='Y', outAxis='Z', connectBones='NONE', multiImport=True)
+		self.compareSMDs(self.ipath('Antlion_guard_reference.smd'),self.opath('YZ_Antlion_guard_reference.smd'))
 
 		self.logfile.close()
 
 		return {'FINISHED'}
 	
-	def runTest(self,filename,jobType,connectBones='NONE',multiImport='False'):
+	def runTest(self,filename,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
 		self.logfile.write('---------- %s ----------\n' % filename)
-		if not os.path.exists(self.ipath(filename)):
-			self.fail('skipping missing test file: ' + filename)
+		inFile = self.ipath(filename)
+		outFile = self.opath(filename)
+		self.runTestAux(inFile,outFile,jobType,inAxis,outAxis,connectBones,multiImport)
+		self.compareSMDs(inFile,outFile)
+
+	def runTestAux(self,inFile,outFile,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
+		if not os.path.exists(inFile):
+			self.fail('skipping missing test file: ' + inFile)
 			return
 		objects = []
 		objects += self.context.scene.objects
-		readSMD(self.context, filepath=self.ipath(filename), upAxis='Z', connectBones=connectBones, cleanAnim=False, newscene=False, multiImport=multiImport)
+		readSMD(self.context, filepath=inFile, upAxis=inAxis, connectBones=connectBones, cleanAnim=False, newscene=False, multiImport=multiImport)
 		newObjects = []
 		for object in self.context.scene.objects:
 			if not object in objects:
@@ -113,15 +130,13 @@ class SmdTestSuite(bpy.types.Operator):
 				else:
 					objWrite = object
 		if objWrite:
-			writeSMD(self.context, objWrite, filepath=self.opath(filename))
-			self.compareSMDs(filename=filename)
+			bpy.context.scene.smd_up_axis = outAxis
+			writeSMD(self.context, objWrite, filepath=outFile)
 
-	def compareSMDs(self,filename):
-		self.filename = filename
-		file1 = self.ipath(filename)
-		file2 = self.opath(filename)
-		data1 = self.parseSMD(file1)
-		data2 = self.parseSMD(file2)
+	def compareSMDs(self,inFile,outFile):
+		self.filename = outFile
+		data1 = self.parseSMD(inFile)
+		data2 = self.parseSMD(outFile)
 		self.compareData(data1,data2)
 	
 	def parseSMD(self,filepath):

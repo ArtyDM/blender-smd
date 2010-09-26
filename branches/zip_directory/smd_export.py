@@ -78,6 +78,34 @@ def writeBones(quiet=False):
 # NOTE: added this to keep writeFrames() a bit simpler, uses smd.sortedBones and smd.boneNameToID, replaces getBonesForSMD()
 def writeRestPose():
 	smd.file.write("time 0\n")
+	if bpy.context.scene.smd_up_axis == 'Y':
+		print('writeRestPose X90')
+	for boneName in smd.sortedBones:
+		bone = smd.a.data.bones[boneName]
+		if bone.parent:
+			parentRotated = bone.parent.matrix_local * ryz90
+			childRotated = bone.matrix_local * ryz90
+			rot = parentRotated.invert() * childRotated
+			pos = rot.translation_part()
+			if bpy.context.scene.smd_up_axis == 'Y':
+				#pos = rx90n * pos
+				#rot = (rx90n * rot).to_euler()
+				pass
+		else:
+			pos = (bone.matrix_local * ryz90).translation_part()
+			rot = (bone.matrix_local * ryz90)#.to_euler('XYZ')
+
+			if bpy.context.scene.smd_up_axis == 'Y':
+				pos = rx90n * pos
+				rot = rx90n * rot
+
+		rot = rot.to_euler('XYZ')
+		pos_str = rot_str = ""
+		for i in range(3):
+			pos_str += " " + getSmdFloat(pos[i])
+			rot_str += " " + getSmdFloat(rot[i])
+		smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
+	'''
 	for boneName in smd.sortedBones:
 		bone = smd.a.data.bones[boneName]
 		if bone.parent:
@@ -95,6 +123,7 @@ def writeRestPose():
 			pos_str += " " + getSmdFloat(pos[i])
 			rot_str += " " + getSmdFloat(rot[i])
 		smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
+	'''
 	smd.file.write("end\n")
 
 # skeleton block
@@ -143,7 +172,11 @@ def writeFrames():
 				rot = rot.to_euler('XYZ')
 			else:
 				pos = pbn.matrix.translation_part()
-				rot = (pbn.matrix * ryz90).to_euler('XYZ')
+				rot = (pbn.matrix * ryz90)#.to_euler('XYZ')
+
+				if bpy.context.scene.smd_up_axis == 'Y':
+					pos = rx90n * pos
+					rot = (rx90n * rot).to_euler()
 
 			pos_str = rot_str = ""
 			for i in range(3):
@@ -281,6 +314,9 @@ def bakeObj(in_object):
 		bpy.ops.mesh.quads_convert_to_tris()
 		bpy.ops.object.mode_set(mode='OBJECT')
 
+		if bpy.context.scene.smd_up_axis == 'Y':
+			baked.data.transform(rx90n)
+
 		if baked.parent or baked.find_armature(): # do not translate standalone meshes (and never translate armatures)
 			bpy.ops.object.location_apply()
 			
@@ -292,10 +328,14 @@ def bakeObj(in_object):
 	bpy.ops.object.scale_apply()
 	
 	if bpy.context.scene.smd_up_axis != 'Z':
+		print('EXPORT smd_up_axis is ',bpy.context.scene.smd_up_axis)
+		assert baked.mode == 'OBJECT'
+		'''
 		# Object rotation is in local space, requiring this second rotation_apply() step
 		baked.rotation_mode = 'QUATERNION'
 		baked.rotation_quaternion = getUpAxisMat(bpy.context.scene.smd_up_axis).invert().to_quat()
 		bpy.ops.object.rotation_apply()
+		'''
 	
 	smd.bakeInfo.append(bi) # save to manager
 
