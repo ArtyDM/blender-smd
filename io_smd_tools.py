@@ -1568,11 +1568,6 @@ def writePolys():
 	md = smd.m.data
 	face_index = 0
 	
-	sharp_verts = []
-	for edge in md.edges:
-		if edge.use_edge_sharp:
-			sharp_verts.extend(edge.vertices)
-	
 	for face in md.faces:
 		if smd.m.material_slots:
 			mat = smd.m.material_slots[face.material_index].material
@@ -1586,14 +1581,9 @@ def writePolys():
 			verts = norms = ""
 			v = md.vertices[face.vertices[i]]
 			
-			if face.vertices[i] in sharp_verts:
-				normal = face.normal
-			else:
-				normal = v.normal
-
 			for j in range(3):
 				verts += " " + getSmdFloat(v.co[j])
-				norms += " " + getSmdFloat(normal[j])
+				norms += " " + getSmdFloat(v.normal[j])
 
 			# UVs
 			if len(md.uv_textures):
@@ -1686,6 +1676,16 @@ def bakeObj(in_object):
 		
 	if baked.type == 'MESH':
 		smd.m = baked
+		
+		has_edge_split = False
+		for mod in baked.modifiers:
+			if mod.type == 'EDGE_SPLIT':
+				has_edge_split = True
+				break
+		if not has_edge_split:
+			edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
+			edgesplit.use_edge_angle = False
+		
 		baked.data = baked.create_mesh(bpy.context.scene,True,'RENDER') # the important command
 
 		# quads > tris
