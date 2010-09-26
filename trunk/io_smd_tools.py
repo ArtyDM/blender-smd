@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": "0.8",
+	"version": (0, 8),
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -766,6 +766,8 @@ def applyFrameData(frameData, restPose=False):
 	elif smd_manager.upAxis == 'Y':
 		tail_vec = vector([0,-1,0])
 		roll_vec = vector([0,0,1])
+		# Bone axis is a whole other can of worms that will have to be looked at.
+		# If this changes the export code may need updating.
 		tail_vec = vector([1,0,0])
 		roll_vec = vector([0,1,0])
 	elif smd_manager.upAxis == 'X':
