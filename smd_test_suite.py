@@ -53,6 +53,9 @@ class SmdTestSuite(bpy.types.Operator):
 		
 		self.context = context
 		self.newestArmatureObj = None
+
+		#self.logfile.close()
+		#return {'FINISHED'}
 		
 		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
 		# some polygons go missing
@@ -80,6 +83,7 @@ class SmdTestSuite(bpy.types.Operator):
 		# DOW2
 		self.runTest('dreadnought_main.smd', 'REF', connectBones='COMPATIBILITY', multiImport=True)
 		
+		# missing file test
 		self.runTest('no-such-file.smd', 'REF', connectBones='NONE', multiImport=True)
 		
 		'''
@@ -91,16 +95,39 @@ class SmdTestSuite(bpy.types.Operator):
 			io_smd_tools.min_bone_length = length
 			self.runTest('deff-dread.smd', 'REF', connectBones='NONE', multiImport=True)
 		'''
-		
-		# Y-up tests
+
+		# Y-up mesh + anim
 		self.runTest('heavy_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
 		self.runTest('heavy_anim2.smd', 'ANIM', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=False)
-
+		# Y-up mesh
+		self.runTest('demo_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTest('engineer_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTest('medic_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTest('pyro_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		
 		# import Z-up, export to Y-up, import Y-up as Z-up, export Z-up and compare to original
 		self.logfile.write('---------- Antlion_guard_reference.smd Z -> Y - > Z----------\n')
 		self.runTestAux(self.ipath('Antlion_guard_reference.smd'), self.opath('ZY_Antlion_guard_reference.smd'), 'REF', inAxis='Z', outAxis='Y', connectBones='NONE', multiImport=True)
 		self.runTestAux(self.opath('ZY_Antlion_guard_reference.smd'), self.opath('YZ_Antlion_guard_reference.smd'), 'REF', inAxis='Y', outAxis='Z', connectBones='NONE', multiImport=True)
 		self.compareSMDs(self.ipath('Antlion_guard_reference.smd'),self.opath('YZ_Antlion_guard_reference.smd'))
+
+		self.logfile.write('---------- bust_floor.smd Z -> Y - > Z----------\n')
+		self.runTestAux(self.ipath('bust_floor.smd'), self.opath('ZY_bust_floor.smd'), 'ANIM', inAxis='Z', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('ZY_bust_floor.smd'), self.opath('YZ_bust_floor.smd'), 'ANIM', inAxis='Y', outAxis='Z', connectBones='NONE', multiImport=True)
+		self.compareSMDs(self.ipath('bust_floor.smd'),self.opath('YZ_bust_floor.smd'))
+
+		self.logfile.write('---------- Antlion_guard_reference.smd imp -> exp -> imp -> exp ----------\n')
+		self.runTestAux(self.ipath('Antlion_guard_reference.smd'), self.opath('Antlion_guard_reference-1.smd'), 'REF', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('Antlion_guard_reference-1.smd'), self.opath('Antlion_guard_reference-2.smd'), 'REF', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('Antlion_guard_reference-2.smd'), self.opath('Antlion_guard_reference-3.smd'), 'REF', connectBones='NONE', multiImport=True)
+		self.compareSMDs(self.opath('Antlion_guard_reference.smd'),self.opath('Antlion_guard_reference-3.smd'))
+
+		self.logfile.write('---------- rpg_reload.smd imp -> exp -> imp -> exp ----------\n')
+		self.runTestAux(self.ipath('rpg_reload.smd'), self.opath('rpg_reload-1.smd'), 'ANIM', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('rpg_reload-1.smd'), self.opath('rpg_reload-2.smd'), 'ANIM', connectBones='NONE', multiImport=True)
+		self.runTestAux(self.opath('rpg_reload-2.smd'), self.opath('rpg_reload-3.smd'), 'ANIM', connectBones='NONE', multiImport=True)
+		self.compareSMDs(self.ipath('rpg_reload.smd'),self.opath('rpg_reload-3.smd'))
+		
 
 		self.logfile.close()
 
@@ -114,6 +141,7 @@ class SmdTestSuite(bpy.types.Operator):
 			self.compareSMDs(inFile,outFile)
 
 	def runTestAux(self,inFile,outFile,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
+		self.filename = outFile
 		if not os.path.exists(inFile):
 			self.fail('skipping missing test file: ' + inFile)
 			return False
@@ -261,7 +289,14 @@ class SmdTestSuite(bpy.types.Operator):
 					if compareVector(pos1[boneName],pos2[boneName]):
 						self.fail('frame %d bone %s POS got %s expected %s' % (frame,boneName,vectorString(pos2[boneName]),vectorString(pos1[boneName])))
 					if compareVector(rot1[boneName],rot2[boneName]):
-						self.fail('frame %d bone %s ROT got %s expected %s' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
+						q1 = mathutils.Euler(rot1[boneName]).to_quat()
+						q2 = mathutils.Euler(rot2[boneName]).to_quat()
+						q3 = q1.difference(q2)
+						if q3.angle == 0.0 or round(q3.angle,6) == round(math.pi*2,6):
+							self.fail('frame %d bone %s ROT got %s expected %s QUAT_OK' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
+						else:
+							self.fail('frame %d bone %s ROT got %s expected %s QUAT_FAIL' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
+							self.fail('-->%s %s %s' % (q3,q3.angle,q3.magnitude))
 
 	def fail(self,msg):
 		self.logfile.write('%s\n' % msg)
