@@ -646,7 +646,10 @@ def readFrames():
 			for child in bone.children:
 				head = (parentInverted*child.matrix).translation_part() # child head relative to parent
 				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and head.y > 0.1): # child head is on parent's Y-axis
-					if not connected:
+					if connected:
+						if (bone.tail - child.head).length > 0.000001:
+							continue # could have multiple child bones along the y-axis but not sharing the same 'head' position
+					else:
 						bone.tail = child.head # only move the tail once
 						connected = True
 					child.use_connect = True
