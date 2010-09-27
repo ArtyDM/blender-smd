@@ -379,9 +379,14 @@ def validateBones():
 
 		smd_name = values[1]
 
+		def cmpBoneName(name1,name2):
+			if not name1 or not name2: # bone.get('smd_name') can be None
+				return False
+			return name1.lower() == name2.lower() # studiomdl ignores case on all bone names and $cmd names and other keywords
+		
 		foundIt = False
 		for bone in smd.a.data.bones:
-			if bone.get('smd_name') == smd_name or bone.name == smd_name:
+			if cmpBoneName(bone.get('smd_name'), smd_name) or cmpBoneName(bone.name, smd_name):
 				smd_id = int(values[0])
 				smd.boneIDs[smd_id] = bone.name
 				smd.boneNameToID[bone.name] = smd_id
@@ -633,19 +638,18 @@ def readFrames():
 			bpy.context.area.type = current_type
 
 	if smd.jobType in [REF,ANIM_SOLO] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
+		bpy.ops.object.mode_set(mode='EDIT') # smd.a -> edit mode
 		assert smd.a.mode == 'EDIT'
 		for bone in smd.a.data.edit_bones:
-			m1 = bone.matrix.copy().invert()
+			parentInverted = bone.matrix.copy().invert()
+			connected = False
 			for child in bone.children:
-				head = (m1*child.matrix).translation_part() * smd.upAxisMat # child head relative to parent
-				#print('%s head %s'%(child.name,vectorString(head)))
+				head = (parentInverted*child.matrix).translation_part() # child head relative to parent
 				if smd.connectBones == 'ALL' or (abs(head.x) < 0.0001 and abs(head.z) < 0.0001 and head.y > 0.1): # child head is on parent's Y-axis
-					bone.tail = child.head
+					if not connected:
+						bone.tail = child.head # only move the tail once
+						connected = True
 					child.use_connect = True
-					# connect to the first valid bone only, otherwise bones already attached will be flung about the place
-					# not perfect by any means, but it leads to the right choice in most situations
-					# can't just check whether there is only one child, as there are often additional rig helper bones floating around
-					break
 
 	ops.object.mode_set(mode='OBJECT')
 
@@ -754,7 +758,7 @@ def readFrameData():
 
 def applyFrameData(frameData, restPose=False):
 
-	# smd.rotMats holds the last valid parent-relative matrix we read in.  This holds the armature-relative matrix.
+	# frameData[boneName]['rot'] holds the last valid parent-relative matrix we read in.  This holds the armature-relative matrix.
 	rotMats = {}
 
 	if not restPose:
@@ -832,19 +836,18 @@ def applyFrameData(frameData, restPose=False):
 	if smd_manager.upAxis == 'Y':
 		#upAxisMat = rMat(-math.pi/2,3,'X')
 		upAxisMat = rx90n
-		for boneName in smd.sortedBoneNames:
-			if restPose:
+		if restPose:
+			for boneName in smd.sortedBoneNames:
 				bone = smd.a.data.edit_bones[boneName]
-			else:
-				bone = smd.poseArm.data.edit_bones[boneName]
-			z_axis = bone.z_axis
-			bone.head *= upAxisMat
-			bone.tail *= upAxisMat
-			#bone.align_roll(roll_vec * rotMats[boneName] * upAxisMat)
-			bone.align_roll(z_axis * upAxisMat) # same as above
+				z_axis = bone.z_axis
+				bone.head *= upAxisMat
+				bone.tail *= upAxisMat
+				#bone.align_roll(roll_vec * rotMats[boneName] * upAxisMat)
+				bone.align_roll(z_axis * upAxisMat) # same as above
 
-			if not restPose:
-				matAllPose[boneName] = bone.matrix.copy()
+		else:
+			for boneName in smd.sortedBoneNames:
+				matAllPose[boneName] = rx90 * matAllPose[boneName]
 
 	if not restPose:
 		smd.matAllPose.append(matAllPose)
