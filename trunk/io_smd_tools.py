@@ -409,7 +409,6 @@ def readBones():
 			smd.a = bpy.context.active_object
 		else:
 			def isArmIn(list):
-				if smd.a: return # already found
 				for ob in list:
 					if ob.type == 'ARMATURE':
 						smd.a = ob
@@ -417,13 +416,14 @@ def readBones():
 
 			isArmIn(bpy.context.selected_objects) # armature in the selection?
 
-			for ob in bpy.context.selected_objects:
-				if ob.type == 'MESH':
-					smd.a = ob.find_armature() # armature modifying a selected object?
-					if smd.a:
-						break
-
-			isArmIn(bpy.context.scene.objects) # armature in the scene at all?
+			if not smd.a:
+				for ob in bpy.context.selected_objects:
+					if ob.type == 'MESH':
+						smd.a = ob.find_armature() # armature modifying a selected object?
+						if smd.a:
+							break
+			if not smd.a:
+				isArmIn(bpy.context.scene.objects) # armature in the scene at all?
 		if smd.a:
 			if smd.jobType == REF:
 				smd.jobType = REF_ADD
@@ -630,12 +630,18 @@ def readFrames():
 		bpy.data.objects.remove(pose_arm)
 		bpy.data.armatures.remove(arm_data)
 
-		# the code below crashes Blender when the import finishes
-		if 0:
-			current_type = bpy.context.area.type
-			bpy.context.area.type = 'GRAPH_EDITOR'
-			bpy.ops.graph.clean()
-			bpy.context.area.type = current_type
+		for fcurve in smd.a.animation_data.action.fcurves:
+			last_frame = len(fcurve.keyframe_points)
+			i = 1
+			while i < last_frame - 1:
+				ptPrev = fcurve.keyframe_points[i-1]
+				ptCur  = fcurve.keyframe_points[i]
+				ptNext = fcurve.keyframe_points[i+1]
+				if abs(ptPrev.co[1] - ptCur.co[1]) <= 0.00001 and abs(ptCur.co[1] - ptNext.co[1]) <= 0.00001:
+					fcurve.keyframe_points.remove(ptCur,fast=True)
+					last_frame -= 1
+				else:
+					i += 1
 
 	if smd.jobType in [REF,ANIM_SOLO] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		bpy.ops.object.mode_set(mode='EDIT') # smd.a -> edit mode
