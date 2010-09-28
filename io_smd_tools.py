@@ -807,18 +807,6 @@ def applyFrameData(frameData, restPose=False):
 				bn.tail = bn.head + (tail_vec * rotMats[boneName])
 				bn.align_roll(roll_vec * rotMats[boneName])
 			else:
-				'''
-				if smd_manager.upAxis in ['Z','X']: # FIXME: X probably need same treatment as Y
-					bn.head = smd_pos
-					bn.tail = bn.head + (tail_vec * rotMats[boneName])
-					bn.align_roll(roll_vec * rotMats[boneName])
-				elif smd_manager.upAxis == 'Y':
-					upAxisMat = rMat(-math.pi/2,3,'X')
-					bn.head = vector((smd_pos.x,-smd_pos.z,smd_pos.y)) # same as "bn.head =  smd_pos * upAxisMat" but no loss in precision
-					rotMats[boneName] = upAxisMat * rotMats[boneName]
-					bn.tail = bn.head + (tail_vec * rotMats[boneName])
-					bn.align_roll(roll_vec * rotMats[boneName])
-				'''
 				bn.head = smd_pos
 				bn.tail = bn.head + (tail_vec * rotMats[boneName])
 				bn.align_roll(roll_vec * rotMats[boneName])
@@ -856,7 +844,7 @@ def applyFrameData(frameData, restPose=False):
 
 		else:
 			for boneName in smd.sortedBoneNames:
-				matAllPose[boneName] = rx90 * matAllPose[boneName]
+				matAllPose[boneName] = rx90 * matAllPose[boneName] # global rot around X
 
 	if not restPose:
 		smd.matAllPose.append(matAllPose)
@@ -1219,14 +1207,19 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 		# QC inclusion
 		if "$include" in line:
 			if line[1][1] == ":": # absolute path; QCs can only be compiled on Windows
-				path = appendExt(line[1], "qci")
+				path = line[1]
 			else:
-				path = filedir + appendExt(line[1], "qci") # special case: ignores dir stack
+				path = filedir + line[1] # special case: ignores dir stack
+			if not path.endswith(".qc") and not path.endswith(".qci"):
+				if os.path.exists(appendExt(path,".qci")):
+					path = appendExt(path,".qci")
+				elif os.path.exists(appendExt(path,".qc")):
+					path = appendExt(path,".qc")
 			try:
 				readQC(context,path,False, doAnim, connectBones)
 			except IOError:
-				if not line[1].endswith("qci"):
-					readQC(context,path[:-3]+"qc",False, doAnim, connectBones)
+				message = 'Could not open QC $include file "%s"' % path
+				log.warning(message + " - skipping!")
 
 	file.close()
 
@@ -1263,7 +1256,6 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		message = "Could not open SMD file \"{}\"\n\t{}".format(smd.jobName,filepath)
 		if smd_type: # called from QC import
 			log.warning(message + " - skipping!")
-			print("\t" + filepath)
 			return
 		else:
 			raise IOError(message) # just error out if it's a direct SMD import
@@ -1306,8 +1298,9 @@ class SmdImporter(bpy.types.Operator):
 	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
-	#filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
-	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
+	if bpy.app.build_revision != 'unknown' and int(bpy.app.build_revision) >= 32095:
+		filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+		filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
 	
 	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
