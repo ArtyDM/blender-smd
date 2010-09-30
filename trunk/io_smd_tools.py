@@ -630,18 +630,33 @@ def readFrames():
 		bpy.data.objects.remove(pose_arm)
 		bpy.data.armatures.remove(arm_data)
 
-		for fcurve in smd.a.animation_data.action.fcurves:
-			last_frame = len(fcurve.keyframe_points)
-			i = 1
-			while i < last_frame - 1:
-				ptPrev = fcurve.keyframe_points[i-1]
-				ptCur  = fcurve.keyframe_points[i]
-				ptNext = fcurve.keyframe_points[i+1]
-				if abs(ptPrev.co[1] - ptCur.co[1]) <= 0.00001 and abs(ptCur.co[1] - ptNext.co[1]) <= 0.00001:
-					fcurve.keyframe_points.remove(ptCur,fast=True)
-					last_frame -= 1
-				else:
-					i += 1
+		if 1:
+			# Remove every point but the first if every following point is within a certain deviation
+			for fcurve in smd.a.animation_data.action.fcurves:
+				last_frame = len(fcurve.keyframe_points)
+				co = fcurve.keyframe_points[0].co[1]
+				for i in range(1,last_frame):
+					co2 = fcurve.keyframe_points[i].co[1]
+					if abs(co-co2) > 0.0001:
+						break
+				if i == last_frame-1:
+					for i in reversed(range(1,last_frame)):
+						pt = fcurve.keyframe_points[i]
+						fcurve.keyframe_points.remove(pt,fast=True)
+		else:
+			# Remove points that are the same as the previous and next points
+			for fcurve in smd.a.animation_data.action.fcurves:
+				last_frame = len(fcurve.keyframe_points)
+				i = 1
+				while i < last_frame - 1:
+					ptPrev = fcurve.keyframe_points[i-1]
+					ptCur  = fcurve.keyframe_points[i]
+					ptNext = fcurve.keyframe_points[i+1]
+					if abs(ptPrev.co[1] - ptCur.co[1]) <= 0.00001 and abs(ptCur.co[1] - ptNext.co[1]) <= 0.00001:
+						fcurve.keyframe_points.remove(ptCur,fast=True)
+						last_frame -= 1
+					else:
+						i += 1
 
 	if smd.jobType in [REF,ANIM_SOLO] and smd.upAxis == 'Z' and not smd.connectBones == 'NONE':
 		bpy.ops.object.mode_set(mode='EDIT') # smd.a -> edit mode
@@ -1898,20 +1913,6 @@ class SMD_PT_Scene(bpy.types.Panel):
 	bl_context = "scene"
 	bl_default_closed = True
 
-	def __init__(self, context):
-		# A new instance of this class gets created for *every* draw operation!
-		self.smd_test_suite = None
-		if 1: #bpy.utils.addon_check('smd_test_suite')[1]:
-			try:
-				import smd_test_suite # addon must be "enabled", don't try to load it this way
-				self.smd_test_suite = smd_test_suite.available()
-			except:
-				pass
-
-	def __del__(self):
-		#print('SMD_PT_Scene __del__')
-		pass
-
 	def draw(self, context):
 		l = self.layout
 		scene = context.scene
@@ -1951,8 +1952,6 @@ class SMD_PT_Scene(bpy.types.Panel):
 			c.prop(scene,"smd_studiomdl_custom_path")
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
-		if self.smd_test_suite:
-			l.operator(self.smd_test_suite,text="Run test suite",icon='FILE_TICK')
 
 class SMD_PT_Armature(bpy.types.Panel):
 	bl_label = "SMD Export"

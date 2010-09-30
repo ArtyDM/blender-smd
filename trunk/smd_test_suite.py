@@ -15,9 +15,7 @@ from io_smd_tools import *
 test_suite_root = os.path.abspath('/SMD_Tools_Test_Suite')
 
 def available():
-	if not os.path.exists(test_suite_root):
-		return None
-	return SmdTestSuite.bl_idname
+	return os.path.exists(test_suite_root)
 
 def compareVectorElem(e1,e2):
 	return e1 - e2 > 0.001
@@ -33,9 +31,8 @@ def compareVector(v1,v2):
 	
 def vectorString(v):
 	return "%0.06f,%0.06f,%0.06f" % (v.x,v.y,v.z)
-	
 
-class SmdTestSuite(bpy.types.Operator):
+class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 	bl_idname = "smd_test_suite"
 	bl_label = "Test SMD import/export"
 	bl_description = "Runs a test suite on the importer/exporter"
@@ -49,98 +46,108 @@ class SmdTestSuite(bpy.types.Operator):
 			self.report('ERROR',"can't find the test suite directory")
 			return {'CANCELLED'}
 		
-		self.logfile = open(self.ipath('log.txt'), 'w')
-		
 		self.context = context
 		self.newestArmatureObj = None
+		
+		startTime = time.time()
 
-		#self.logfile.close()
-		#return {'FINISHED'}
+		with open(self.ipath('log.txt'), 'w') as self.logfile:
+			self.runTests()
+		
+		print('----- TEST SUITE FINISHED in ' + str(round(time.time() - startTime,1)) + ' seconds -----')
+		
+		return {'FINISHED'}
+
+	def runTests(self):
+		
+		connectBones=self.context.scene.smd_test_suite.connectBones
+
+		#return
 		
 		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
 		# some polygons go missing
-		self.runTest('Antlion_guard_reference.smd', 'REF', connectBones='NONE', multiImport=True)
-		self.runTest('bust_floor.smd', 'ANIM', connectBones='NONE', multiImport=False)
+		self.runTest('Antlion_guard_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
+		self.runTest('bust_floor.smd', 'ANIM', connectBones=connectBones, multiImport=False)
 
 		# sourcesdk_content\hl2\modelsrc\Buggy
 		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example, so lots of differences on export
-		self.runTest('buggy_reference.smd', 'REF', connectBones='NONE', multiImport=True)
-		self.runTest('buggy_ammo_open.smd', 'ANIM', connectBones='NONE', multiImport=False)
+		self.runTest('buggy_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
+		self.runTest('buggy_ammo_open.smd', 'ANIM', connectBones=connectBones, multiImport=False)
 
 		# sourcesdk_content\hl2\modelsrc\weapons\v_rocket_launcher
 		# rpg_reference.smd has a too-long material name
 		# rpg_reload.smd (originally reload.smd) doesn't list every bone for each frame
-		self.runTest('rpg_reference.smd', 'REF', connectBones='NONE', multiImport=True)
-		self.runTest('rpg_reload.smd', 'ANIM', connectBones='NONE', multiImport=False)
+		self.runTest('rpg_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
+		self.runTest('rpg_reload.smd', 'ANIM', connectBones=connectBones, multiImport=False)
 
 		# ANIM_SOLO test
-		self.runTest('bust_floor.smd', 'ANIM', connectBones='NONE', multiImport=True)
+		self.runTest('bust_floor.smd', 'ANIM', connectBones=connectBones, multiImport=True)
 
 		# DOW2
-		self.runTest('dreadnought_main.smd', 'REF', connectBones='NONE', multiImport=True)
+		self.runTest('dreadnought_main.smd', 'REF', connectBones=connectBones, multiImport=True)
 
 		# connectBones tests
 		# DOW2
-		self.runTest('dreadnought_main.smd', 'REF', connectBones='COMPATIBILITY', multiImport=True)
+		#self.runTest('dreadnought_main.smd', 'REF', connectBones='COMPATIBILITY', multiImport=True)
 		
 		# missing file test
-		self.runTest('no-such-file.smd', 'REF', connectBones='NONE', multiImport=True)
+		self.runTest('no-such-file.smd', 'REF', connectBones=connectBones, multiImport=True)
 		
 		'''
 		for length in [0.001,0.01,0.1,1]:
 			io_smd_tools.min_bone_length = length
-			self.runTest('dreadnought_main.smd', 'REF', connectBones='NONE', multiImport=True)
+			self.runTest('dreadnought_main.smd', 'REF', connectBones=connectBones, multiImport=True)
 
 		for length in [0.001,0.01,0.1,1]:
 			io_smd_tools.min_bone_length = length
-			self.runTest('deff-dread.smd', 'REF', connectBones='NONE', multiImport=True)
+			self.runTest('deff-dread.smd', 'REF', connectBones=connectBones, multiImport=True)
 		'''
 
 		# Y-up mesh + anim
-		self.runTest('heavy_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
-		self.runTest('heavy_anim2.smd', 'ANIM', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=False)
+		self.runTest('heavy_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones=connectBones, multiImport=True)
+		self.runTest('heavy_anim2.smd', 'ANIM', inAxis='Y', outAxis='Y', connectBones=connectBones, multiImport=False)
+
 		# Y-up mesh
-		self.runTest('demo_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
-		self.runTest('engineer_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
-		self.runTest('medic_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
-		self.runTest('pyro_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones='NONE', multiImport=True)
+		self.runTest('demo_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones=connectBones, multiImport=True)
+		self.runTest('engineer_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones=connectBones, multiImport=True)
+		self.runTest('medic_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones=connectBones, multiImport=True)
+		self.runTest('pyro_model.smd', 'REF', inAxis='Y', outAxis='Y', connectBones=connectBones, multiImport=True)
 		
-		# import Z-up, export to Y-up, import Y-up as Z-up, export Z-up and compare to original
-		self.logfile.write('---------- Antlion_guard_reference.smd Z -> Y - > Z----------\n')
-		self.runTestAux(self.ipath('Antlion_guard_reference.smd'), self.opath('ZY_Antlion_guard_reference.smd'), 'REF', inAxis='Z', outAxis='Y', connectBones='NONE', multiImport=True)
-		self.runTestAux(self.opath('ZY_Antlion_guard_reference.smd'), self.opath('YZ_Antlion_guard_reference.smd'), 'REF', inAxis='Y', outAxis='Z', connectBones='NONE', multiImport=True)
-		self.compareSMDs(self.ipath('Antlion_guard_reference.smd'),self.opath('YZ_Antlion_guard_reference.smd'))
+		# Z -> Y -> Z
+		self.runTestZYZ('Antlion_guard_reference.smd', 'REF', connectBones=connectBones)
+		self.runTestZYZ('bust_floor.smd', 'ANIM', connectBones=connectBones)
 
-		self.logfile.write('---------- bust_floor.smd Z -> Y - > Z----------\n')
-		self.runTestAux(self.ipath('bust_floor.smd'), self.opath('ZY_bust_floor.smd'), 'ANIM', inAxis='Z', outAxis='Y', connectBones='NONE', multiImport=True)
-		self.runTestAux(self.opath('ZY_bust_floor.smd'), self.opath('YZ_bust_floor.smd'), 'ANIM', inAxis='Y', outAxis='Z', connectBones='NONE', multiImport=True)
-		self.compareSMDs(self.ipath('bust_floor.smd'),self.opath('YZ_bust_floor.smd'))
-
-		self.logfile.write('---------- Antlion_guard_reference.smd imp -> exp -> imp -> exp ----------\n')
-		self.runTestAux(self.ipath('Antlion_guard_reference.smd'), self.opath('Antlion_guard_reference-1.smd'), 'REF', connectBones='NONE', multiImport=True)
-		self.runTestAux(self.opath('Antlion_guard_reference-1.smd'), self.opath('Antlion_guard_reference-2.smd'), 'REF', connectBones='NONE', multiImport=True)
-		self.runTestAux(self.opath('Antlion_guard_reference-2.smd'), self.opath('Antlion_guard_reference-3.smd'), 'REF', connectBones='NONE', multiImport=True)
-		self.compareSMDs(self.opath('Antlion_guard_reference.smd'),self.opath('Antlion_guard_reference-3.smd'))
-
-		self.logfile.write('---------- rpg_reload.smd imp -> exp -> imp -> exp ----------\n')
-		self.runTestAux(self.ipath('rpg_reload.smd'), self.opath('rpg_reload-1.smd'), 'ANIM', connectBones='NONE', multiImport=True)
-		self.runTestAux(self.opath('rpg_reload-1.smd'), self.opath('rpg_reload-2.smd'), 'ANIM', connectBones='NONE', multiImport=True)
-		self.runTestAux(self.opath('rpg_reload-2.smd'), self.opath('rpg_reload-3.smd'), 'ANIM', connectBones='NONE', multiImport=True)
-		self.compareSMDs(self.ipath('rpg_reload.smd'),self.opath('rpg_reload-3.smd'))
-		
-
-		self.logfile.close()
-
-		return {'FINISHED'}
+		# imp -> exp -> imp -> exp -> imp -> exp
+		self.runTestInOutX3('Antlion_guard_reference.smd', 'REF', connectBones=connectBones)
+		self.runTestInOutX3('rpg_reload.smd', 'ANIM', connectBones=connectBones)
 	
-	def runTest(self,filename,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
-		self.logfile.write('---------- %s ----------\n' % filename)
+	def runTest(self,filename,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False',comment=''):
+		comment = ' connectBones='+connectBones+comment
+		self.logfile.write('---------- %s %s%s ----------\n' % (jobType,filename,comment))
 		inFile = self.ipath(filename)
 		outFile = self.opath(filename)
 		if self.runTestAux(inFile,outFile,jobType,inAxis,outAxis,connectBones,multiImport):
 			self.compareSMDs(inFile,outFile)
+	
+	def runTestZYZ(self,filename,jobType,connectBones='NONE',comment=''):
+		comment = ' Z -> Y -> Z'
+		comment = ' connectBones='+connectBones+comment
+		self.logfile.write('---------- %s %s%s ----------\n' % (jobType,filename,comment))
+		self.runTestAux(self.ipath(filename),       self.opath('ZY_'+filename), jobType, inAxis='Z', outAxis='Y', connectBones=connectBones, multiImport=True)
+		self.runTestAux(self.opath('ZY_'+filename), self.opath('YZ_'+filename), jobType, inAxis='Y', outAxis='Z', connectBones=connectBones, multiImport=True)
+		self.compareSMDs(self.ipath(filename),      self.opath('YZ_'+filename))
 
-	def runTestAux(self,inFile,outFile,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport='False'):
+	def runTestInOutX3(self,filename,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',comment=''):
+		comment = ' imp -> exp -> imp -> exp -> imp -> exp'
+		comment = ' connectBones='+connectBones+comment
+		self.logfile.write('---------- %s %s%s ----------\n' % (jobType,filename,comment))
+		basename = os.path.splitext(filename)[0]
+		self.runTestAux(self.ipath(filename),          self.opath(basename+'-1.smd'), jobType, inAxis=inAxis,outAxis=outAxis,connectBones=connectBones, multiImport=True)
+		self.runTestAux(self.opath(basename+'-1.smd'), self.opath(basename+'-2.smd'), jobType, connectBones=connectBones, multiImport=True)
+		self.runTestAux(self.opath(basename+'-2.smd'), self.opath(basename+'-3.smd'), jobType, connectBones=connectBones, multiImport=True)
+		self.compareSMDs(self.ipath(filename),self.opath(basename+'-3.smd'))
+
+	def runTestAux(self,inFile,outFile,jobType,inAxis='Z',outAxis='Z',connectBones='NONE',multiImport=False):
 		self.filename = outFile
 		if not os.path.exists(inFile):
 			self.fail('skipping missing test file: ' + inFile)
@@ -179,7 +186,8 @@ class SmdTestSuite(bpy.types.Operator):
 		data1 = self.parseSMD(inFile)
 		data2 = self.parseSMD(outFile)
 		self.compareData(data1,data2)
-	
+		self.logfile.flush()
+
 	def parseSMD(self,filepath):
 		data = {}
 		self.file = open(filepath, 'r')
@@ -293,7 +301,8 @@ class SmdTestSuite(bpy.types.Operator):
 						q2 = mathutils.Euler(rot2[boneName]).to_quat()
 						q3 = q1.difference(q2)
 						if q3.angle == 0.0 or round(q3.angle,6) == round(math.pi*2,6):
-							self.fail('frame %d bone %s ROT got %s expected %s QUAT_OK' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
+							if not self.context.scene.smd_test_suite.hide_quat_ok:
+								self.fail('frame %d bone %s ROT got %s expected %s QUAT_OK' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
 						else:
 							self.fail('frame %d bone %s ROT got %s expected %s QUAT_FAIL' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
 							self.fail('-->%s %s %s' % (q3,q3.angle,q3.magnitude))
@@ -308,13 +317,47 @@ class SmdTestSuite(bpy.types.Operator):
 	def opath(self,filename):
 		return os.path.join(test_suite_root,'output',filename)
 
+class SCENE_PT_SmdTestSuite(bpy.types.Panel):
+	bl_label = "SMD Test Suite"
+	bl_space_type = "PROPERTIES"
+	bl_region_type = "WINDOW"
+	bl_context = "scene"
+	bl_default_closed = True
+
+	def __init__(self, context):
+		# A new instance of this class gets created for *every* draw operation!
+		#print('SCENE_PT_SmdTestSuite __init__')
+		pass
+
+	def __del__(self):
+		#print('SCENE_PT_SmdTestSuite __del__')
+		pass
+
+	def draw(self, context):
+		l = self.layout
+		l.prop(context.scene.smd_test_suite,"connectBones",text='Connect')
+		l.prop(context.scene.smd_test_suite,"hide_quat_ok")
+		row = l.row()
+		if available():
+			row.operator(SCENE_OT_SmdTestSuite.bl_idname,text="Run test suite",icon='FILE_TICK')
+		else:
+			row.operator(SCENE_OT_SmdTestSuite.bl_idname,text="Can't find test_suite_root",icon='ERROR')
+			row.enabled = False
+
+class SmdTestSuiteProps(bpy.types.IDPropertyGroup):
+	hide_quat_ok = BoolProperty(name="Hide QUAT_OK",description="Don't report different Euler rotations that represent the same angle",default=True)
+	connectionEnum = ( ('NONE','NONE','All bones will be unconnected spheres'),
+	('COMPATIBILITY','COMPATIBILITY','Only connect bones that will not break compatibility with existing SMDs'),
+	('ALL','ALL','All bones that can be connected will be, disregarding backwards compatibility') )
+	connectBones = EnumProperty(name="Bone Connection Mode",items=connectionEnum,description="How to choose which bones to connect together",default='COMPATIBILITY')
+
 def register():
 	print('smd_test_suite register')
-	pass
+	bpy.types.Scene.smd_test_suite = PointerProperty(type=SmdTestSuiteProps, name='SMD Test Suite', description='SMD Test Suite Settings')
 
 def unregister():
 	print('smd_test_suite unregister')
-	pass
+	del bpy.types.Scene.smd_test_suite
 
 if __name__ == "__main__":
     register()
