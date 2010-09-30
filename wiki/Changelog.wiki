@@ -1,4 +1,32 @@
 #labels Featured
+== 0.8 - September 30th, 2010 ==
+
+General:
+
+  * Cross-platform compatibility
+  * Support addon unloading properly
+  * Moved "Target Up Axis" property from armature to scene, as it can affect meshes too. Models targeting different up axes will have to be in different scenes from now on.
+
+Import:
+
+  * Optimised animation import
+  * Fixed standalone animation import
+  * Preserve material name if too long for Blender
+  * Fixed animation import when a bone's parent wasn't in the armature
+  * Fixed "smd_bone_vis" error when importing subsequent meshes
+  * Do not resize etc. bones if there is only one in the armature (static props)
+  * Scale 3D View to show imported mesh as well as armature (static props)
+  * Gave up trying to reduce the number of animations keyframes imported due to bone "wobble". Like motion capture data, SMD anims will just have to be re-created before being edited.
+
+Exporter:
+
+  * Support all modifiers
+  * Support sharp edges
+  * Fixed Y-up animation export
+  * Start exporting animation from the first defined keyframe, not scene frame zero (consistent with not finishing on the last scene frame)
+  * Prevented errors when exporting hidden objects
+  * Error when trying to export to a relative file path when the .blend hasn't been saved (otherwise it ends up somewhere weird)
+
 == 0.7 - August 30th, 2010 ==
 
 General:
