@@ -1,4 +1,11 @@
 #labels Featured
+== 0.8.1 - October 9, 2010 ==
+
+General:
+
+  * Fixed an error when the Blender revision wasn't an integer.
+  * Packaged io_smd_tools.py as a ZIP archive to avoid naming issues.
+
 == 0.8 - September 30th, 2010 ==
 
 General:
