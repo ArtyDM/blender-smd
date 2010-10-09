@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 8),
+	"version": (0, 8, 1),
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -1313,9 +1313,18 @@ class SmdImporter(bpy.types.Operator):
 	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
-	if bpy.app.build_revision != 'unknown' and int(bpy.app.build_revision) >= 32095:
-		filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
-		filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
+
+	# All this version check junk will go away once the next beta is out!
+	try:
+		# Someone's custom build had revision '32380M'
+		values = re.split('[^0-9]?([0-9]+)',bpy.app.build_revision)
+		#values = re.split('[^0-9]?([0-9]+)','32380M')
+		version = values[1]
+		if len(version) >= 5 and int(version) >= 32095:
+			filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+			filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
+	except:
+		pass
 	
 	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
