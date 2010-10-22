@@ -19,12 +19,12 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 8, 1),
+	"version": (0, 8, 2),
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
 	"wiki_url": "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools",
-	"tracker_url": "http://developer.valvesoftware.com/wiki/Talk:Blender_SMD_Tools",
+	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
 
 import math, os, time, bpy, random, mathutils, re, ctypes
@@ -540,8 +540,8 @@ def readFrames():
 	a = smd.a
 	bones = a.data.bones
 	scn = bpy.context.scene
-	startFrame = bpy.context.scene.frame_current
-	scn.frame_current = 0
+	prevFrame = scn.frame_current
+	scn.frame_set(0)
 	armature_was_hidden = smd.a.hide
 	smd.a.hide = False # ensure an object is visible or mode_set() can't be called on it
 	bpy.context.scene.objects.active = smd.a
@@ -622,7 +622,8 @@ def readFrames():
 	# All frames read
 
 	if smd.jobType in [ANIM,ANIM_SOLO]:
-		scn.frame_end = scn.frame_current
+		scn.frame_start = 0
+		scn.frame_end = scn.frame_current - 1
 
 		# Remove the pose armature
 		bpy.context.scene.objects.unlink(pose_arm)
@@ -733,7 +734,9 @@ def readFrames():
 		smd.a.hide = True
 
 	print("- Imported %i frames of animation" % scn.frame_current)
-	bpy.context.scene.frame_set(startFrame)
+	if prevFrame == 1: # Blender starts on 1, Source starts on 0
+		prevFrame = 0
+	bpy.context.scene.frame_set(prevFrame)
 
 def readFrameData():
 	smd.frameData = []
@@ -747,7 +750,7 @@ def readFrameData():
 
 		values = line.split()
 
-		if values[0] == "time":
+		if values[0] == "time": # n.b. frame number is a dummy value, all frames are equally spaced
 			if HaveReadFrame:
 				smd.frameData.append(frameData)
 				frameData = {}
@@ -1244,8 +1247,6 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 
 # Parses an SMD file
 def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, multiImport = False, from_qc = False):
-	# First, overcome Python's awful var redefinition behaviour. The smd object must be
-	# explicitly deleted at the end of the script.
 	if filepath.endswith("dmx"):
 		print("Skipping DMX file import: format unsupported (%s)" % getFilename(filepath))
 		return
