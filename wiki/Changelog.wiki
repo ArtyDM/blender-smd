@@ -1,4 +1,15 @@
 #labels Featured
+== 0.8.2 - October 22, 2010 ==
+
+General:
+
+  * Changed bug report URL to point to the Google Code issues page
+
+Importer:
+
+  * Fixed scene frame range being offset by +1 after importing an animation
+  * Flip active frame from 1 to 0 after importing an animation
+
 == 0.8.1 - October 9, 2010 ==
 
 General:
