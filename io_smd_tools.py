@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 8, 2),
+	"version": (0, 8, 3),
 	"blender": (2, 5, 4),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -103,9 +103,11 @@ class qc_info:
 		self.vars = {}
 		self.ref_mesh = None # for VTA import
 		self.armature = None
+		self.origin = None
 		self.upAxis = 'Z'
 		self.upAxisMat = None
 		self.numSMDs = 0
+		self.makeCamera = False
 
 		self.in_block_comment = False
 
@@ -263,7 +265,7 @@ def getUpAxisMat(axis):
 	if axis.upper() == 'Y':
 		return rMat(pi/2,4,'X')
 	if axis.upper() == 'Z':
-		return 1 # vec * 1 == vec
+		return rMat(0,4,'Z')
 	else:
 		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
 
@@ -700,7 +702,8 @@ def readFrames():
 		dimensions = []
 		for i in range(3):
 			dimensions.append(maxs[i] - mins[i])
-
+		smd_manager.dimensions = dimensions
+		
 		length = (dimensions[0] + dimensions[1] + dimensions[2]) / 600 # very small indeed, but a custom bone is used for display
 		if length < 0.001: # Blender silently deletes bones whose length is <= 0.000001
 			length = 0.001 # could be only a single bone (static prop for example)
@@ -1111,7 +1114,7 @@ def readShapes():
 	print("- Imported",num_shapes-1,"flex shapes") # -1 because the first shape is the reference position
 
 # Parses a QC file
-def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False):
+def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer_qc = False):
 	filename = getFilename(filepath)
 	filedir = getFileDir(filepath)
 
@@ -1122,6 +1125,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 		qc.startTime = time.time()
 		qc.jobName = filename
 		qc.root_filedir = filedir
+		qc.makeCamera = makeCamera
 		if newscene:
 			bpy.context.screen.scene = bpy.data.scenes.new(filename) # BLENDER BUG: this currently doesn't update bpy.context.scene
 		else:
@@ -1139,22 +1143,22 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 
 		# handle individual words (insert QC variable values, change slashes)
 		for i in range(len(line)):
-			if line[i].strip("$") in qc.vars:
-				line[i] = qc.vars[line[i].strip("$")]
+			if line[i][0] == "$" and line[i][1:] in qc.vars:
+				line[i] = qc.vars[line[i][1:]]
 			line[i] = line[i].replace("/","\\") # studiomdl is Windows-only
 
 		# register new QC variable
-		if "$definevariable" in line:
+		if line[0] == "$definevariable":
 			qc.vars[line[1]] = line[2]
 			continue
 
 		# dir changes
-		if "$pushd" in line:
+		if line[0] == "$pushd":
 			if line[1][-1] != "\\":
 				line[1] += "\\"
 			qc.dir_stack.append(line[1])
 			continue
-		if "$popd" in line:
+		if line[0] == "$popd":
 			try:
 				qc.dir_stack.pop()
 			except IndexError:
@@ -1162,7 +1166,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 			continue
 
 		# up axis
-		if "$upaxis" in line:
+		if line[0] == "$upaxis":
 			qc.upAxis = line[1].upper()
 			qc.upAxisMat = getUpAxisMat(line[1])
 			continue
@@ -1177,21 +1181,19 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 				qc.imported_smds.append(path)
 				readSMD(context,path,qc.upAxis,connectBones,False,type,multiImport,from_qc=True)
 				qc.numSMDs += 1
-			else:
-				log.warning("Skipped repeated SMD \"%s\"\n" % getFilename(line[word_index]))
 
 		# meshes
-		if "$body" in line or "$model" in line:
+		if line[0] in ["$body","$model"]:
 			loadSMD(2,"smd",REF,True) # create new armature no matter what
 			continue
-		if "replacemodel" in line:
+		if line[0] == "replacemodel":
 			loadSMD(2,"smd",REF_ADD)
 			continue
-		if "$bodygroup" in line:
+		if line[0] == "$bodygroup":
 			in_bodygroup = True
 			continue
 		if in_bodygroup:
-			if "studio" in line:
+			if line[0] == "studio":
 				loadSMD(1,"smd",REF) # bodygroups can be used to define skeleton
 				continue
 			if "}" in line:
@@ -1199,18 +1201,41 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 				continue
 
 		# skeletal animations
-		if doAnim and ("$sequence" in line or "$animation" in line):
-			if not "{" in line and len(line) > 3: # an advanced $sequence using an existing $animation, or anim redefinition
-				loadSMD(2,"smd",ANIM)
+		if doAnim and line[0] in ["$sequence","$animation"]:
+			# there is no easy way to determine whether a SMD is being defined here or elsewhere, or even precisely where it is being defined
+			num_words_to_skip = 0
+			for i in range(2, len(line)):
+				if num_words_to_skip:
+					num_words_to_skip -= 1
+					continue
+				if line[i] == "{":
+					break
+				if line[i] in ["hidden","autolay","realtime","snap","spline","xfade","delta","predelta"]:
+					continue
+				if line[i] in ["fadein","fadeout","addlayer","blendwidth","node"]:
+					num_words_to_skip = 1
+					continue
+				if line[i] in ["activity","transision","rtransition"]:
+					num_words_to_skip = 2
+					continue
+				if line[i] in ["blend"]:
+					num_words_to_skip = 3
+					continue
+				if line[i] in ["blendlayer"]:
+					num_words_to_skip = 5
+					continue
+				# there are many more keywords, but they can only appear *after* an SMD is referenced
+				loadSMD(i,"smd",ANIM)
+				break
 			continue
 
 		# flex animation
-		if "flexfile" in line:
+		if line[0] == "flexfile":
 			loadSMD(1,"vta",FLEX)
 			continue
 
 		# naming shapes
-		if "flex" in line or "flexpair" in line: # "flex" is safe because it cannot come before "flexfile"
+		if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
 			for i in range(1,len(line)):
 				if line[i] == "frame":
 					qc.ref_mesh.data.shape_keys.keys[int(line[i+1])-1].name = line[1] # subtract 1 because frame 0 isn't a real shape key
@@ -1218,12 +1243,45 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 			continue
 
 		# physics mesh
-		if "$collisionmodel" in line or "$collisionjoints" in line:
+		if line[0] in ["$collisionmodel","$collisionjoints"]:
 			loadSMD(1,"smd",PHYS)
 			continue
+			
+		# origin; this is where viewmodel editors should put their camera, and is in general something to be aware of
+		if line[0] == "$origin":
+			if qc.makeCamera:
+				data = bpy.data.cameras.new(qc.jobName + "_origin")
+				name = "camera"
+			else:
+				data = None
+				name = "empty object"
+			print("QC IMPORTER: created {} at $origin\n".format(name))
+			
+			origin = bpy.data.objects.new(qc.jobName + "_origin",data)
+			bpy.context.scene.objects.link(origin)
+			
+			origin.rotation_euler = vector([pi/2,0,pi]) + vector(getUpAxisMat(qc.upAxis).invert().to_euler()) # works, but adding seems very wrong!
+			for object in bpy.context.selected_objects:
+				object.select = False
+			origin.select = True
+			bpy.ops.object.rotation_apply()
+			
+			for i in range(3):
+				origin.location[i] = float(line[i+1])
+			origin.location *= getUpAxisMat(qc.upAxis).invert()
+			
+			if qc.makeCamera:
+				bpy.context.scene.camera = origin
+				origin.data.lens_unit = 'DEGREES'
+				origin.data.lens = 20.851593 # value always in mm; this number == 75 degrees
+				origin.data.passepartout_alpha = 1
+			else:
+				origin.empty_draw_type = 'PLAIN_AXES'
+			
+			qc.origin = origin
 
 		# QC inclusion
-		if "$include" in line:
+		if line[0] == "$include":
 			if line[1][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = line[1]
 			else:
@@ -1240,6 +1298,15 @@ def readQC( context, filepath, newscene, doAnim, connectBones, outer_qc = False)
 				log.warning(message + " - skipping!")
 
 	file.close()
+	
+	if qc.origin:
+		qc.origin.parent = qc.armature
+		if qc.dimensions:
+			size = min(qc.dimensions) / 15
+			if qc.makeCamera:
+				qc.origin.data.draw_size = size
+			else:
+				qc.origin.empty_draw_size = size
 
 	if outer_qc:
 		printTimeMessage(qc.startTime,filename,"import","QC")
@@ -1335,6 +1402,7 @@ class SmdImporter(bpy.types.Operator):
 	('COMPATIBILITY','Connect retaining compatibility','Only connect bones that will not break compatibility with existing SMDs'),
 	('ALL','Connect all','All bones that can be connected will be, disregarding backwards compatibility') )
 	connectBones = EnumProperty(name="Bone Connection Mode",items=connectionEnum,description="How to choose which bones to connect together",default='COMPATIBILITY')
+	makeCamera = BoolProperty(name="Make camera at $origin",description="For use in viewmodel editing. If not set, an empty will be created instead.",default=False)
 
 	def execute(self, context):
 		global log
@@ -1343,7 +1411,7 @@ class SmdImporter(bpy.types.Operator):
 		if os.name == 'nt': # windows only
 			self.properties.filepath = self.properties.filepath.lower()
 		if self.properties.filepath.endswith('.qc') | self.properties.filepath.endswith('.qci'):
-			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, outer_qc=True)
+			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, self.properties.makeCamera, outer_qc=True)
 			bpy.context.scene.objects.active = qc.armature
 		elif self.properties.filepath.endswith('.smd'):
 			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, multiImport=self.properties.multiImport)
@@ -1707,7 +1775,15 @@ def writeShapes():
 def bakeObj(in_object):
 	bi = {}
 	bi['src'] = in_object
+	
+	if in_object.type == 'ARMATURE': # prevent duplicate action being created, probably a Blender bug
+		prev_action = in_object.animation_data.action
+		in_object.animation_data.action = None
+		
 	baked = bi['baked'] = in_object.copy()
+	
+	if in_object.type == 'ARMATURE':
+		in_object.animation_data.action = baked.animation_data.action = prev_action
 	
 	bi['disabled_modifiers'] = []
 	bpy.context.scene.objects.link(baked)
@@ -1789,7 +1865,6 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 
 	global smd
 	smd	= smd_info()
-	smd.jobName = object.name
 	smd.jobType = smd_type
 	smd.startTime = time.time()
 	smd.uiTime = 0
@@ -1798,6 +1873,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 	if object.type == 'MESH':
 		if not smd.jobType:
 			smd.jobType = REF
+		smd.jobName = object.name
 		smd.m = object
 		bakeObj(smd.m)
 		smd.a = smd.m.find_armature()
@@ -1808,6 +1884,7 @@ def writeSMD( context, object, filepath, smd_type = None, quiet = False ):
 		if not smd.jobType:
 			smd.jobType = ANIM
 		smd.a = object
+		smd.jobName = object.animation_data.action.name
 	else:
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in [mesh,armature]")
 
