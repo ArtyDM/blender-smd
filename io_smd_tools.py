@@ -638,15 +638,17 @@ def readFrames():
 			for fcurve in smd.a.animation_data.action.fcurves:
 				last_frame = len(fcurve.keyframe_points)
 				co = fcurve.keyframe_points[0].co[1]
+				deviant = 0
 				for i in range(1,last_frame):
 					co2 = fcurve.keyframe_points[i].co[1]
 					if abs(co-co2) > 0.0001:
+						deviant = 1
 						break
-				if i == last_frame-1:
+				if not deviant:
 					for i in reversed(range(1,last_frame)):
 						pt = fcurve.keyframe_points[i]
 						fcurve.keyframe_points.remove(pt,fast=True)
-		else:
+		if 0:
 			# Remove points that are the same as the previous and next points
 			for fcurve in smd.a.animation_data.action.fcurves:
 				last_frame = len(fcurve.keyframe_points)
