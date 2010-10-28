@@ -17,15 +17,15 @@ test_suite_root = os.path.abspath('/SMD_Tools_Test_Suite')
 def available():
 	return os.path.exists(test_suite_root)
 
-def compareVectorElem(e1,e2):
-	return e1 - e2 > 0.001
+def compareVectorElem(e1,e2,epsilon=0.001):
+	return e1 - e2 > epsilon
 
-def compareVector(v1,v2):
-	if compareVectorElem(v1.x,v2.x):
+def compareVector(v1,v2,epsilon=0.001):
+	if compareVectorElem(v1.x,v2.x,epsilon):
 		return 1
-	if compareVectorElem(v1.y,v2.y):
+	if compareVectorElem(v1.y,v2.y,epsilon):
 		return 1
-	if compareVectorElem(v1.z,v2.z):
+	if compareVectorElem(v1.z,v2.z,epsilon):
 		return 1
 	return 0
 	
@@ -60,19 +60,33 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 
 	def runTests(self):
 		
-		connectBones=self.context.scene.smd_test_suite.connectBones
+		connectBones = self.context.scene.smd_test_suite.connectBones
+		self.expect = []
 
-		#return
-		
-		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
-		# some polygons go missing
-		self.runTest('Antlion_guard_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
-		self.runTest('bust_floor.smd', 'ANIM', connectBones=connectBones, multiImport=False)
+		#return # <<<<<----------
+
+		# sourcesdk_content\hl2\modelsrc\weapons\v_physcannon\Prongs.smd
+		# A 2-frame animation.  The curve-cleaner chopped out the last frame.
+		# 2 mangled rotations
+		self.runTest('Prongs.smd', 'ANIM', connectBones=connectBones, multiImport=True)
+
+		# sourcesdk_content\hl2\modelsrc\weapons\v_smg1\*
+		# Alt_fire was rotated 90 degrees, has extra root bone compared to ref
+		self.runTest('Smg1_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
+		self.expectBonesRemoved('ValveBiped','ValveBiped.cube','ValveBiped.SpineControl','ValveBiped.SpineControl1','ValveBiped.SpineControl2')
+		self.expectBonesRemoved('ValveBiped.SpineControl3','ValveBiped.NeckControl','ValveBiped.HeadControl','ValveBiped.HandControlPosL','ValveBiped.ArmRollL')
+		self.expectBonesRemoved('ValveBiped.HandControlPosR','ValveBiped.ArmRollR','ValveBiped.LegRollL','ValveBiped.LegRollR')
+		self.runTest('Alt_fire.smd', 'ANIM', connectBones=connectBones, multiImport=False)
 
 		# sourcesdk_content\hl2\modelsrc\Buggy
 		# buggy_ammo_open.smd has fewer bones, is missing Gun_Parent for example, so lots of differences on export
 		self.runTest('buggy_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
 		self.runTest('buggy_ammo_open.smd', 'ANIM', connectBones=connectBones, multiImport=False)
+
+		# sourcesdk_content\hl2\modelsrc\Antlion_Guard
+		# some polygons go missing
+		self.runTest('Antlion_guard_reference.smd', 'REF', connectBones=connectBones, multiImport=True)
+		self.runTest('bust_floor.smd', 'ANIM', connectBones=connectBones, multiImport=False)
 
 		# sourcesdk_content\hl2\modelsrc\weapons\v_rocket_launcher
 		# rpg_reference.smd has a too-long material name
@@ -183,10 +197,11 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 
 	def compareSMDs(self,inFile,outFile):
 		self.filename = outFile
-		data1 = self.parseSMD(inFile)
-		data2 = self.parseSMD(outFile)
-		self.compareData(data1,data2)
+		self.data1 = self.parseSMD(inFile)
+		self.data2 = self.parseSMD(outFile)
+		self.compareData(self.data1,self.data2)
 		self.logfile.flush()
+		self.expect = [] # clear it out for next test
 
 	def parseSMD(self,filepath):
 		data = {}
@@ -261,31 +276,42 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 			if not key in data1:
 				self.fail('extra "%s" block' % key)
 		if 'triangles' in data1 and data1['triangles'] != data2['triangles']:
-			self.fail('triangle count mismatch got %d expected %d' % (data2['triangles'],data1['triangles']))
+			self.fail('triangle count mismatch: got %d expected %d' % (data2['triangles'],data1['triangles']))
 		if 'materials' in data1:
 			for material in data1['materials']:
 				if not material in data2['materials']:
 					self.fail('missing material "%s"' % material)
 		if 'ID_to_name' in data1:
+			missingBoneNames = []
 			for boneName in data1['name_to_ID']:
 				if not boneName in data2['name_to_ID']:
-					self.fail('missing bone "%s"' % boneName)
+					if not self.expectedBoneRemoved(boneName):
+						missingBoneNames.append(boneName)
+					continue
 				parentName1 = parentName2 = '<none>'
-				if data1['name_to_parentID'][boneName] != -1:
-					parentName1 = data1['ID_to_name'][data1['name_to_parentID'][boneName]]
-				if data2['name_to_parentID'][boneName] != -1:
-					parentName2 = data2['ID_to_name'][data2['name_to_parentID'][boneName]]
-				if parentName1 != parentName2:
-					self.fail('parent of bone "%s" got "%s" expected "%s"' % (boneName,parentName2,parentName1))
+				parentID1 = data1['name_to_parentID'][boneName]
+				if parentID1 != -1:
+					parentName1 = data1['ID_to_name'][parentID1]
+				parentID2 = data2['name_to_parentID'][boneName]
+				if parentID2 != -1:
+					parentName2 = data2['ID_to_name'][parentID2]
+				if self.expectedBoneRemoved(parentName1):
+					if parentName1 == parentName2:
+						self.fail('expected parent of bone "%s" to change: got "%s"' % (boneName,parentName1))
+				elif parentName1 != parentName2:
+					self.fail('parent of bone "%s" mismatch: got "%s" expected "%s"' % (boneName,parentName2,parentName1))
+			for boneName in missingBoneNames:
+				self.fail('output is missing bone "%s"' % boneName)
 		if 'frameCount' in data1:
 			if data1['frameCount'] != data2['frameCount']:
-				self.fail('frame count mismatch got %d expected %d' % (data2['frameCount'],data1['frameCount']))
+				self.fail('frame count mismatch: got %d expected %d' % (data2['frameCount'],data1['frameCount']))
 			pos1 = {}
 			rot1 = {}
 			pos2 = {}
 			rot2 = {}
 			for frame in range(data1['frameCount']):
 				frameData1 = data1['frames'][frame]
+				# Each frameBone is (id,pos,rot)
 				for frameBone in frameData1:
 					pos1[data1['ID_to_name'][frameBone[0]]] = frameBone[1]
 					rot1[data1['ID_to_name'][frameBone[0]]] = frameBone[2]
@@ -294,6 +320,15 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 					pos2[data2['ID_to_name'][frameBone[0]]] = frameBone[1]
 					rot2[data2['ID_to_name'][frameBone[0]]] = frameBone[2]
 				for boneName in data1['name_to_ID']:
+					if not boneName in data2['name_to_ID']:
+						continue
+					if self.compareCumulativePosition(frame,boneName,pos1,rot1,pos2,rot2):
+						pass
+					if self.compareCumulativeRotation(frame,boneName,rot1,rot2):
+						pass
+					# If we expected the bone to be reparented then we can't compare the local pos/rot to the original
+					if self.expectedParentChanged(boneName):
+						continue
 					if compareVector(pos1[boneName],pos2[boneName]):
 						self.fail('frame %d bone %s POS got %s expected %s' % (frame,boneName,vectorString(pos2[boneName]),vectorString(pos1[boneName])))
 					if compareVector(rot1[boneName],rot2[boneName]):
@@ -306,10 +341,67 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 						else:
 							self.fail('frame %d bone %s ROT got %s expected %s QUAT_FAIL' % (frame,boneName,vectorString(rot2[boneName]),vectorString(rot1[boneName])))
 							self.fail('-->%s %s %s' % (q3,q3.angle,q3.magnitude))
+	
+	def compareCumulativePosition(self, frame, boneName, pos1, rot1, pos2, rot2):
+		globalPos1 = self.calcGlobalPosition(boneName,self.data1,pos1,rot1)
+		globalPos2 = self.calcGlobalPosition(boneName,self.data2,pos2,rot2)
+		if compareVector(globalPos1,globalPos2):
+			self.fail('frame %d bone %s GLOBAL-POS got %s expected %s' % (frame,boneName,vectorString(globalPos1),vectorString(globalPos2)))
+
+	def compareCumulativeRotation(self, frame, boneName, rot1, rot2):
+		rotMat1 = self.calcGlobalMatrix(boneName,self.data1,rot1)
+		rotMat2 = self.calcGlobalMatrix(boneName,self.data2,rot2)
+		eul1 = rotMat1.to_euler()
+		eul2 = rotMat2.to_euler()
+		if compareVector(eul1,eul2,0.005):
+			q1 = eul1.to_quat()
+			q2 = eul2.to_quat()
+			q3 = q1.difference(q2)
+			if q3.angle == 0.0 or round(q3.angle,6) == round(math.pi*2,6):
+				if not self.context.scene.smd_test_suite.hide_quat_ok:
+					self.fail('frame %d bone %s GLOBAL-ROT got %s expected %s QUAT_OK' % (frame,boneName,vectorString(eul2),vectorString(eul1)))
+			else:
+				self.fail('frame %d bone %s GLOBAL-ROT got %s expected %s QUAT_FAIL' % (frame,boneName,vectorString(eul2),vectorString(eul1)))
+				self.fail('-->%s %s %s' % (q3,q3.angle,q3.magnitude))
+	
+	def calcGlobalMatrix(self,boneName,data,rots):
+		smd_rot = rots[boneName]
+		rotMat = rMat(-smd_rot.x, 3,'X') * rMat(-smd_rot.y, 3,'Y') * rMat(-smd_rot.z, 3,'Z')
+		parentID = data['name_to_parentID'][boneName]
+		if parentID != -1:
+			parentName = data['ID_to_name'][parentID]
+			rotMat *= self.calcGlobalMatrix(parentName,data,rots)
+		return rotMat
+	
+	def calcGlobalPosition(self,boneName,data,poss,rots):
+		parentID = data['name_to_parentID'][boneName]
+		if parentID != -1:
+			parentName = data['ID_to_name'][parentID]
+			parentPos = self.calcGlobalPosition(parentName,data,poss,rots)
+			return parentPos + poss[boneName] * self.calcGlobalMatrix(parentName,data,rots)
+		else:
+			return poss[boneName]
+
+	def expectBonesRemoved(self,*args):
+		for boneName in args:
+			self.expect.append(['bone-remove',boneName])
+
+	def expectedBoneRemoved(self,boneName):
+		for sublist in self.expect:
+			if sublist[0] == 'bone-remove' and sublist[1] == boneName:
+				return True
+		return False
+	
+	def expectedParentChanged(self,boneName):
+		parentID = self.data1['name_to_parentID'][boneName]
+		if parentID != -1:
+			parentName = self.data1['ID_to_name'][parentID]
+			return self.expectedBoneRemoved(parentName)
+		return False
 
 	def fail(self,msg):
 		self.logfile.write('%s\n' % msg)
-		print('test suite fail: %s %s' % (self.filename, msg))
+		print('test suite fail: %s see log.txt' % (self.filename))
 
 	def ipath(self,filename):
 		return os.path.join(test_suite_root,filename)
