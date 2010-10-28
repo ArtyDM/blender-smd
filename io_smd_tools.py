@@ -692,6 +692,7 @@ def readFrames():
 		if not a.animation_data:
 			a.animation_data_create()
 		a.animation_data.action = bpy.data.actions.new(smd.jobName)
+		a.animation_data.action.use_fake_user = True
 
 		# Create a new armature we can pose in edit-mode with each frame of animation.
 		# This is only needed until the matrix math gets sorted out.
@@ -1444,7 +1445,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 			if qc.makeCamera:
 				bpy.context.scene.camera = origin
 				origin.data.lens_unit = 'DEGREES'
-				origin.data.lens = 20.851593 # value always in mm; this number == 75 degrees
+				origin.data.lens = 31.401752 # value always in mm; this number == 54 degrees
 				origin.data.passepartout_alpha = 1
 			else:
 				origin.empty_draw_type = 'PLAIN_AXES'
@@ -1567,7 +1568,7 @@ class SmdImporter(bpy.types.Operator):
 	
 	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
-	doAnim = BoolProperty(name="Import animations (slow)", description="This process now works, but needs optimisation", default=True)
+	doAnim = BoolProperty(name="Import animations (slow)", default=True)
 	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up'. Ignored for QCs.")
 	connectionEnum = ( ('NONE','Do not connect (sphere bones)','All bones will be unconnected spheres'),
 	('COMPATIBILITY','Connect retaining compatibility','Only connect bones that will not break compatibility with existing SMDs'),
@@ -1591,8 +1592,8 @@ class SmdImporter(bpy.types.Operator):
 			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith('.dmx'):
-			return 'CANCELLED'
 			self.report('ERROR',"DMX import not supported")
+			return 'CANCELLED'
 		else:
 			self.report('ERROR',"File format not recognised")
 			return 'CANCELLED'
@@ -2392,7 +2393,7 @@ class SmdExporter(bpy.types.Operator):
 
 				if branch in ['ep1','source2007','orangebox']:
 					studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-				if branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm']:
+				elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm']:
 					studiomdl_path = ncf_path + branch + "\\bin\\"
 
 				if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
