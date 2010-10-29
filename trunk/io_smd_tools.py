@@ -590,9 +590,9 @@ def readBones():
 	
 	# Got this far? Then this is a fresh import which needs a new armature.
 	smd.a = createArmature(smd_manager.jobName)
-
+	
 	try:
-		qc.armature = a
+		qc.armature = smd.a
 	except NameError:
 		pass
 
@@ -1446,6 +1446,10 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 				bpy.context.scene.camera = origin
 				origin.data.lens_unit = 'DEGREES'
 				origin.data.lens = 31.401752 # value always in mm; this number == 54 degrees
+				# Blender's FOV isn't locked to X or Y height, so a shift is needed to get the weapon aligned properly.
+				# This is a nasty hack, and the values are only valid for the default 54 degrees angle
+				origin.data.shift_y = -0.27
+				origin.data.shift_x = 0.36
 				origin.data.passepartout_alpha = 1
 			else:
 				origin.empty_draw_type = 'PLAIN_AXES'
