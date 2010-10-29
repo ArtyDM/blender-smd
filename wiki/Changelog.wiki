@@ -1,4 +1,21 @@
 #labels Featured
+== 0.8.3 - October 29, 2010 ==
+
+Importer:
+
+  * Fixed issues when importing animations that leave root bones implicit
+  * Fixed two-frame animations not importing correctly
+  * Fixed $sequences that define both an SMD file and advanced options not being imported
+  * Now importing $origin location as either a camera, for viewmodel editing, or a simple empty object, for reference. The frame is offset to account for Blender's FOV not being locked to frame resolution - _this is a hack that only works for the default FOV of 54 degrees!_
+  * Give imported animations a fake user, preventing them from being removed by Blender if not active
+  * Fixed DMX import attempts not generating error messages
+  * Stopped warning altogether when encountering repeated SMDs
+
+Exporter:
+
+  * Fixed duplicate action(s) being left over after each export (Blender bug?)
+  * Console now talks about the action being exported, not its armature
+
 == 0.8.2 - October 22, 2010 ==
 
 General:
