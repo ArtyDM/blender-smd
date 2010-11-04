@@ -1,4 +1,23 @@
 #labels Featured
+== 0.9 - November 4, 2010 ==
+
+General:
+
+  * Now requires Blender 2.55
+  * UI error/warning message now includes how many SMDs were handled
+
+Importer:
+
+  * Filtered the file chooser to compatible files only (new feature in 2.55)
+
+Exporter:
+
+  * *New feature: Group export.* Grouped meshes can be exported to a single SMD, enabling advanced use of modifiers and datablock linking. Armatures cannot be group exported.
+  * Avoided Blender's inability to apply modifiers to meshes with shape keys. The keys are now exported, just without modifiers applied.
+  * Fixed exception when a vertex group on a mesh does not have a corresponding bone
+  * Added a new Armature properties button to clean SMD data from its bones without also nuking everything in the scene
+  * Console now specifies that shape keys are being exported, rather than a mesh
+
 == 0.8.3 - October 29, 2010 ==
 
 Importer:
