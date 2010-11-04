@@ -20,7 +20,7 @@ bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
 	"version": (0, 9, 0),
-	"blender": (2, 5, 4),
+	"blender": (2, 5, 5),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
 	"wiki_url": "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools",
@@ -134,8 +134,8 @@ class logger:
 		caller.report('ERROR',message)
 		self.errors.append(message)
 
-	def errorReport(self, jobName, caller):
-		message = "SMD " + jobName + " with " + str(len(self.errors)) + " errors and " + str(len(self.warnings)) + " warnings."
+	def errorReport(self, jobName, caller, numSMDs):
+		message = str(numSMDs) + " SMDs " + jobName + " with " + str(len(self.errors)) + " errors and " + str(len(self.warnings)) + " warnings."
 		print(message)
 
 		if len(self.errors) or len(self.warnings):
@@ -1558,18 +1558,8 @@ class SmdImporter(bpy.types.Operator):
 	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
-
-	# All this version check junk will go away once the next beta is out!
-	try:
-		# Someone's custom build had revision '32380M'
-		values = re.split('[^0-9]?([0-9]+)',bpy.app.build_revision)
-		#values = re.split('[^0-9]?([0-9]+)','32380M')
-		version = values[1]
-		if len(version) >= 5 and int(version) >= 32095:
-			filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
-			filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
-	except:
-		pass
+	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
+	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
 	
 	# Custom properties
 	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
@@ -1603,7 +1593,7 @@ class SmdImporter(bpy.types.Operator):
 			self.report('ERROR',"File format not recognised")
 			return 'CANCELLED'
 
-		log.errorReport("imported",self)
+		log.errorReport("imported",self,self.countSMDs)
 		if smd.m:
 			smd.m.select = True
 			for area in context.screen.areas:
@@ -1978,7 +1968,15 @@ def bakeObj(in_object):
 				edgesplit.use_edge_angle = False
 			
 			# BLENDER BUG: shape keys are not transferred to the new mesh
-			baked.data = baked.create_mesh(bpy.context.scene,True,'PREVIEW') # the important command
+			if smd.jobType == FLEX:
+				baked.data = baked.data.copy()
+				if not in_object.data.shape_keys or len(in_object.data.shape_keys.keys) < 2:
+					# Shouldn't happen, but might
+					message = "Object did not have any shape keys."
+					self.report('ERROR',message)
+					raise(message)
+			else:
+				baked.data = baked.create_mesh(bpy.context.scene,True,'PREVIEW') # the important command
 
 			# quads > tris
 			bpy.ops.object.mode_set(mode='EDIT')
@@ -2087,7 +2085,11 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in [mesh,armature]")
 
 	smd.file = open(filepath, 'w')
-	if not quiet: print("\nSMD EXPORTER: now working on",smd.jobName)
+	if smd.jobType == FLEX:
+		flexnotice = " (shape keys)"
+	else:
+		flexnotice = ""
+	if not quiet: print("\nSMD EXPORTER: now working on",smd.jobName + flexnotice)
 	smd.file.write("version 1\n")
 
 	if smd.a:
@@ -2106,6 +2108,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		if smd.jobType in [REF,PHYS]:
 			writePolys()
 		elif smd.jobType == FLEX and smd.m.data.shape_keys:
+			log.warning("Due to a Blender limitation, modifers cannot be applied to shape keys")
 			writeShapes()
 
 	unBake()
@@ -2449,7 +2452,7 @@ class SmdExporter(bpy.types.Operator):
 						break
 					else:
 						ob = None
-
+			
 			if ob:
 				self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
 			else:
@@ -2480,18 +2483,16 @@ class SmdExporter(bpy.types.Operator):
 							for i in range(len(object.users_group)):
 								if object.users_group[i] == group:
 									g_index = i
+									break
 							self.exportObject(context,object,groupIndex=g_index)
 							break
 			for object in bpy.context.scene.objects:
 				if object.smd_export:
+					should_export = True
 					if object.users_group:
-						solo = True
-						for group in object.users_group:
-							if group.smd_export:
-								solo = False
-						if solo:
-							self.exportObject(context,object)
-					else:
+						if (group.smd_export for group in object.users_group):
+							should_export = False
+					if should_export:
 						self.exportObject(context,object)
 
 		elif props.exportMode == 'FILE': # can't be done until Blender scripts become able to change the scene
@@ -2553,7 +2554,7 @@ class SmdExporter(bpy.types.Operator):
 		jobMessage = "exported"
 		if context.scene.smd_qc_compile:
 			jobMessage += " and QC compiled"
-		log.errorReport(jobMessage,self)
+		log.errorReport(jobMessage,self,self.countSMDs)
 		return 'FINISHED'
 
 	# indirection to support batch exporting
