@@ -19,11 +19,11 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 9, 0),
+	"version": (0, 9, 1),
 	"blender": (2, 5, 5),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
-	"wiki_url": "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools",
+	"wiki_url": "http://code.google.com/p/blender-smd/",
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
 
@@ -1969,12 +1969,12 @@ def bakeObj(in_object):
 			
 			# BLENDER BUG: shape keys are not transferred to the new mesh
 			if smd.jobType == FLEX:
-				baked.data = baked.data.copy()
 				if not in_object.data.shape_keys or len(in_object.data.shape_keys.keys) < 2:
 					# Shouldn't happen, but might
 					message = "Object did not have any shape keys."
 					self.report('ERROR',message)
 					raise(message)
+				baked.data = baked.data.copy()
 			else:
 				baked.data = baked.create_mesh(bpy.context.scene,True,'PREVIEW') # the important command
 
@@ -1982,6 +1982,16 @@ def bakeObj(in_object):
 			bpy.ops.object.mode_set(mode='EDIT')
 			bpy.ops.mesh.select_all(action='SELECT')
 			bpy.ops.mesh.quads_convert_to_tris()
+			if len(baked.data.uv_textures) == 0:
+				selection_backup = bpy.context.selected_objects
+				for object in selection_backup:
+					object.select = False
+				
+				baked.select = True
+				bpy.ops.uv.smart_project()
+				
+				for object in selection_backup:
+					object.select = True
 			bpy.ops.object.mode_set(mode='OBJECT')
 
 			if bpy.context.scene.smd_up_axis == 'Y':
@@ -2152,11 +2162,13 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 			
 			
 			if ob.type == 'MESH':
+				want_single_export = True
 				# Groups of meshes
 				if ob.users_group:
 					for i in range(len(ob.users_group)):
 						group = ob.users_group[i]
 						if group.smd_export:
+							want_single_export = False
 							label = group.name + ".smd"
 							for g_ob in group.objects:
 								if g_ob.type == 'MESH' and g_ob.data.shape_keys and len(g_ob.data.shape_keys.keys) > 1:
@@ -2167,7 +2179,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 							op.exportMode = 'SINGLE' # meshes will be merged and exported as one
 							op.groupIndex = i
 				# Single mesh
-				else:
+				if want_single_export:
 					label = ob.name + ".smd"
 					if ob.data.shape_keys and len(ob.data.shape_keys.keys) > 1:
 						label += "/.vta"
