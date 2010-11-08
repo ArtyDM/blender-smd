@@ -1,4 +1,11 @@
 #labels Featured
+== 0.9.1 - November 8, 2010 ==
+
+Exporter:
+
+  * Fixed not being able to export objects that are in disabled groups
+  * Now running Blender's smart project on objects without UVs
+
 == 0.9 - November 4, 2010 ==
 
 General:
