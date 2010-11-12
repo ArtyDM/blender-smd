@@ -80,25 +80,10 @@ class smd_info:
 
 		self.bakeInfo = []
 
-		# Checks for dupe bone names due to truncation
-		self.dupeCount = {}
 		# boneIDs contains the ID-to-name mapping of *this* SMD's bones.
 		# - Key: integer ID
 		# - Value: bone name (storing object itself is not safe)
 		self.boneIDs = {}
-
-		# Reverse of the above.
-		# - Key: Bone name
-		# - Value: integer ID
-		# NOTE: Not setting bone['smd_id'] anymore because I ran into problems with duplicating a bone -> 2 bones with same ID!
-		# NOTE: Also if bones get deleted (useless rigging bones in Antlion Guard for example) there will be gaps in the IDs.
-		self.boneNameToID = {}
-
-		# For recording rotation matrices. Children access their parent's matrix.
-		# USE BONE NAME STRING - MULTIPLE BONE TYPES NEED ACCESS (bone, editbone, posebone)
-		self.rotMats = {}
-
-		self.location = {}
 
 class qc_info:
 	def __init__(self):
@@ -285,6 +270,9 @@ def getUpAxisMat(axis):
 # NOTE: This seems to return the same order that bones are read in.
 def sortBonesForExport():
 
+	smd.boneIDs = {}
+	smd.boneNameToID = {}
+
 	def addBonesToSortedList(smd_id,bone,boneList):
 		boneList.append(bone.name)
 		smd.boneIDs[smd_id] = bone.name
@@ -412,6 +400,8 @@ def uniqueName(name, nameList, limit):
 		name = '%s_%.2d' % (name_orig, i)
 	return name
 
+UsePoseArmature = False
+
 # Runs instead of readBones if an armature already exists, testing the current SMD's nodes block against it.
 def validateBones():
 	smd.aBoneInfo = bones_info.fromArmature(smd.a)
@@ -425,7 +415,7 @@ def validateBones():
 		restBoneInfo = smd.aBoneInfo.boneBySmdName(poseBoneInfo.smdName)
 		restParentName = restBoneInfo.parent.smdName.lower() if restBoneInfo.parent else None
 		poseParentName = poseBoneInfo.parent.smdName.lower() if poseBoneInfo.parent else None
-		# Typical case, both pose and rest bones have the same parent (or None).
+		# Typical case: both pose and rest bones have the same parent (or None).
 		if poseParentName == restParentName:
 			#print('pose bone %s parent same as in rest armature' % poseBoneInfo.smdName)
 			#poseBoneInfo.animParent = restBoneInfo.parent.mangledName if restBoneInfo.parent else None
@@ -454,9 +444,11 @@ def validateBones():
 			if commonAncestor == restAncInfo:
 				print('common ancestor of %s is %s' % (poseBoneInfo.smdName,restAncInfo.smdName))
 				break
-			# tau_reference:
-			# 13 "Rig_Buggy.Gun_Base" 1
-			# 14 "Rig_Buggy.Gun" -1        <--- is child of Gun_Parent in buggy_reference
+			# buggy_reference:                    tau_reference:
+			#   Frame                               Frame
+			#     Gun_Base                            Gun_Base
+			#       Gun_Parent                      Gun
+			#         Gun
 			if smd.boneInfo.hasBone(restAncInfo.smdName):
 				continue
 			# Case 2) extra rest bone ancestor detected
@@ -471,7 +463,7 @@ def validateBones():
 		info.smdName = extraInfo.smdName
 		info.ID = smd.boneInfo.nextID
 		if extraInfo.parent:
-			info.parent = smd.boneInfo.boneBySmdName(extraInfo.parent.smdName) # FIXME: not certain parent was created yet
+			info.setParent(smd.boneInfo.boneBySmdName(extraInfo.parent.smdName)) # FIXME: not certain parent was created yet
 			info.animParent = info.parent.smdName
 		info.isExtra = True
 		smd.boneInfo.addBone(info)
@@ -489,9 +481,19 @@ class bone_info:
 		self.smdName = None
 		self.ID = None
 		self.parent = None
+		self.children = []
 		self.animParent = None
 		self.extraAncestors = []
 		self.isExtra = False
+	
+	def setParent(self,parent):
+		self.parent = parent
+		if parent:
+			parent.addChild(self)
+	
+	def addChild(self,child):
+		assert(not child in self.children)
+		self.children.append(child)
 
 	def ancestors(self):
 		result = []
@@ -504,14 +506,21 @@ class bone_info:
 	def sameName(self,other):
 		if not other: return False
 		return self.smdName.lower() == other.smdName.lower()
-	
+
+	def children_recursive(self):
+		result = []
+		for child in self.children:
+			result.append(child)
+			result.extend(child.children_recursive())
+		return result
+
 	@classmethod
 	def fromArmature(cls,bone,ID,parent=None):
 		boneInfo = bone_info()
 		boneInfo.ID = ID
 		boneInfo.mangledName = bone.name
 		boneInfo.smdName = bone.get('smd_name') or bone.name
-		boneInfo.parent = parent
+		boneInfo.setParent(parent)
 		boneInfo.animParent = parent
 		return boneInfo
 
@@ -527,9 +536,16 @@ class bones_info:
 		self.nextID = 0
 	
 	def addBone(self,bone):
+		assert(not bone in self.bones)
+		assert(not bone.mangledName in self.mangledNameToBone.keys())
+		assert(not bone.ID in self.IDToBone.keys())
 		self.bones.append(bone)
 		self.mangledNameToBone[bone.mangledName] = bone
-		self.smdNameToBone[bone.smdName.lower()] = bone
+		# In the case of duplicate bone names, the first bone is the one
+		# matched when looking up a bone by its smd name.  I believe this
+		# is how studiomdl matches bone names in the case of duplicates.
+		if not bone.smdName.lower() in self.smdNameToBone.keys():
+			self.smdNameToBone[bone.smdName.lower()] = bone
 		self.IDToBone[bone.ID] = bone
 		if bone.ID >= self.nextID:
 			self.nextID = bone.ID + 1
@@ -563,7 +579,7 @@ class bones_info:
 	
 	def numBones(self):
 		return len(self.bones)
-	
+		
 	@classmethod
 	def fromArmature(cls,arm):
 		info = bones_info()
@@ -582,6 +598,7 @@ class bones_info:
 # Info about the bones is stored in a new object of class 'bones_info'.
 def readNodes():
 	mangledBoneList = []
+	duplicateBoneNames = []
 	bones = bones_info()
 	for line in smd.file:
 		if line == "end\n":
@@ -589,16 +606,26 @@ def readNodes():
 
 		values = parseQuoteBlockedLine(line,lower=False)
 
+		if bones.hasBone(values[1]):
+			if not values[1] in duplicateBoneNames:
+				duplicateBoneNames.append(values[1])
+
 		bone = bone_info()
 		bone.ID = int(values[0])
 		bone.smdName = values[1]
 		parentID = int(values[2])
 		if parentID != -1:
-			bone.parent = bones.boneByID(parentID)
+			bone.setParent(bones.boneByID(parentID))
 			bone.animParent = bone.parent.smdName
 		bone.mangledName = bones.uniqueBoneName(bone.smdName)
 
 		bones.addBone(bone)
+
+	if len(duplicateBoneNames) > 0:
+		log.warning('%d bone names appear more than once' % len(duplicateBoneNames))
+		print('The following bone names appear more than once:')
+		for boneName in duplicateBoneNames:
+			print('  ',boneName)
 
 	# All bones parsed!
 	return bones
@@ -678,8 +705,10 @@ def createArmature(armature_name):
 
 	ops.object.mode_set(mode='OBJECT')
 
-	if len(warnNames) > 0:
-		log.warning("The following bone names were truncated to 32 characters:")
+	length = len(warnNames)
+	if length > 0:
+		log.warning('%d bone name%s truncated to 31 characters' % (length,'s were' if length > 1 else ' was'))
+		print("The following bone names were truncated to 31 characters:")
 		for name in warnNames:
 			print('  ',name)
 
@@ -730,7 +759,7 @@ def readFrames():
 	prevFrame = scn.frame_current
 	scn.frame_set(0)
 	bpy.context.scene.objects.active = smd.a
-	ops.object.mode_set(mode='EDIT')
+	ops.object.mode_set(mode='OBJECT')
 
 	if smd.jobType in [ANIM,ANIM_SOLO]:
 		if not a.animation_data:
@@ -738,23 +767,24 @@ def readFrames():
 		a.animation_data.action = bpy.data.actions.new(smd.jobName)
 		a.animation_data.action.use_fake_user = True
 
-		# Create a new armature we can pose in edit-mode with each frame of animation.
-		# This is only needed until the matrix math gets sorted out.
-		smd.poseArm = createArmature('pose_armature')
-		assert(smd.poseArm.mode == 'OBJECT')
-		smd.poseArm.select = False
-		smd.a.select = True
-		bpy.context.scene.objects.active = smd.a
-		ops.object.mode_set(mode='EDIT')
+		if UsePoseArmature:
+			# Create a new armature we can pose in edit-mode with each frame of animation.
+			# This is only needed until the matrix math gets sorted out.
+			smd.poseArm = createArmature('pose_armature')
+			assert(smd.poseArm.mode == 'OBJECT')
+			smd.poseArm.select = False
+			smd.a.select = True
+			bpy.context.scene.objects.active = smd.a
+			ops.object.mode_set(mode='OBJECT') # smd.a -> object mode
 
 		# Get a list of bone names sorted so parents come before children.
 		# Include all bones in the current SMD.
 		smd.poseBoneNames = []
-		for bone in smd.poseArm.data.bones:
+		for bone in smd.boneInfo.boneList():
 			if not bone.parent:
-				smd.poseBoneNames.append(bone.name)
-				for child in bone.children_recursive: # depth-first
-					smd.poseBoneNames.append(child.name)
+				smd.poseBoneNames.append(bone.mangledName)
+				for child in bone.children_recursive(): # depth-first
+					smd.poseBoneNames.append(child.mangledName)
 
 	# Get a list of bone names sorted so parents come before children.
 	# Include all bones in the target armature.
@@ -766,28 +796,38 @@ def readFrames():
 				smd.restBoneNames.append(child.name)
 
 	readFrameData() # Read in all the frames
+
 	if smd.jobType in [REF,ANIM_SOLO]:
-		assert smd.a.mode == 'EDIT'
+		assert bpy.context.scene.objects.active == smd.a
+		bpy.ops.object.mode_set(mode='EDIT', toggle=False) # smd.a -> edit mode
 		applyFrameDataRest(smd.frameData[0])
+		# Got to go from EDIT to OBJECT to ensure changes are copied from smd.a.data.edit_bones to smd.a.data.bones
+		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
+
 	if smd.jobType in [ANIM,ANIM_SOLO]:
 
 		# Get all the armature-space matrices for the bones at their rest positions
 		smd.matAllRest = {}
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
+		assert bpy.context.scene.objects.active == smd.a
+		assert smd.a.mode == 'OBJECT'
 		for bone in smd.a.data.bones:
 			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
 		# Step 1: set smd.poseArm pose and store the armature-space matrices in smd.matAllPose for each frame
 		smd.matAllPose = []
-		bpy.context.scene.objects.active = smd.poseArm
-		bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
+		if UsePoseArmature:
+			bpy.context.scene.objects.active = smd.poseArm
+			bpy.ops.object.mode_set(mode='EDIT') # smd.poseArm -> edit mode
 		for i in range(len(smd.frameData)):
 			applyFrameDataPose(smd.frameData[i])
 			bpy.context.scene.frame_current += 1
 
 		# Step 2: set smd.a pose and set keyframes where desired for each frame
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
-		bpy.context.scene.objects.active = smd.a
+		if UsePoseArmature:
+			assert bpy.context.scene.objects.active == smd.poseArm
+			bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.poseArm -> object mode
+			bpy.context.scene.objects.active = smd.a
+		assert bpy.context.scene.objects.active == smd.a
 		bpy.ops.object.mode_set(mode='POSE') # smd.a -> pose mode
 		bpy.context.scene.frame_set(0)
 		for i in range(len(smd.frameData)):
@@ -800,12 +840,13 @@ def readFrames():
 		scn.frame_start = 0
 		scn.frame_end = scn.frame_current - 1
 
-		# Remove the pose armature
-		bpy.context.scene.objects.unlink(smd.poseArm)
-		arm_data = smd.poseArm.data
-		bpy.data.objects.remove(smd.poseArm)
-		bpy.data.armatures.remove(arm_data)
-		smd.poseArm = None
+		if UsePoseArmature:
+			# Remove the pose armature
+			bpy.context.scene.objects.unlink(smd.poseArm)
+			arm_data = smd.poseArm.data
+			bpy.data.objects.remove(smd.poseArm)
+			bpy.data.armatures.remove(arm_data)
+			smd.poseArm = None
 
 		if 1:
 			# Remove every point but the first if every following point is within a certain deviation
@@ -951,27 +992,28 @@ def readFrameData():
 	# Handle any extra bones added to the pose armature.
 	# This code is just like the rest-pose export code, used to determine the smd_pos and smd_rot
 	# of the extra bones in the rest armature.
-	if 1:
-		assert(smd.a == bpy.context.scene.objects.active)
-		bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
-		for boneInfo in smd.boneInfo.boneList():
-			if not boneInfo.isExtra: continue
-			pbn = smd.a.data.bones[smd.aBoneInfo.boneBySmdName(boneInfo.smdName).mangledName]
-			if pbn.parent:
-				parentRotated = pbn.parent.matrix_local * ryz90
-				childRotated = pbn.matrix_local * ryz90
-				rot = parentRotated.invert() * childRotated
-				pos = rot.translation_part()
-			else:
-				rot = pbn.matrix_local * ryz90
-				pos = rot.translation_part()
-				if smd_manager == 'Y':
-					pos = rx90n * pos
-					rot = rx90n * rot
-			rot = rot.to_euler('XYZ')
-			rotMat = rMat(-rot.x, 3,'X') * rMat(-rot.y, 3,'Y') * rMat(-rot.z, 3,'Z')
-			smd.frameData[0][boneInfo.mangledName] = {'pos':pos, 'rot':rotMat} # every frame is the same as the first
-		bpy.ops.object.mode_set(mode='EDIT', toggle=False) # smd.a -> edit mode
+	assert(smd.a == bpy.context.scene.objects.active)
+	assert smd.a.mode == 'OBJECT'
+	#bpy.ops.object.mode_set(mode='OBJECT', toggle=False) # smd.a -> object mode
+	for boneInfo in smd.boneInfo.boneList():
+		if not boneInfo.isExtra: continue
+		aBoneInfo = smd.aBoneInfo.boneBySmdName(boneInfo.smdName)
+		pbn = smd.a.data.bones[aBoneInfo.mangledName]
+		if pbn.parent:
+			parentRotated = pbn.parent.matrix_local * ryz90
+			childRotated = pbn.matrix_local * ryz90
+			rot = parentRotated.invert() * childRotated
+			pos = rot.translation_part()
+		else:
+			rot = pbn.matrix_local * ryz90
+			pos = rot.translation_part()
+			if smd_manager == 'Y':
+				pos = rx90n * pos
+				rot = rx90n * rot
+		rot = rot.to_euler('XYZ')
+		rotMat = rMat(-rot.x, 3,'X') * rMat(-rot.y, 3,'Y') * rMat(-rot.z, 3,'Z')
+		smd.frameData[0][boneInfo.mangledName] = {'pos':pos, 'rot':rotMat} # every frame is the same as the first
+	#bpy.ops.object.mode_set(mode='EDIT', toggle=False) # smd.a -> edit mode
 
 	# Every bone must be listed for the first frame of an animation.
 	# After the first frame a bone may not be listed in the SMD if it didn't change from a previous frame.
@@ -1008,6 +1050,7 @@ def applyFrameDataRest(frameData):
 		# *************************************************
 		# Set rest positions. This happens only for the first frame, but not for an animation SMD.
 
+		assert smd.a.mode == 'EDIT'
 		bn = smd.a.data.edit_bones[boneName]
 
 		if bn.parent:
@@ -1038,19 +1081,23 @@ def applyFrameDataPose(frameData):
 	matAllPose = {}
 
 	if smd_manager.upAxis == 'Z':
-		tail_vec = vector([1,0,0])
-		roll_vec = vector([0,1,0])
+		x_vec = vector([0,0,1])
+		y_vec = vector([1,0,0])
+		z_vec = vector([0,1,0])
 	elif smd_manager.upAxis == 'Y':
-		tail_vec = vector([0,-1,0])
-		roll_vec = vector([0,0,1])
+		x_vec = vector([1,0,0])
+		y_vec = vector([0,-1,0])
+		z_vec = vector([0,0,1])
 		# Bone axis is a whole other can of worms that will have to be looked at.
 		# If this changes the export code may need updating.
-		tail_vec = vector([1,0,0])
-		roll_vec = vector([0,1,0])
+		x_vec = vector([0,0,1])
+		y_vec = vector([1,0,0])
+		z_vec = vector([0,1,0])
 	elif smd_manager.upAxis == 'X':
 		# FIXME: same as Z for now
-		tail_vec = vector([1,0,0])
-		roll_vec = vector([0,1,0])
+		x_vec = vector([0,0,1])
+		y_vec = vector([1,0,0])
+		z_vec = vector([0,1,0])
 
 	for boneName in smd.poseBoneNames:
 
@@ -1060,20 +1107,46 @@ def applyFrameDataPose(frameData):
 		# *****************************************
 		# Set pose positions. This happens for every frame, but not for a reference pose.
 
-		edit_bone = smd.poseArm.data.edit_bones[boneName]
+		if not UsePoseArmature:
+			boneInfo = smd.boneInfo.boneByName(boneName)
+			if boneInfo.parent:
+				parentName = boneInfo.parent.mangledName
+				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
+				boneInfo.head = boneInfo.parent.head + (smd_pos * rotMats[parentName])
+			else:
+				boneInfo.head = smd_pos
 
-		if edit_bone.parent:
-			parentName = edit_bone.parent.name
-			rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
-			edit_bone.head = edit_bone.parent.head + (smd_pos * rotMats[parentName])
-			edit_bone.tail = edit_bone.head + (tail_vec * rotMats[boneName])
-			edit_bone.align_roll(roll_vec * rotMats[boneName])
-		else:
-			edit_bone.head = smd_pos
-			edit_bone.tail = edit_bone.head + (tail_vec * rotMats[boneName])
-			edit_bone.align_roll(roll_vec * rotMats[boneName])
+			x_axis = x_vec * rotMats[boneName]
+			y_axis = y_vec * rotMats[boneName]
+			z_axis = z_vec * rotMats[boneName]
+			location = boneInfo.head.copy()
 
-		matAllPose[boneName] = edit_bone.matrix.copy()
+			x_axis.resize4D()
+			x_axis[3] = 0
+			y_axis.resize4D()
+			y_axis[3] = 0
+			z_axis.resize4D()
+			z_axis[3] = 0
+			location.resize4D()
+
+			matAllPose[boneName] = mathutils.Matrix(x_axis,y_axis,z_axis,location)
+
+		if UsePoseArmature:
+			assert smd.poseArm.mode == 'EDIT'
+			edit_bone = smd.poseArm.data.edit_bones[boneName]
+
+			if edit_bone.parent:
+				parentName = edit_bone.parent.name
+				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
+				edit_bone.head = edit_bone.parent.head + (smd_pos * rotMats[parentName])
+				edit_bone.tail = edit_bone.head + (y_vec * rotMats[boneName])
+				edit_bone.align_roll(z_vec * rotMats[boneName])
+			else:
+				edit_bone.head = smd_pos
+				edit_bone.tail = edit_bone.head + (y_vec * rotMats[boneName])
+				edit_bone.align_roll(z_vec * rotMats[boneName])
+
+			matAllPose[boneName] = edit_bone.matrix.copy()
 
 	if smd_manager.upAxis == 'Y':
 		for boneName in smd.poseBoneNames:
@@ -1130,6 +1203,8 @@ def readPolys():
 		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
 		smdNameToMatName[smd_name] = mat.name
 
+	duplicateMaterialNames = []
+
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
 	# and one for the vertices on each polygon that loops three times. We're entering the poly one now.
@@ -1173,8 +1248,9 @@ def readPolys():
 				smd.m.draw_type = 'SOLID'
 			mat_ind = len(md.materials) - 1
 			if len(original_mat_name) > 21: # Save the original name as a custom property.
-				log.warning("Material name '%s' was truncated to 21 characters." % original_mat_name)
 				md.materials[mat_ind]['smd_name'] = original_mat_name
+				if not original_mat_name in duplicateMaterialNames:
+					duplicateMaterialNames.append(original_mat_name)
 
 		# Would need to do this if the material already existed, but the material will be a shared copy so this step is redundant.
 		#if len(original_mat_name) > 21:
@@ -1232,6 +1308,13 @@ def readPolys():
 
 		# Back in polyland now, with three verts processed.
 		countPolys+= 1
+
+	length = len(duplicateMaterialNames)
+	if length > 0:
+		log.warning('%d material name%s truncated to 21 characters' % (length,'s were' if length > 1 else ' was'))
+		print("The following material names were truncated to 21 characters:")
+		for smdName in duplicateMaterialNames:
+			print('  ',smdName)
 
 	if countPolys:
 		# All polys processed. Add new elements to the mesh:
