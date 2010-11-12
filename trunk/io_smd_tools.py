@@ -294,7 +294,10 @@ def sortBonesForExport():
 			smd_id = addBonesToSortedList(smd_id,child,boneList)
 		return smd_id
 
-	smd_id = 0
+	if smd.a.data.smd_implicit_zero_bone:
+		smd_id = 1
+	else:
+		smd_id = 0
 	smd.sortedBones = []
 	for bone in smd.a.data.bones:
 		if not bone.parent:
@@ -633,6 +636,7 @@ def readBones():
 	
 	# Got this far? Then this is a fresh import which needs a new armature.
 	smd.a = createArmature(smd_manager.jobName)
+	smd.a.data.smd_implicit_zero_bone = False # Too easy to break compatibility, plus the skeleton is probably set up already
 	
 	try:
 		qc.armature = smd.a
@@ -1756,16 +1760,24 @@ def writeBones(quiet=False):
 
 	# Write to file
 	for boneName in smd.sortedBones:
+		bone = smd.a.data.bones[boneName]
+		if not bone.use_deform: continue
+		
+		parent = bone.parent
+		while parent:
+			if parent.use_deform:
+				break
+			parent = parent.parent
+		
 		line = str(smd.boneNameToID[boneName]) + " "
 
-		bone = smd.a.data.bones[boneName]
 		bone_name = bone.get('smd_name')
 		if not bone_name:
 			bone_name = bone.name
 		line += "\"" + bone_name + "\" "
 
-		if bone.parent:
-			line += str(smd.boneNameToID[bone.parent.name])
+		if parent:
+			line += str(smd.boneNameToID[parent.name])
 		else:
 			line += "-1"
 
@@ -1781,8 +1793,16 @@ def writeRestPose():
 	smd.file.write("time 0\n")
 	for boneName in smd.sortedBones:
 		bone = smd.a.data.bones[boneName]
-		if bone.parent:
-			parentRotated = bone.parent.matrix_local * ryz90
+		if not bone.use_deform: continue
+		
+		parent = bone.parent
+		while parent:
+			if parent.use_deform:
+				break
+			parent = parent.parent
+		
+		if parent:
+			parentRotated = parent.matrix_local * ryz90
 			childRotated = bone.matrix_local * ryz90
 			rot = parentRotated.invert() * childRotated
 			pos = rot.translation_part()
@@ -1845,8 +1865,16 @@ def writeFrames():
 
 		for boneName in smd.sortedBones:
 			pbn = smd.a.pose.bones[boneName]
-			if pbn.parent:
-				parentRotated = pbn.parent.matrix * ryz90
+			if not pbn.bone.use_deform: continue
+		
+			parent = pbn.parent
+			while parent:
+				if parent.bone.use_deform:
+					break
+				parent = parent.parent
+			
+			if parent:
+				parentRotated = parent.matrix * ryz90
 				childRotated = pbn.matrix * ryz90
 				rot = parentRotated.invert() * childRotated
 				pos = rot.translation_part()
@@ -1962,7 +1990,7 @@ def writePolys(internal=False):
 							
 						bone = smd.amod.object.data.bones.get(group_name)
 						if bone and bone.use_deform:
-							weights.append([bone.name, group_weight])
+							weights.append([smd.boneNameToID[bone.name], group_weight])
 				
 				if smd.amod.use_bone_envelopes and not weights: # vertex groups completely override envelopes
 					to_armature = smd.m.matrix_world * smd.amod.object.matrix_world.copy().invert()
@@ -2411,7 +2439,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
-
+		
 		validObs = []
 		for object in scene.objects:
 			if object.type in exportable_types:
@@ -2456,7 +2484,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
 					row.prop(object,"smd_subdir",text="")
-
+		
 		r = l.row()
 		r.prop(scene,"smd_qc_compile")
 		rhs = r.row()
@@ -2500,6 +2528,7 @@ class SMD_PT_Data(bpy.types.Panel):
 
 		l.prop(arm,"smd_subdir",text="Export Subfolder")
 		l.prop(arm,"smd_action_filter",text="Action Filter")
+		l.prop(arm.data,"smd_implicit_zero_bone")
 
 		self.embed_arm = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -2833,10 +2862,12 @@ def register():
 	type.Scene.smd_studiomdl_branch = EnumProperty(name="Studiomdl Branch",items=src_branches,description="The Source tool branch to compile with",default='orangebox')
 	type.Scene.smd_studiomdl_custom_path = StringProperty(name="Studiomdl Path",description="User-defined path to Studiomdl, for Custom compiles.",subtype="FILE_PATH")
 	type.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
-
+	
 	type.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	type.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	type.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
+
+	type.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs.")
 	
 	type.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD")
 	type.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
@@ -2847,22 +2878,27 @@ def register():
 	('BOTH', 'Both  sides', 'Generate polygons on both sides'),
 	), description="Determines which sides of the mesh resulting from this curve will have polygons",default='LEFT')
 
-
 def unregister():
 	type.INFO_MT_file_import.remove(menu_func_import)
 	type.INFO_MT_file_export.remove(menu_func_export)
+	
 	Scene = bpy.types.Scene
 	del Scene.smd_path
 	del Scene.smd_qc_compile
 	del Scene.smd_studiomdl_branch
 	del Scene.smd_studiomdl_custom_path
 	del Scene.smd_up_axis
+	
 	Object = bpy.types.Object
 	del Object.smd_export
 	del Object.smd_subdir
 	del Object.smd_action_filter
+	
+	del type.Armature.smd_implicit_zero_bone
+	
 	del type.Group.smd_export
 	del type.Group.smd_subdir
+	
 	del type.Curve.smd_faces
 
 if __name__ == "__main__":
