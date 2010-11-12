@@ -63,6 +63,7 @@ shape_types = ['MESH' ]#, 'SURFACE' ] # Blender can't get shape keys from a surf
 class smd_info:
 	def __init__(self):
 		self.a = None # Armature object
+		self.amod = None # Original armature modifier
 		self.m = None # Mesh datablock
 		self.g = None # Group being exported
 		self.file = None
@@ -139,13 +140,16 @@ class logger:
 		self.errors.append(message)
 
 	def errorReport(self, jobName, caller, numSMDs):
-		message = str(numSMDs) + " SMDs " + jobName + " with " + str(len(self.errors)) + " errors and " + str(len(self.warnings)) + " warnings."
-		print(message)
+		message = str(numSMDs) + " SMDs " + jobName + " in " + str(round(time.time() - self.startTime,1)) + " seconds with " + str(len(self.errors)) + " errors and " + str(len(self.warnings)) + " warnings"
+		print(message + ":")
+		stdOutColour(STD_RED)
 		for msg in self.errors:
-			print(msg)
+			print("  " + msg)
+		stdOutColour(STD_YELLOW)
 		for msg in self.warnings:
-			print(msg)
-
+			print("  " + msg)
+		stdOutReset()
+		
 		if len(self.errors) or len(self.warnings):
 			caller.report('ERROR',message)
 		else:
@@ -348,7 +352,23 @@ def MakeObjectIcon(object,prefix=None,suffix=None):
 		out += suffix
 	return out
 
+def removeObject(obj):
+	d = obj.data
+	type = obj.type
+	bpy.context.scene.objects.unlink(obj)
+	if obj.users == 0:
+		if type == 'ARMATURE' and obj.animation_data:
+			obj.animation_data.action = None # avoid horrible Blender bug that leads to actions being deleted
 
+		bpy.data.objects.remove(obj)
+		if d.users == 0:
+			if type == 'MESH':
+				bpy.data.meshes.remove(d)
+			if type == 'ARMATURE':
+				bpy.data.armatures.remove(d)
+				
+	return None if d else type
+	
 ########################
 #        Import        #
 ########################
@@ -504,10 +524,6 @@ class bones_info:
 		self.nextID = 0
 	
 	def addBone(self,bone):
-		assert(not bone in self.bones)
-		assert(not bone.mangledName in self.mangledNameToBone.keys())
-		assert(not bone.smdName.lower() in self.smdNameToBone.keys())
-		assert(not bone.ID in self.IDToBone.keys())
 		self.bones.append(bone)
 		self.mangledNameToBone[bone.mangledName] = bone
 		self.smdNameToBone[bone.smdName.lower()] = bone
@@ -709,7 +725,6 @@ def readFrames():
 	scn = bpy.context.scene
 	prevFrame = scn.frame_current
 	scn.frame_set(0)
-	smd.a.hide = False # ensure an object is visible or mode_set() can't be called on it
 	bpy.context.scene.objects.active = smd.a
 	ops.object.mode_set(mode='EDIT')
 
@@ -1859,8 +1874,45 @@ def writeFrames():
 	return
 
 # triangles block
-def writePolys():
-	smd.file.write("triangles\n")
+def writePolys(internal=False):
+	
+	if not internal:
+		smd.file.write("triangles\n")
+		prev_frame = bpy.context.scene.frame_current
+		have_cleared_pose = False
+		
+		for bi in smd.bakeInfo:
+			if bi['baked'].type == 'MESH':
+				# write out each object in turn. Joining them would destroy unique armature modifier settings
+				smd.m = bi['baked']
+				if bi.get('arm_mod'):
+					smd.amod = bi['arm_mod']
+				else:
+					smd.amod = None
+				if len(smd.m.data.faces) == 0:
+					log.error("Object {} has no faces, cannot export".format(smd.jobName))
+					continue
+				
+				if smd.amod and not have_cleared_pose:
+					# This is needed due to a Blender bug. Setting the armature to Rest mode doesn't actually
+					# change the pose bones' data!
+					bpy.context.scene.objects.active = smd.amod.object
+					bpy.ops.object.mode_set(mode='POSE')
+					bpy.ops.pose.select_all()
+					bpy.ops.pose.loc_clear()
+					bpy.ops.pose.rot_clear()
+					bpy.ops.pose.scale_clear()
+					have_cleared_pose = True
+				bpy.ops.object.mode_set(mode='OBJECT')
+				
+				writePolys(internal=True)
+				
+		smd.file.write("end\n")
+		bpy.context.scene.frame_set(prev_frame)
+		return
+		
+	# internal mode:
+
 	md = smd.m.data
 	face_index = 0
 	
@@ -1874,74 +1926,112 @@ def writePolys():
 		for i in range(3):
 
 			# Vertex locations, normal directions
-			verts = norms = ""
+			loc = norms = ""
 			v = md.vertices[face.vertices[i]]
 			
 			for j in range(3):
-				verts += " " + getSmdFloat(v.co[j])
+				loc += " " + getSmdFloat(v.co[j])
 				norms += " " + getSmdFloat(v.normal[j])
 
 			# UVs
-			if len(md.uv_textures):
-				uv = ""
-				for j in range(2):
-					uv += " " + getSmdFloat(md.uv_textures[0].data[face_index].uv[i][j])
-			else:
-				if i == 0:
-					uv = " 0 0"
-				elif i == 1:
-					uv = " 0 1"
-				else:
-					uv = " 1 1"
-
+			if not len(md.uv_textures):
+				unBake()
+				raise Exception("PROGRAMMER ERROR: Mesh was not unwrapped")
+				
+			uv = ""
+			for j in range(2):
+				uv += " " + getSmdFloat(md.uv_textures[0].data[face_index].uv[i][j])
+				
 			# Weightmaps
-			have_weights = False
-			if len(v.groups):
-				groups = " " + str(len(v.groups))
-				for j in range(len(v.groups)):
-					try:
-						# There is no certainty that a bone and its vertex group will share the same ID. Thus this monster:
-						groups += " " + str(smd.boneNameToID[smd.m.vertex_groups[v.groups[j].group].name]) + " " + getSmdFloat(v.groups[j].weight)
-						have_weights = True
-					except (AttributeError, KeyError):
-						pass # bone doesn't have a vert group on this mesh, or doesn't exist; not necessarily a problem
-			if not have_weights and smd.a: # check bone envelopes
-				pass # doesn't work yet; Blender doesn't handle vector * matrix right
-				'''to_world = smd.m.matrix_world.copy().invert()
-				for bone in smd.a.data.bones:
-					weight = bone.evaluate_envelope( v.co * to_world * bone.matrix ) # Blender, making things easy since 1993
-					if weight:
-						have_weights = True
-						groups += " " + str(smd.boneNameToID[bone.name]) + " " + getSmdFloat(weight)
-						print(weight)'''
-			if not have_weights: # there really is nothing		
-				groups = " 0"
+			if smd.amod:
+				weights = []
+				am_vertex_group_weight = 0
+				
+				if smd.amod.use_vertex_groups:
+					for j in range(len(v.groups)):
+						group_index = v.groups[j].group
+						if group_index < len(smd.m.vertex_groups):
+							# Vertex group might not exist on object if it's re-using a datablock
+							group_name = smd.m.vertex_groups[group_index].name
+							group_weight = v.groups[j].weight
+						else:
+							continue
+						
+						if group_name == smd.amod.vertex_group:
+							am_vertex_group_weight = group_weight
+							
+						bone = smd.amod.object.data.bones.get(group_name)
+						if bone and bone.use_deform:
+							weights.append([bone.name, group_weight])
+				
+				if smd.amod.use_bone_envelopes and not weights: # vertex groups completely override envelopes
+					to_armature = smd.m.matrix_world * smd.amod.object.matrix_world.copy().invert()
+					for pose_bone in smd.amod.object.pose.bones:
+						if not pose_bone.bone.use_deform:
+							continue
+						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( to_armature * pose_bone.matrix_local * v.co)
+						if weight:
+							weights.append([smd.boneNameToID[pose_bone.name], weight])
+			
+			if not smd.amod or not weights:
+				weight_string = " 0"
+				# In Source, unlike in Blender, verts HAVE to be attached to bones. This means that if you have only one bone,
+				# all verts will be 100% attached to it. To transform only some verts you need a second bone that stays put.
+			else:
+				# Shares out unused weight between extant bones, like Blender does, otherwise Studiomdl puts it onto the root
+				total_weight = 0
+				for link in weights:
+					total_weight += link[1]
+				assert(total_weight)
+				for link in weights:
+					link[1] *= 1/total_weight # This also handles weights totalling more than 100%
+					
+				weight_string = " " + str(len(weights))
+				for link in weights: # one link on one vertex
+					if smd.amod.vertex_group: # strength modifier
+						link[1] *= am_vertex_group_weight
+						if smd.amod.invert_vertex_group:
+							link[1] = 1 - link[1]
+
+					weight_string += " " + str(link[0]) + " " + getSmdFloat(link[1])
 
 			# Finally, write it all to file
-			smd.file.write("0" + verts + norms + uv + groups + "\n")
+			smd.file.write("0" + loc + norms + uv + weight_string + "\n")
 
 		face_index += 1
 
-	smd.file.write("end\n")
 	print("- Exported",face_index,"polys")
-
-	bpy.ops.object.mode_set(mode='OBJECT')
-
 	return
 
 # vertexanimation block
-def writeShapes():
+def writeShapes(internal=False):
+	
+	if not internal:
+		have_written_header = False
+		
+		for bi in smd.bakeInfo:
+			if bi['baked'].type != 'MESH' or not bi['baked'].data.shape_keys:
+				continue
+			smd.m = bi['baked']
+			
+			if not have_written_header:				
+				# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
+				smd.file.write("skeleton\n")
+				for i in range(len(smd.m.data.shape_keys.keys)):
+					smd.file.write("time %i\n" % i)
+				smd.file.write("end\n")
 
-	# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
-	smd.file.write("skeleton\n")
-	for i in range(len(smd.m.data.shape_keys.keys)):
-		smd.file.write("time %i\n" % i)
-	smd.file.write("end\n")
-
-	# OK, on to the meat!
-	smd.file.write("vertexanimation\n")
+				# OK, on to the meat!
+				smd.file.write("vertexanimation\n")
+				have_written_header = True
+		
+			writeShapes(internal=True)
+		
+		return
+			
+	# internal loop:
 	num_shapes = 0
-
+	
 	for shape_id in range(len(smd.m.data.shape_keys.keys)):
 		shape = smd.m.data.shape_keys.keys[shape_id]
 		smd.file.write("time %i\n" % shape_id)
@@ -1964,24 +2054,27 @@ def writeShapes():
 	print("- Exported",num_shapes,"vertex animations")
 	return
 
-# Creates a duplicate datablock with object transformations and modifiers applied
+# Creates a mesh with object transformations and modifiers applied
 def bakeObj(in_object):
 	bi = {}
 	bi['src'] = in_object
 	for object in bpy.context.selected_objects:
 		object.select = False
 		
-	def _ApplyVisualTransform(obj): # this can be replaced by ops.visual_transform_apply() once it's fixed
-		cur_parent = obj
+	def _ApplyVisualTransform(obj):
+		top_parent = cur_parent = obj
 		while(cur_parent):
-			obj.data.transform(cur_parent.matrix_local)
 			if not cur_parent.parent:
-				obj.data.transform(tMat(cur_parent.location).invert()) # undo location of topmost parent
+				top_parent = cur_parent
 			cur_parent = cur_parent.parent
 		
+		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+		obj.location -= top_parent.location # undo location of topmost parent
+		bpy.ops.object.location_apply()
+	
+	# Indirection to support groups
 	def _ObjectCopy(obj):
 		solidify_fill_rim = False
-		arm_mods = []
 		
 		if obj.type in ['MESH','ARMATURE']: # other types get new objects from Blender
 			baked = bi['baked'] = obj.copy()
@@ -1991,15 +2084,19 @@ def bakeObj(in_object):
 		else:
 			bpy.context.scene.objects.active = obj
 			obj.select = True
-				
+		
 		if obj.type == 'ARMATURE':
 			baked.data = baked.data.copy()
 		elif obj.type in mesh_compatible:
 			has_edge_split = False
 			for mod in obj.modifiers:
-				if mod.type == 'ARMATURE' and mod.show_viewport:
-					arm_mods.append(mod)
-					mod.show_viewport = False # the mesh will be baked in preview mode					
+				if mod.type == 'ARMATURE':
+					if smd.a and mod.object != smd.a:
+						log.warning("Found second armature ({}) attached to {}. Ignoring.".format(mod.object.name,obj.name))
+					else:
+						smd.a = mod.object
+						bi['arm_mod'] = mod
+
 				if mod.type == 'EDGE_SPLIT':
 					has_edge_split = True
 				if mod.type == 'SOLIDIFY':
@@ -2009,18 +2106,19 @@ def bakeObj(in_object):
 				edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
 				edgesplit.use_edge_angle = False
 			
-			obj.update(bpy.context.scene)
+			bpy.context.scene.update()
 			
 			# now do the actual baking
-			if obj.type == 'MESH':
-				if smd.jobType == FLEX: # BLENDER BUG: shape keys are not transferred to the new mesh
-					baked.data = baked.data.copy()
-				else:
-					baked.data = baked.create_mesh(bpy.context.scene,True,'PREVIEW') # applies modifiers to the mesh
-			else: # replace meta/surface/text object with a mesh one
+			if smd.jobType == FLEX:
+				baked.data = baked.data.copy()
+			else:
 				bpy.ops.object.convert(keep_original=True)
-				baked = bi['baked'] = bpy.context.active_object
-				
+			
+			if obj.type == 'MESH' and bpy.context.active_object != baked: # If Convert actually did create a new mesh...
+				removeObject(baked) # delete the first duplicate
+
+			baked = bi['baked'] = bpy.context.active_object
+			
 			# work on the vertices
 			bpy.ops.object.mode_set(mode='EDIT')
 			bpy.ops.mesh.select_all(action='SELECT')
@@ -2056,16 +2154,10 @@ def bakeObj(in_object):
 				baked.data.transform(rx90n)
 		
 		# Apply object transforms to the data
+		if baked.type == 'MESH':
+			_ApplyVisualTransform(baked)
 		bpy.ops.object.scale_apply()
 		bpy.ops.object.rotation_apply()
-		if baked.type == 'MESH' and not smd.g:
-			_ApplyVisualTransform(baked)
-			baked.update(bpy.context.scene)
-		
-		# Armature deform was disabled on the original object (unless it was a mesh)
-		obj.update(bpy.context.scene) # get some weird error without this
-		for mod in arm_mods:
-			mod.show_viewport = True
 		
 		return baked
 		
@@ -2098,58 +2190,30 @@ def bakeObj(in_object):
 		if not smd.g:
 			_ObjectCopy(in_object)
 		else:
-			have_baked_metaballs = g_arm = False
+			have_baked_metaballs = False
 			for object in smd.g.objects:
 				if object.smd_export and bpy.context.scene in object.users_scene and not (object.type == 'META' and have_baked_metaballs):
-					_ObjectCopy(object)
+					bi['baked'] = _ObjectCopy(object)
+					smd.bakeInfo.append(bi) # save to manager
+					bi = dict(src=object)
 					if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
-					for mod in object.modifiers:
-						if mod.type == 'ARMATURE':
-							if g_arm:
-								self.report('ERROR',"Multiple armatures found in group {}. Only one armature is supported.".format(smd.g.name))
-							else:
-								g_arm = mod.object
-			
-			baked = bi['baked']
-			
-			# Make the topmost parent of the group active, in order to preserve parent transforms after the join
-			cur_parent = baked
-			while(cur_parent):
-				if smd.g.name not in cur_parent.users_group:
-					bpy.context.scene.objects.active = cur_parent
-					break
-
-			bpy.ops.object.join()
-			baked = bpy.context.active_object
-			
-			_ApplyVisualTransform(baked)
-			
-			if g_arm:
-				bi['baked'].modifiers.new(name="Restored armature",type='ARMATURE').object = g_arm
-
+		
 		# restore metaball state
 		for meta_state in metaballs:
 			for i in range(len(meta_state['states'])):
 				meta_state['ob'].data.elements[i].hide = meta_state['states'][i]
-		
-		smd.m = bi['baked']
-	
-	smd.bakeInfo.append(bi) # save to manager
+
+	if bi.get('baked'):
+		smd.bakeInfo.append(bi) # save to manager
 
 def unBake():
+	bpy.ops.object.mode_set(mode='OBJECT')
 	for bi in smd.bakeInfo:
-		baked_data = bi['baked'].data
-		type = bi['baked'].type
-		bpy.ops.object.mode_set(mode='OBJECT')
-		
-		bpy.context.scene.objects.unlink(bi['baked'])
-		bpy.data.objects.remove(bi['baked'])
+		type = removeObject(bi['baked'])
 		
 		if type == 'MESH':
-			bpy.data.meshes.remove(baked_data)
 			smd.m = bi['src']
 		elif type == 'ARMATURE':
-			bpy.data.armatures.remove(baked_data)
 			smd.a = bi['src']
 		
 		del bi
@@ -2169,6 +2233,14 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	smd.uiTime = 0
 	
 	if object.type in mesh_compatible:
+		# We don't want to bake any meshes with poses applied
+		# NOTE: this won't change the posebone values, but it will remove deformations
+		armatures = []
+		for scene_object in bpy.context.scene.objects:
+			if scene_object.type == 'ARMATURE' and scene_object.data.pose_position == 'POSE':
+				scene_object.data.pose_position = 'REST'
+				armatures.append(scene_object)
+				
 		if not smd.jobType:
 			smd.jobType = REF
 		if smd.g:
@@ -2176,12 +2248,13 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		else:
 			smd.jobName = object.name
 		smd.m = object
+		#smd.a = smd.m.find_armature() # Blender bug: only works on meshes
 		bakeObj(smd.m)
-		if len(smd.m.data.faces) == 0:
-			log.error("Object {} has no faces, cannot export".format(smd.jobName))
-			unBake()
-			return False
-		smd.a = smd.m.find_armature()
+		
+		# re-enable poses
+		for object in armatures:
+			object.data.pose_position = 'POSE'
+		bpy.context.scene.update()
 	elif object.type == 'ARMATURE':
 		if not smd.jobType:
 			smd.jobType = ANIM
@@ -2190,6 +2263,8 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	else:
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in",exportable_types)
 
+	
+	
 	smd.file = open(filepath, 'w')
 	if smd.jobType == FLEX:
 		flexnotice = " (shape keys)"
@@ -2197,11 +2272,12 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		flexnotice = ""
 	if not quiet: print("\nSMD EXPORTER: now working on",smd.jobName + flexnotice)
 	smd.file.write("version 1\n")
-
+	
 	if smd.a:
 		bakeObj(smd.a) # MUST be baked after the mesh
 		sortBonesForExport() # Get a list of bone names sorted in the order to be exported, and assign a unique SMD ID to every bone.
-
+	
+	
 	# these write empty blocks if no armature is found. Required!
 	writeBones(quiet = smd.jobType == FLEX)
 	writeFrames()
