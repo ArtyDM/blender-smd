@@ -1,4 +1,30 @@
 #labels Featured
+== 0.10 - November 12, 2010 ==
+
+General:
+
+  * List warning and error messages in the console at the end of the job
+  * Calculate bone positions directly, instead of sampling Blender's output
+
+Importer:
+
+  * Fixed importing SMDs with duplicate bone names, as they are not necessarily invalid
+
+Exporter:
+
+  * *New Feature:* support for Text, Metaball, Surface and Curve (when extruded) objects. _Watch your polycount!_
+  * *New Feature:* support for bone envelopes and vertex group filtering on Armature modifiers
+  * *New Feature:* Option to create an "implicit motionless bone" (starts on). This preserves Blender's behaviour of not deforming vertices without bones attached, but can break compatibility with existing SMDs. The extra bone will be created by Studiomdl only if needed.
+  * *New Feature:* Bones with deformation disabled will no longer be exported
+  * Worked around Blender bug which eventually leads to actions being lost from .blend files
+  * Made the exporter undoable. Though this makes no sense at first, it suppresses undo levels from the operators it calls. This doesn't work 100% yet due to a Blender 2.55 bug.
+  * Back up unkeyed poses and restore them after export. This doesn't actually work yet due to a Blender 2.55 bug.
+  * Fixed objects not being exported relative to their ultimate parent's origin
+  * Fixed grouped objects' armature settings being stomped on
+  * Dropped support for export relative to armatures referenced in modifiers, as it is ill-defined and incompatible with group export
+  * Error when user tries to export something with zero polygons
+
+
 == 0.9.1 - November 8, 2010 ==
 
 Exporter:
