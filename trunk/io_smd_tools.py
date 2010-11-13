@@ -955,6 +955,12 @@ def readFrames():
 		prevFrame = 0
 	bpy.context.scene.frame_set(prevFrame)
 
+gVectorMathReversed = (vector([1,2,3])*rx90).y < 0
+def VecXMat(vec, mat):
+	if gVectorMathReversed:
+		return vec * mat.copy().invert()
+	return vec * mat
+
 def readFrameData():
 	smd.frameData = []
 	frameData = {}
@@ -1006,10 +1012,9 @@ def readFrameData():
 			pos = rot.translation_part()
 		else:
 			rot = pbn.matrix_local * ryz90
-			pos = rot.translation_part()
 			if smd_manager == 'Y':
-				pos = rx90n * pos
 				rot = rx90n * rot
+			pos = rot.translation_part()
 		rot = rot.to_euler('XYZ')
 		rotMat = rMat(-rot.x, 3,'X') * rMat(-rot.y, 3,'Y') * rMat(-rot.z, 3,'Z')
 		smd.frameData[0][boneInfo.mangledName] = {'pos':pos, 'rot':rotMat} # every frame is the same as the first
@@ -1055,16 +1060,16 @@ def applyFrameDataRest(frameData):
 
 		if bn.parent:
 			rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
-			bn.head = bn.parent.head + (smd_pos * rotMats[bn.parent.name])
-			bn.tail = bn.head + (tail_vec * rotMats[boneName])
-			bn.align_roll(roll_vec * rotMats[boneName])
+			bn.head = bn.parent.head + VecXMat(smd_pos, rotMats[bn.parent.name])
+			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
+			bn.align_roll(VecXMat(roll_vec, rotMats[boneName]))
 		else:
 			bn.head = smd_pos
-			bn.tail = bn.head + (tail_vec * rotMats[boneName])
-			bn.align_roll(roll_vec * rotMats[boneName])
+			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
+			bn.align_roll(VecXMat(roll_vec, rotMats[boneName]))
 
 	if smd_manager.upAxis == 'Y':
-		upAxisMat = rx90n
+		upAxisMat = rx90 if gVectorMathReversed else rx90n
 		for boneName in smd.restBoneNames:
 			bone = smd.a.data.edit_bones[boneName]
 			z_axis = bone.z_axis
@@ -1112,13 +1117,13 @@ def applyFrameDataPose(frameData):
 			if boneInfo.parent:
 				parentName = boneInfo.parent.mangledName
 				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
-				boneInfo.head = boneInfo.parent.head + (smd_pos * rotMats[parentName])
+				boneInfo.head = boneInfo.parent.head + VecXMat(smd_pos, rotMats[parentName])
 			else:
 				boneInfo.head = smd_pos
 
-			x_axis = x_vec * rotMats[boneName]
-			y_axis = y_vec * rotMats[boneName]
-			z_axis = z_vec * rotMats[boneName]
+			x_axis = VecXMat(x_vec, rotMats[boneName])
+			y_axis = VecXMat(y_vec, rotMats[boneName])
+			z_axis = VecXMat(z_vec, rotMats[boneName])
 			location = boneInfo.head.copy()
 
 			x_axis.resize4D()
@@ -1203,7 +1208,7 @@ def readPolys():
 		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
 		smdNameToMatName[smd_name] = mat.name
 
-	duplicateMaterialNames = []
+	truncMaterialNames = []
 
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
@@ -1249,8 +1254,8 @@ def readPolys():
 			mat_ind = len(md.materials) - 1
 			if len(original_mat_name) > 21: # Save the original name as a custom property.
 				md.materials[mat_ind]['smd_name'] = original_mat_name
-				if not original_mat_name in duplicateMaterialNames:
-					duplicateMaterialNames.append(original_mat_name)
+				if not original_mat_name in truncMaterialNames:
+					truncMaterialNames.append(original_mat_name)
 
 		# Would need to do this if the material already existed, but the material will be a shared copy so this step is redundant.
 		#if len(original_mat_name) > 21:
@@ -1309,11 +1314,11 @@ def readPolys():
 		# Back in polyland now, with three verts processed.
 		countPolys+= 1
 
-	length = len(duplicateMaterialNames)
+	length = len(truncMaterialNames)
 	if length > 0:
 		log.warning('%d material name%s truncated to 21 characters' % (length,'s were' if length > 1 else ' was'))
 		print("The following material names were truncated to 21 characters:")
-		for smdName in duplicateMaterialNames:
+		for smdName in truncMaterialNames:
 			print('  ',smdName)
 
 	if countPolys:
@@ -1898,11 +1903,10 @@ def writeRestPose():
 			#pos = (bone.matrix_local * ryz90).translation_part()
 			#rot = (bone.matrix_local * ryz90)
 			rot = bone.matrix_local * ryz90
+			if bpy.context.scene.smd_up_axis == 'Y':
+				rot = rx90n * rot
 			pos = rot.translation_part()
 
-			if bpy.context.scene.smd_up_axis == 'Y':
-				pos = rx90n * pos
-				rot = rx90n * rot
 		rot = rot.to_euler('XYZ')
 
 		pos_str = rot_str = ""
@@ -1965,11 +1969,10 @@ def writeFrames():
 				#pos = pbn.matrix.translation_part()
 				#rot = (pbn.matrix * ryz90)
 				rot = pbn.matrix * ryz90
+				if bpy.context.scene.smd_up_axis == 'Y':
+					rot = rx90n * rot
 				pos = rot.translation_part()
 
-				if bpy.context.scene.smd_up_axis == 'Y':
-					pos = rx90n * pos
-					rot = rx90n * rot
 			rot = rot.to_euler('XYZ')
 
 			pos_str = rot_str = ""
