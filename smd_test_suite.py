@@ -191,7 +191,7 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 					objWrite = object
 		if objWrite:
 			bpy.context.scene.smd_up_axis = outAxis
-			writeSMD(self.context, objWrite, filepath=outFile)
+			writeSMD(self.context, objWrite, -1, filepath=outFile)
 			return True
 		return False
 
@@ -199,6 +199,7 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 		self.filename = outFile
 		self.data1 = self.parseSMD(inFile)
 		self.data2 = self.parseSMD(outFile)
+		print('test suite: comparing...')
 		self.compareData(self.data1,self.data2)
 		self.logfile.flush()
 		self.expect = [] # clear it out for next test
@@ -378,6 +379,8 @@ class SCENE_OT_SmdTestSuite(bpy.types.Operator):
 		if parentID != -1:
 			parentName = data['ID_to_name'][parentID]
 			parentPos = self.calcGlobalPosition(parentName,data,poss,rots)
+			if gVectorMathReversed:
+				return parentPos + poss[boneName] * self.calcGlobalMatrix(parentName,data,rots).invert()
 			return parentPos + poss[boneName] * self.calcGlobalMatrix(parentName,data,rots)
 		else:
 			return poss[boneName]
