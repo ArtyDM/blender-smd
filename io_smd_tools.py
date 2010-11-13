@@ -1675,7 +1675,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 class SmdImporter(bpy.types.Operator):
 	bl_idname = "import.smd"
 	bl_label = "Import SMD/VTA/QC"
-	bl_options = {'REGISTER', 'UNDO'}
+	bl_options = {'UNDO'}
 
 	# Properties used by the file browser
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
@@ -2676,6 +2676,7 @@ class SmdExporter(bpy.types.Operator):
 	bl_idname = "export.smd"
 	bl_label = "Export SMD/VTA"
 	bl_description = "Export meshes, actions and shape keys to Studiomdl Data"
+	bl_options = { 'UNDO' }
 
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA file", maxlen=1024, default="", subtype='FILE_PATH')
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA file", maxlen=1024, default="", subtype='FILENAME')
@@ -2730,15 +2731,23 @@ class SmdExporter(bpy.types.Operator):
 		prev_active_ob = context.active_object
 		prev_selection = context.selected_objects
 		prev_visible = context.visible_objects
+		prev_frame = context.scene.frame_current
+		pose_backups = {}
 		for object in bpy.context.scene.objects:
-			object.hide = False
+			object.hide = False # lots of operators only work on visible objects	
+			if object.type == 'ARMATURE' and object.animation_data:
+				# Back up any unkeyed pose. I'd use the pose library, but it can't be deleted if empty!
+				pose_backups[object.name] = [ object.animation_data.action, bpy.data.actions.new(name=object.name+" pose backup") ]
+				bpy.ops.pose.copy()
+				object.animation_data.action = pose_backups[object.name][1]
+				bpy.ops.pose.paste() # BUG: this is currently broken due to a Blender bug
+				object.animation_data.action = pose_backups[object.name][0]
 
 		# store Blender mode user was in before export
 		prev_mode = bpy.context.mode
 		if prev_mode.startswith("EDIT"):
 			prev_mode = "EDIT" # remove any suffixes
 		if prev_active_ob:
-			prev_active_ob.hide = False # ensure an object is visible or mode_set() can't be called on it
 			ops.object.mode_set(mode='OBJECT')
 
 		# check export mode and perform appropriate jobs
@@ -2818,6 +2827,14 @@ class SmdExporter(bpy.types.Operator):
 		for object in context.scene.objects:
 			object.select = object in prev_selection
 			object.hide = object not in prev_visible
+			if object.type == 'ARMATURE' and object.animation_data:
+				object.animation_data.action = pose_backups[object.name][1]
+		context.scene.frame_set(prev_frame)
+		for object in context.scene.objects:
+			if object.type == 'ARMATURE' and object.animation_data:
+				object.animation_data.action = pose_backups[object.name][0]
+				pose_backups[object.name][1].user_clear() # required due to another Blender bug, safe as the user is removed on the line above
+				bpy.data.actions.remove(pose_backups[object.name][1])
 		jobMessage = "exported"		
 		
 		if self.countSMDs == 0:
