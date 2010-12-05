@@ -1,4 +1,13 @@
 #labels Featured
+== 0.10.1 - December 5, 2010 ==
+
+Exporter:
+
+  * Fixed error on exporting animations when not in pose mode
+  * Actually made unkeyed poses persist after export (still won't work in 2.55, but will in 2.56)
+  * Restore active bone after export, if any
+  * Tidied some log messages
+
 == 0.10 - November 12, 2010 ==
 
 General:
