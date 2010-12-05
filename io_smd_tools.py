@@ -126,19 +126,20 @@ class logger:
 
 	def errorReport(self, jobName, caller, numSMDs):
 		message = str(numSMDs) + " SMDs " + jobName + " in " + str(round(time.time() - self.startTime,1)) + " seconds with " + str(len(self.errors)) + " errors and " + str(len(self.warnings)) + " warnings"
-		print(message + ":")
-		stdOutColour(STD_RED)
-		for msg in self.errors:
-			print("  " + msg)
-		stdOutColour(STD_YELLOW)
-		for msg in self.warnings:
-			print("  " + msg)
-		stdOutReset()
-		
+				
 		if len(self.errors) or len(self.warnings):
 			caller.report('ERROR',message)
+			print(message + ":")
+			stdOutColour(STD_RED)
+			for msg in self.errors:
+				print("  " + msg)
+			stdOutColour(STD_YELLOW)
+			for msg in self.warnings:
+				print("  " + msg)
+			stdOutReset()
 		else:
 			caller.report('INFO',str(caller.countSMDs) + " SMDs " + jobName + " in " + str(round(time.time() - self.startTime,1)) + " seconds")
+			print(message)
 
 log = None # Initialize this so it is easier for smd_test_suite to access
 
@@ -1874,7 +1875,7 @@ def writeBones(quiet=False):
 	smd.file.write("end\n")
 	if not quiet: print("- Exported",len(smd.a.data.bones),"bones")
 	if len(smd.a.data.bones) > 128:
-		log.warning(smd,"Source only supports 128 bones!")
+		log.warning("Source only supports 128 bones!")
 
 # NOTE: added this to keep writeFrames() a bit simpler, uses smd.sortedBones and smd.boneNameToID, replaces getBonesForSMD()
 def writeRestPose():
@@ -2083,6 +2084,7 @@ def writePolys(internal=False):
 					for pose_bone in smd.amod.object.pose.bones:
 						if not pose_bone.bone.use_deform:
 							continue
+						#weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( VecXMat(v.co,smd.m.matrix_world) )
 						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( to_armature * pose_bone.matrix_local * v.co)
 						if weight:
 							weights.append([smd.boneNameToID[pose_bone.name], weight])
@@ -2732,19 +2734,10 @@ class SmdExporter(bpy.types.Operator):
 
 		print("\nSMD EXPORTER RUNNING")
 		prev_active_ob = context.active_object
+		prev_active_bone = context.active_bone if prev_active_ob.type == 'ARMATURE' else None
 		prev_selection = context.selected_objects
 		prev_visible = context.visible_objects
 		prev_frame = context.scene.frame_current
-		pose_backups = {}
-		for object in bpy.context.scene.objects:
-			object.hide = False # lots of operators only work on visible objects	
-			if object.type == 'ARMATURE' and object.animation_data:
-				# Back up any unkeyed pose. I'd use the pose library, but it can't be deleted if empty!
-				pose_backups[object.name] = [ object.animation_data.action, bpy.data.actions.new(name=object.name+" pose backup") ]
-				bpy.ops.pose.copy()
-				object.animation_data.action = pose_backups[object.name][1]
-				bpy.ops.pose.paste() # BUG: this is currently broken due to a Blender bug
-				object.animation_data.action = pose_backups[object.name][0]
 
 		# store Blender mode user was in before export
 		prev_mode = bpy.context.mode
@@ -2752,6 +2745,21 @@ class SmdExporter(bpy.types.Operator):
 			prev_mode = "EDIT" # remove any suffixes
 		if prev_active_ob:
 			ops.object.mode_set(mode='OBJECT')
+				
+		pose_backups = {}
+		for object in bpy.context.scene.objects:
+			object.hide = False # lots of operators only work on visible objects	
+			if object.type == 'ARMATURE' and object.animation_data:
+				ops.object.mode_set(mode='POSE')
+				context.scene.objects.active = object
+				# Back up any unkeyed pose. I'd use the pose library, but it can't be deleted if empty!
+				pose_backups[object.name] = [ object.animation_data.action, bpy.data.actions.new(name=object.name+" pose backup") ]
+				bpy.ops.pose.copy()
+				object.animation_data.action = pose_backups[object.name][1]
+				bpy.ops.pose.paste()
+				bpy.ops.anim.keyframe_insert(type=-6) # LocRotScale
+				object.animation_data.action = pose_backups[object.name][0]
+				ops.object.mode_set(mode='OBJECT')
 
 		# check export mode and perform appropriate jobs
 		self.countSMDs = 0
@@ -2827,18 +2835,24 @@ class SmdExporter(bpy.types.Operator):
 		context.scene.objects.active = prev_active_ob
 		if prev_active_ob and context.scene.objects.active:
 			ops.object.mode_set(mode=prev_mode)
+		if prev_active_bone:
+			prev_active_ob.data.bones.active = prev_active_bone
+		
 		for object in context.scene.objects:
 			object.select = object in prev_selection
 			object.hide = object not in prev_visible
 			if object.type == 'ARMATURE' and object.animation_data:
-				object.animation_data.action = pose_backups[object.name][1]
-		context.scene.frame_set(prev_frame)
+				object.animation_data.action = pose_backups[object.name][1] # backed up pose
+		
+		context.scene.frame_set(prev_frame) # apply backup pose
 		for object in context.scene.objects:
 			if object.type == 'ARMATURE' and object.animation_data:
-				object.animation_data.action = pose_backups[object.name][0]
-				pose_backups[object.name][1].user_clear() # required due to another Blender bug, safe as the user is removed on the line above
-				bpy.data.actions.remove(pose_backups[object.name][1])
-		jobMessage = "exported"		
+				object.animation_data.action = pose_backups[object.name][0] # switch to original action, don't apply
+				pose_backups[object.name][1].use_fake_user = False
+				pose_backups[object.name][1].user_clear()
+				bpy.data.actions.remove(pose_backups[object.name][1]) # remove backup
+		
+		jobMessage = "exported"
 		
 		if self.countSMDs == 0:
 			log.error("Found no valid objects for export")
