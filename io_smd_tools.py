@@ -72,7 +72,7 @@ class smd_info:
 		self.startTime = 0
 		self.uiTime = 0
 		self.started_in_editmode = None
-		self.multiImport = False
+		self.append = False
 		self.in_block_comment = False
 		self.connectBones = False
 		self.upAxis = 'Z'
@@ -381,7 +381,7 @@ def scanSMD():
 
 	if smd.jobType == None:
 		print("- This is a skeltal animation or pose") # No triangles, no flex - must be animation
-		if not smd.multiImport:
+		if smd.append:
 			for object in bpy.context.scene.objects:
 				if object.type == 'ARMATURE':
 					smd.jobType = ANIM
@@ -635,7 +635,7 @@ def readNodes():
 def readBones():
 	smd.boneInfo = readNodes()
 
-	if not smd.multiImport:
+	if smd.append:
 		# Search the current scene for an existing armature - there can only be one skeleton in a Source model
 		if bpy.context.active_object and bpy.context.active_object.type == 'ARMATURE':
 			smd.a = bpy.context.active_object
@@ -976,6 +976,9 @@ def readFrameData():
 
 		if values[0] == "time": # n.b. frame number is a dummy value, all frames are equally spaced
 			if HaveReadFrame:
+				if smd.jobType == REF:
+					log.warning("Found animation in reference mesh \"{}\", ignoring!".format(smd.jobName))
+					continue
 				smd.frameData.append(frameData)
 				frameData = {}
 			HaveReadFrame = True
@@ -1472,7 +1475,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 			qc.upAxisMat = getUpAxisMat(line[1])
 			continue
 
-		def loadSMD(word_index,ext,type, multiImport=False):
+		def loadSMD(word_index,ext,type, append=True):
 			path = line[word_index]
 			if line[word_index][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = appendExt(path,ext)
@@ -1480,7 +1483,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 				path = qc.cd() + appendExt(path,ext)
 			if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
 				qc.imported_smds.append(path)
-				readSMD(context,path,qc.upAxis,connectBones,False,type,multiImport,from_qc=True)
+				readSMD(context,path,qc.upAxis,connectBones,False,type,append,from_qc=True)
 				qc.numSMDs += 1
 
 		# meshes
@@ -1618,7 +1621,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 	return qc.numSMDs
 
 # Parses an SMD file
-def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, multiImport = False, from_qc = False):
+def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, append = True, from_qc = False):
 	if filepath.endswith("dmx"):
 		print("Skipping DMX file import: format unsupported (%s)" % getFilename(filepath))
 		return
@@ -1627,7 +1630,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 	smd	= smd_info()
 	smd.jobName = getFilename(filepath)
 	smd.jobType = smd_type
-	smd.multiImport = multiImport
+	smd.append = append
 	smd.startTime = time.time()
 	smd.connectBones = connectBones
 	if upAxis:
@@ -1642,7 +1645,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		smd.file = file = open(filepath, 'r')
 	except IOError: # TODO: work out why errors are swallowed if I don't do this!
 		message = "Could not open SMD file \"{}\"\n\t{}".format(smd.jobName,filepath)
-		if smd_type: # called from QC import
+		if from_qc:
 			log.warning(message + " - skipping!")
 			return
 		else:
@@ -1650,7 +1653,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 
 	if newscene:
 		bpy.context.screen.scene = bpy.data.scenes.new(smd.jobName) # BLENDER BUG: this currently doesn't update bpy.context.scene
-	elif not smd_type: # only when importing standalone
+	elif bpy.context.scene.name == "Scene":
 		bpy.context.scene.name = smd.jobName
 
 	print("\nSMD IMPORTER: now working on",smd.jobName)
@@ -1690,7 +1693,7 @@ class SmdImporter(bpy.types.Operator):
 	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
 	
 	# Custom properties
-	multiImport = BoolProperty(name="Import SMD as new model", description="Treats an SMD file as a new Source engine model. Otherwise, it will extend anything existing.", default=False)
+	append = BoolProperty(name="SMDs extend any existing model", description="Whether SMDs will latch onto an existing armature or create their own.", default=True)
 	doAnim = BoolProperty(name="Import animations (slow)", default=True)
 	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up'. Ignored for QCs.")
 	connectionEnum = ( ('NONE','Do not connect (sphere bones)','All bones will be unconnected spheres'),
@@ -1709,7 +1712,7 @@ class SmdImporter(bpy.types.Operator):
 			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, self.properties.makeCamera, outer_qc=True)
 			bpy.context.scene.objects.active = qc.armature
 		elif self.properties.filepath.endswith('.smd'):
-			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, multiImport=self.properties.multiImport)
+			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, append=self.properties.append)
 			self.countSMDs = 1
 		elif self.properties.filepath.endswith ('.vta'):
 			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
