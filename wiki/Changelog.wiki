@@ -1,4 +1,13 @@
 #labels Featured
+== 0.10.2 - December 18, 2010 ==
+
+Importer:
+
+  * Now ignoring animations in ref meshes (fixes cstrike\urban_ragdoll.smd)
+  * Flipped "Import SMD as new model" to "SMDs extend any existing model"
+  * Fixed invalid SMD import attempts not erroring correctly
+  * Importing SMDs now only changes the scene name if it's "Scene"
+
 == 0.10.1 - December 5, 2010 ==
 
 Exporter:
