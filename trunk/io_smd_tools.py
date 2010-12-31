@@ -19,8 +19,8 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 10, 0),
-	"blender": (2, 5, 5),
+	"version": (0, 10, 3),
+	"blender": (2, 5, 6),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -956,12 +956,6 @@ def readFrames():
 		prevFrame = 0
 	bpy.context.scene.frame_set(prevFrame)
 
-gVectorMathReversed = (vector([1,2,3])*rx90).y < 0
-def VecXMat(vec, mat):
-	if gVectorMathReversed:
-		return vec * mat.copy().invert()
-	return vec * mat
-
 def readFrameData():
 	smd.frameData = []
 	frameData = {}
@@ -1064,13 +1058,13 @@ def applyFrameDataRest(frameData):
 
 		if bn.parent:
 			rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
-			bn.head = bn.parent.head + VecXMat(smd_pos, rotMats[bn.parent.name])
-			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
-			bn.align_roll(VecXMat(roll_vec, rotMats[boneName]))
+			bn.head = bn.parent.head + (smd_pos * rotMats[bn.parent.name])
+			bn.tail = bn.head + (tail_vec * rotMats[boneName])
+			bn.align_roll(roll_vec * rotMats[boneName])
 		else:
 			bn.head = smd_pos
-			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
-			bn.align_roll(VecXMat(roll_vec, rotMats[boneName]))
+			bn.tail = bn.head + (tail_vec * rotMats[boneName])
+			bn.align_roll(roll_vec * rotMats[boneName])
 
 	if smd_manager.upAxis == 'Y':
 		upAxisMat = rx90 if gVectorMathReversed else rx90n
@@ -1121,13 +1115,13 @@ def applyFrameDataPose(frameData):
 			if boneInfo.parent:
 				parentName = boneInfo.parent.mangledName
 				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
-				boneInfo.head = boneInfo.parent.head + VecXMat(smd_pos, rotMats[parentName])
+				boneInfo.head = boneInfo.parent.head + (smd_pos * rotMats[parentName])
 			else:
 				boneInfo.head = smd_pos
 
-			x_axis = VecXMat(x_vec, rotMats[boneName])
-			y_axis = VecXMat(y_vec, rotMats[boneName])
-			z_axis = VecXMat(z_vec, rotMats[boneName])
+			x_axis = x_vec * rotMats[boneName]
+			y_axis = y_vec * rotMats[boneName]
+			z_axis = z_vec * rotMats[boneName]
 			location = boneInfo.head.copy()
 
 			x_axis.resize4D()
@@ -1389,9 +1383,9 @@ def readShapes():
 				making_base_shape = False
 
 			if making_base_shape:
-				smd.m.add_shape_key("Basis")
+				smd.m.shape_key_add("Basis")
 			else:
-				smd.m.add_shape_key("Unnamed")
+				smd.m.shape_key_add("Unnamed")
 
 			num_shapes += 1
 			continue # to the first vertex of the new shape
@@ -1739,7 +1733,7 @@ class SmdImporter(bpy.types.Operator):
 		return 'FINISHED'
 
 	def invoke(self, context, event):
-		bpy.context.window_manager.add_fileselect(self)
+		bpy.context.window_manager.fileselect_add(self)
 		return 'RUNNING_MODAL'
 
 class Smd_OT_ImportTextures(bpy.types.Operator):
@@ -2003,7 +1997,7 @@ def writePolys(internal=False):
 			if bi['baked'].type == 'MESH':
 				# write out each object in turn. Joining them would destroy unique armature modifier settings
 				smd.m = bi['baked']
-				if bi.get('arm_mod'):
+				if bi.get('arm_mod') and bi.get('arm_mod').object:
 					smd.amod = bi['arm_mod']
 				else:
 					smd.amod = None
@@ -2075,7 +2069,7 @@ def writePolys(internal=False):
 						else:
 							continue
 						
-						if group_name == smd.amod.vertex_group:
+						if group_name == smd.amod.vertex_group_multi_modifier:
 							am_vertex_group_weight = group_weight
 							
 						bone = smd.amod.object.data.bones.get(group_name)
@@ -2087,8 +2081,7 @@ def writePolys(internal=False):
 					for pose_bone in smd.amod.object.pose.bones:
 						if not pose_bone.bone.use_deform:
 							continue
-						#weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( VecXMat(v.co,smd.m.matrix_world) )
-						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( to_armature * pose_bone.matrix_local * v.co)
+						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( v.co *smd.m.matrix_world )
 						if weight:
 							weights.append([smd.boneNameToID[pose_bone.name], weight])
 			
@@ -2107,7 +2100,7 @@ def writePolys(internal=False):
 					
 				weight_string = " " + str(len(weights))
 				for link in weights: # one link on one vertex
-					if smd.amod.vertex_group: # strength modifier
+					if smd.amod.vertex_group_multi_modifier: # strength modifier
 						link[1] *= am_vertex_group_weight
 						if smd.amod.invert_vertex_group:
 							link[1] = 1 - link[1]
@@ -2404,8 +2397,11 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	if smd.m:
 		if smd.jobType in [REF,PHYS]:
 			writePolys()
-		elif smd.jobType == FLEX and smd.m.data.shape_keys:
-			log.warning("Due to a Blender limitation, modifers cannot be applied to shape keys")
+		elif smd.jobType == FLEX and smd.m.data.shape_keys and len(smd.m.modifiers):
+			for mod in smd.m.modifiers:
+				if mod.type != 'ARMATURE':
+					log.warning("Due to a Blender limitation, modifers cannot be applied to shape keys")
+					break
 			writeShapes()
 
 	unBake()
@@ -2439,6 +2435,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 			row.enabled = False
 		
 		# Normal processing
+		# FIXME: in the properties panel, hidden objects appear in context.selected_objects...in the 3D view they do not
 		elif (ob and len(context.selected_objects) == 1) or embed_arm:
 			subdir = ob.get('smd_subdir')
 			if subdir:
@@ -2717,7 +2714,7 @@ class SmdExporter(bpy.types.Operator):
 			# No root defined, pop up a file select
 			if not export_root:
 				props.filename = "<folder select>"
-				context.window_manager.add_fileselect(self)
+				context.window_manager.fileselect_add(self)
 				return 'RUNNING_MODAL'
 
 			if export_root.startswith("//") and not bpy.context.blend_data.filepath:
@@ -2737,7 +2734,7 @@ class SmdExporter(bpy.types.Operator):
 
 		print("\nSMD EXPORTER RUNNING")
 		prev_active_ob = context.active_object
-		prev_active_bone = context.active_bone if prev_active_ob.type == 'ARMATURE' else None
+		prev_active_bone = context.active_bone if prev_active_ob and prev_active_ob.type == 'ARMATURE' else None
 		prev_selection = context.selected_objects
 		prev_visible = context.visible_objects
 		prev_frame = context.scene.frame_current
@@ -2747,12 +2744,14 @@ class SmdExporter(bpy.types.Operator):
 		if prev_mode.startswith("EDIT"):
 			prev_mode = "EDIT" # remove any suffixes
 		if prev_active_ob:
+			prev_active_ob.hide = False
 			ops.object.mode_set(mode='OBJECT')
 				
 		pose_backups = {}
 		for object in bpy.context.scene.objects:
 			object.hide = False # lots of operators only work on visible objects	
 			if object.type == 'ARMATURE' and object.animation_data:
+				context.scene.objects.active = object
 				ops.object.mode_set(mode='POSE')
 				context.scene.objects.active = object
 				# Back up any unkeyed pose. I'd use the pose library, but it can't be deleted if empty!
@@ -2763,6 +2762,7 @@ class SmdExporter(bpy.types.Operator):
 				bpy.ops.anim.keyframe_insert(type=-6) # LocRotScale
 				object.animation_data.action = pose_backups[object.name][0]
 				ops.object.mode_set(mode='OBJECT')
+		context.scene.objects.active = prev_active_ob
 
 		# check export mode and perform appropriate jobs
 		self.countSMDs = 0
