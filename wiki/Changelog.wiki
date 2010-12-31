@@ -1,4 +1,18 @@
 #labels Featured
+== 0.10.3 - December 31, 2010 ==
+
+General:
+
+  * Upgraded to Blender 2.56; previous versions of Blender are no longer supported
+
+Exporter:
+
+  * Fixed another error on exporting without an armature object active
+  * Fixed error on exporting with the active object hidden
+  * Fixed error on exporting an armature modifier with no associated armature object
+  * No longer warn of shape key / modifier issues unless there is a non-armature modifier on the object
+
+
 == 0.10.2 - December 18, 2010 ==
 
 Importer:
