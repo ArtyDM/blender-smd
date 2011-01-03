@@ -2412,6 +2412,51 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 
 class SMD_MT_ExportChoice(bpy.types.Menu):
 	bl_label = "SMD export mode"
+	
+	# returns an icon, a label, and the number of valid actions
+	# supports single actions, NLA tracks, or nothing
+	def getActionSingleTextIcon(self,context,ob = None):
+		icon = "OUTLINER_DATA_ARMATURE"
+		count = 0
+		text = "No Actions or NLA"
+		
+		if not ob:
+			ob = context.active_object
+		if ob: 
+			ad = ob.animation_data
+			if ad:
+				if ad.action:
+					icon = "ACTION"
+					count = 1
+					text = ad.smd_subdir + "\\" + ad.action.name + ".smd"
+				elif ad.nla_tracks:
+					nla_actions = []
+					for track in ad.nla_tracks:
+						if not track.mute:
+							for strip in track.strips:
+								if not strip.mute and strip.action not in nla_actions:
+									nla_actions.append(strip.action)
+					icon = "NLA"
+					count = len(nla_actions)
+					text = "NLA actions (" + str(count) + ")"
+		
+		return text,icon,count
+	
+	# returns the appropriate text for the filtered list of all action
+	def getActionFilterText(self,context):
+		ob = context.active_object
+		if ob.smd_action_filter:
+			global cached_action_filter_list
+			global cached_action_count
+			if ob.smd_action_filter != cached_action_filter_list:
+				cached_action_filter_list = ob.smd_action_filter
+				cached_action_count = 0
+				for action in bpy.data.actions:
+					if action.name.lower().find(ob.smd_action_filter.lower()) != -1:
+						cached_action_count += 1
+			return "\"" + ob.smd_action_filter + "\" actions (" + str(cached_action_count) + ")"
+		else:
+			return "All actions (" + str(len(bpy.data.actions)) + ")"		
 
 	def draw(self, context):
 		# This function is also embedded in property panels on scenes and armatures
@@ -2470,28 +2515,15 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 			
 			
 			elif ob.type == 'ARMATURE':
-				# current action
-				if ob.animation_data and ob.animation_data.action:
-					label += ob.animation_data.action.name + ".smd"
-					l.operator(SmdExporter.bl_idname, text=label, icon="ACTION").exportMode = 'SINGLE'
-				else:
-					l.label(text="No actions", icon="ACTION")
-
-				if len(bpy.data.actions) and not embed_scene:
-					# filtered action list
-					if ob.smd_action_filter:
-						global cached_action_filter_list
-						global cached_action_count
-						if ob.smd_action_filter != cached_action_filter_list:
-							cached_action_filter_list = ob.smd_action_filter
-							cached_action_count = 0
-							for action in bpy.data.actions:
-								if action.name.lower().find(ob.smd_action_filter.lower()) != -1:
-									cached_action_count += 1
-						text = "\"" + ob.smd_action_filter + "\" actions (" + str(cached_action_count) + ")"
+				if embed_arm or ob.data.smd_action_selection == 'CURRENT':
+					text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context)
+					if count:
+						l.operator(SmdExporter.bl_idname, text=text, icon=icon).exportMode = 'SINGLE'
 					else:
-						text = "All actions (" + str(len(bpy.data.actions)) + ")"
-					l.operator(SmdExporter.bl_idname, text=text, icon='ARMATURE_DATA').exportMode = 'ALL_ACTIONS'
+						l.label(text=text, icon=icon)
+				if embed_arm or (len(bpy.data.actions) and ob.data.smd_action_selection == 'FILTERED'):
+					# filtered action list
+					l.operator(SmdExporter.bl_idname, text=SMD_MT_ExportChoice.getActionFilterText(self,context), icon='ACTION').exportMode = 'ALL_ACTIONS'
 			
 			else: # invalid object
 				label = "Cannot export " + ob.name
@@ -2540,10 +2572,12 @@ class SMD_PT_Scene(bpy.types.Panel):
 			header = columns.row()
 			header.label(text="Object / Group:")
 			header.label(text="Subfolder:")
-						
+			
+			had_groups = False
 			for group in bpy.data.groups:
 				for object in group.objects:
 					if object in validObs:
+						had_groups = True
 						row = columns.row()
 						row.prop(group,"smd_export",icon="GROUP",emboss=True,text=group.name)
 						row.prop(group,"smd_subdir",text="")
@@ -2555,24 +2589,43 @@ class SMD_PT_Scene(bpy.types.Panel):
 								if object.type == 'ARMATURE':
 									columns.row().label(text="Groups cannot export armatures (OB: " + object.name + ")")
 									continue
-								row = columns.row()
+								row = columns.row().split(0.5)
 								row.prop(object,"smd_export",icon=MakeObjectIcon(object,suffix="_DATA"),emboss=False,text=object.name)
-								row.label(text="")
 						break # we've found an object in the scene and drawn the list
 			
-			columns.separator()
-			
-			for object in validObs:
+			if had_groups:
+				columns.separator()
+				
+			for object in validObs: # meshes
 				in_active_group = False
 				if object.type in mesh_compatible:
 					for group in object.users_group:
 						if group.smd_export:
 							in_active_group = True
 				if not in_active_group:
+					if object.type == 'ARMATURE':
+						continue
+					
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
 					row.prop(object,"smd_subdir",text="")
-		
+						
+			for object in validObs:
+				if object.type == 'ARMATURE':
+					columns.separator() # yes, one for each armature
+					row = columns.row()
+					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
+					row.prop(object,"smd_subdir",text="")
+					if object.smd_export:
+						row = columns.row()
+						if object.data.smd_action_selection == 'CURRENT':							
+							text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context,object)
+						elif object.data.smd_action_selection == 'FILTERED':
+							text = SMD_MT_ExportChoice.getActionFilterText(self,context)
+							icon = "ACTION"
+						row.prop(object,"smd_export",text=text,icon=icon,emboss=False)
+						row.prop(object.data,"smd_action_selection",text="")
+
 		r = l.row()
 		r.prop(scene,"smd_qc_compile")
 		rhs = r.row()
@@ -2615,8 +2668,11 @@ class SMD_PT_Data(bpy.types.Panel):
 		anim_data = arm.animation_data
 
 		l.prop(arm,"smd_subdir",text="Export Subfolder")
+		
+		l.prop(arm.data,"smd_action_selection")
 		l.prop(arm,"smd_action_filter",text="Action Filter")
-		l.prop(arm.data,"smd_implicit_zero_bone")
+		
+		l.prop(arm.data,"smd_implicit_zero_bone")		
 
 		self.embed_arm = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -2755,7 +2811,9 @@ class SmdExporter(bpy.types.Operator):
 				ops.object.mode_set(mode='POSE')
 				context.scene.objects.active = object
 				# Back up any unkeyed pose. I'd use the pose library, but it can't be deleted if empty!
-				pose_backups[object.name] = [ object.animation_data.action, bpy.data.actions.new(name=object.name+" pose backup") ]
+				pb_act = bpy.data.actions.new(name=object.name+" pose backup")
+				pb_act.user_clear()
+				pose_backups[object.name] = [ object.animation_data.action, pb_act ]
 				bpy.ops.pose.copy()
 				object.animation_data.action = pose_backups[object.name][1]
 				bpy.ops.pose.paste()
@@ -2926,20 +2984,32 @@ class SmdExporter(bpy.types.Operator):
 			if object.type in shape_types and object.data.shape_keys and len(object.data.shape_keys.keys) > 1:
 				if writeSMD(context, object, groupIndex, path + ".vta", FLEX):
 					self.countSMDs += 1
-		elif object.type == 'ARMATURE' and object.animation_data:
+		elif object.type == 'ARMATURE':
 			ad = object.animation_data
-			if ad.action:
-				prev_action = ad.action
-				if self.properties.exportMode == 'ALL_ACTIONS':
-					for action in bpy.data.actions:
-						if not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1:
-							ad.action = action
-							if writeSMD(context,object, -1, path + action.name + ".smd",ANIM):
-								self.countSMDs += 1
-				else:
+			prev_action = None
+			if ad.action: prev_action = ad.action
+			
+			if self.properties.exportMode == 'ALL_ACTIONS':
+				for action in bpy.data.actions:
+					if action.users and (not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1):
+						ad.action = action
+						if writeSMD(context,object, -1, path + action.name + ".smd",ANIM):
+							self.countSMDs += 1
+			elif object.animation_data:
+				if ad.action:
 					if writeSMD(context,object,-1,path + ad.action.name + ".smd",ANIM):
 						self.countSMDs += 1
-				ad.action = prev_action
+				elif len(ad.nla_tracks):
+					nla_actions = []
+					for track in ad.nla_tracks:
+						if not track.mute:
+							for strip in track.strips:
+								if not strip.mute and strip.action not in nla_actions:
+									nla_actions.append(strip.action)
+									ad.action = strip.action
+									if writeSMD(context,object,-1,path + ad.action.name + ".smd",ANIM):
+										self.countSMDs += 1
+			ad.action = prev_action
 
 	def invoke(self, context, event):
 		if self.properties.exportMode == 'NONE':
@@ -2988,6 +3058,11 @@ def register():
 	type.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 
 	type.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs.")
+	arm_modes = (
+	('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
+	('FILTERED',"Action Filter","All actions that match the armature's filter term")
+	)
+	type.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
 	
 	type.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD")
 	type.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
@@ -3015,6 +3090,7 @@ def unregister():
 	del Object.smd_action_filter
 	
 	del type.Armature.smd_implicit_zero_bone
+	del type.Armature.smd_action_selection
 	
 	del type.Group.smd_export
 	del type.Group.smd_subdir
