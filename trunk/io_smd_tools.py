@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 10, 3),
+	"version": (0, 11, 0),
 	"blender": (2, 5, 6),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -265,6 +265,9 @@ def getUpAxisMat(axis):
 	else:
 		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
 
+def VecXMat(vec, mat):
+	return vec * mat.copy().invert()
+		
 # Get a list of bone names sorted so parents come before children.
 # Also assign a unique SMD ID to every bone.
 # Changes smd.boneIDs, smd.boneNameToID, and smd.sortedBones
@@ -1057,17 +1060,17 @@ def applyFrameDataRest(frameData):
 		bn = smd.a.data.edit_bones[boneName]
 
 		if bn.parent:
-			rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
-			bn.head = bn.parent.head + (smd_pos * rotMats[bn.parent.name])
-			bn.tail = bn.head + (tail_vec * rotMats[boneName])
-			bn.align_roll(roll_vec * rotMats[boneName])
+			rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative			
+			bn.head = bn.parent.head + VecXMat(smd_pos, rotMats[bn.parent.name])
+			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
+			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )
 		else:
 			bn.head = smd_pos
-			bn.tail = bn.head + (tail_vec * rotMats[boneName])
-			bn.align_roll(roll_vec * rotMats[boneName])
+			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
+			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )
 
 	if smd_manager.upAxis == 'Y':
-		upAxisMat = rx90 if gVectorMathReversed else rx90n
+		upAxisMat = rx90
 		for boneName in smd.restBoneNames:
 			bone = smd.a.data.edit_bones[boneName]
 			z_axis = bone.z_axis
@@ -1119,9 +1122,9 @@ def applyFrameDataPose(frameData):
 			else:
 				boneInfo.head = smd_pos
 
-			x_axis = x_vec * rotMats[boneName]
-			y_axis = y_vec * rotMats[boneName]
-			z_axis = z_vec * rotMats[boneName]
+			x_axis = VecXMat(x_vec, rotMats[boneName])
+			y_axis = VecXMat(y_vec, rotMats[boneName])
+			z_axis = VecXMat(z_vec, rotMats[boneName])
 			location = boneInfo.head.copy()
 
 			x_axis.resize4D()
@@ -2077,11 +2080,10 @@ def writePolys(internal=False):
 							weights.append([smd.boneNameToID[bone.name], group_weight])
 				
 				if smd.amod.use_bone_envelopes and not weights: # vertex groups completely override envelopes
-					to_armature = smd.m.matrix_world * smd.amod.object.matrix_world.copy().invert()
 					for pose_bone in smd.amod.object.pose.bones:
 						if not pose_bone.bone.use_deform:
 							continue
-						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( v.co *smd.m.matrix_world )
+						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( v.co * smd.m.matrix_world )
 						if weight:
 							weights.append([smd.boneNameToID[pose_bone.name], weight])
 			
