@@ -1,4 +1,18 @@
 #labels Featured
+== 0.11 - January 6, 2011 ==
+
+Importer:
+
+  * Fixed bone import
+
+Exporter:
+
+  * *New feature:* support for exporting actions from NLA tracks (when the armature is playing from NLA)
+  * *New feature:* armatures can now be configured to export their filtered action list by default
+  * Fixed deleted actions and temporary "pose backup" actions sometimes being exported
+  * Moved armatures to their own Scene Configuration section and added details of what exporting them will actually do
+  * Armatures no longer appear in Scene Configuration unless they have associated actions
+
 == 0.10.3 - December 31, 2010 ==
 
 General:
