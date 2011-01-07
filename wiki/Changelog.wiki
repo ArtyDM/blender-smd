@@ -1,4 +1,14 @@
 #labels Featured
+== 0.11.1 - Janurary 7th, 2011 ==
+
+Importer:
+
+  * Fixed one final animation import regression
+
+Exporter:
+
+  * The active rendering UV texture is now exported, not the first
+
 == 0.11 - January 6, 2011 ==
 
 Importer:
