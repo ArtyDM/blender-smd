@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 11, 0),
+	"version": (0, 11, 1),
 	"blender": (2, 5, 6),
 	"category": "Import/Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -1118,7 +1118,7 @@ def applyFrameDataPose(frameData):
 			if boneInfo.parent:
 				parentName = boneInfo.parent.mangledName
 				rotMats[boneName] *= rotMats[parentName] # make rotations cumulative
-				boneInfo.head = boneInfo.parent.head + (smd_pos * rotMats[parentName])
+				boneInfo.head = boneInfo.parent.head + VecXMat(smd_pos, rotMats[parentName])
 			else:
 				boneInfo.head = smd_pos
 
@@ -2031,6 +2031,11 @@ def writePolys(internal=False):
 	md = smd.m.data
 	face_index = 0
 	
+	for uvtex in md.uv_textures:
+		if uvtex.active_render:
+			active_uv_tex = uvtex
+			break
+	
 	for face in md.faces:
 		if smd.m.material_slots:
 			mat = smd.m.material_slots[face.material_index].material
@@ -2055,7 +2060,7 @@ def writePolys(internal=False):
 				
 			uv = ""
 			for j in range(2):
-				uv += " " + getSmdFloat(md.uv_textures[0].data[face_index].uv[i][j])
+				uv += " " + getSmdFloat(active_uv_tex.data[face_index].uv[i][j])
 				
 			# Weightmaps
 			if smd.amod:
