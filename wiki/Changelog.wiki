@@ -1,4 +1,17 @@
 #labels Featured
+== 0.12.1 - Janurary 23rd, 2011 ==
+
+_(0.12 plus hotfix)_
+
+General:
+
+  * New feature: update checker
+
+Exporter:
+
+  * UI changes to prepare for DMX support
+  * Armatures no longer appear in Scene Configuration unless they have associated animation data (really this time)
+
 == 0.11.2 - Janurary 23rd, 2011 ==
 
 Importer:
