@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 12, 0),
+	"version": (0, 12, 1),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -104,7 +104,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 		
 		
 		if self.url_err:
-			self.report('ERROR',"Could not complete download: " + self.url_err[15:-1])
+			self.report('ERROR',"Could not complete download: " + self.url_err)
 			print(self.url_err)
 			return 'CANCELLED'
 		elif self.result == 'FAIL_PARSE':
@@ -113,12 +113,10 @@ class SmdToolsUpdate(bpy.types.Operator):
 			return 'CANCELLED'
 			
 		elif self.result == 'INCOMPATIBLE':
-			remote_bpy_str = "{0[0]}.{0[1]}.{0[2]}".format(self.rss_entry['bpy']).rstrip("0.")
-			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format(remote_bpy_str))
+			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.rss_entry['bpy'], sep=".") ))
 			return 'FINISHED'
 		elif self.result == 'LATEST':
-			local_ver_str = "{0[0]}.{0[1]}.{0[2]}".format(bl_addon_info['version']).rstrip("0.")
-			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format(local_ver_str))
+			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_addon_info['version'], sep=".") ))
 			return 'FINISHED'
 			
 		elif self.result == 'SUCCESS':
@@ -132,7 +130,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 		
 	def update(self):
 		remote_ver = self.rss_entry['version']
-		self.remote_ver_str = "{0[0]}.{0[1]}.{0[2]}".format(remote_ver).rstrip("0.")
+		self.remote_ver_str = PrintVer(remote_ver,sep=".")
 		local_ver = bl_addon_info['version']
 		is_update = False
 		for i in range(min( len(remote_ver), len(local_ver) )):			
@@ -141,7 +139,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 				is_update = True
 				break
 			elif diff < 0:
-				break		
+				break	
 		if not is_update:
 			self.result = 'LATEST'
 			return
@@ -153,8 +151,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 				self.result = 'INCOMPATIBLE'
 				return
 		
-		ver_url = "{0[0]}{0[1]}{0[2]}".format(remote_ver).rstrip("0.")
-		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format(ver_url)
+		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(remote_ver) )
 		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
 		
 		zip = urllib.request.urlopen(url) # we are already in a try/except block
@@ -352,6 +349,16 @@ def printTimeMessage(start_time,name,job,type="SMD"):
 		elapsedtime = "under 1 second"
 
 	print(type,name,"{}ed successfully in".format(job),elapsedtime,"\n")
+
+def PrintVer(in_seq,sep=""):
+		rlist = list(in_seq[:])
+		rlist.reverse()
+		out = ""
+		for val in rlist:
+			if int(val) == 0 and not len(out):
+				continue
+			out = "{}{}{}".format(str(val),sep,out)
+		return out.rstrip(sep)
 
 try:
 	kernel32 = ctypes.windll.kernel32
