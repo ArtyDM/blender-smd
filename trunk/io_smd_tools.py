@@ -71,9 +71,9 @@ class SmdToolsUpdate(bpy.types.Operator):
 							self.rss_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")					
 					
 					if self.rss_entry['version'] and self.rss_entry['bpy']:
-						for val in self.rss_entry:
+						for val in self.rss_entry.values():
 							while len(val) < 3:
-								val.append(0)
+								val.append('0')
 								
 						self.update() # download the update
 						parser.EndElementHandler = None # never reach the end of the element
@@ -113,10 +113,12 @@ class SmdToolsUpdate(bpy.types.Operator):
 			return 'CANCELLED'
 			
 		elif self.result == 'INCOMPATIBLE':
-			self.report('ERROR',"The latest SMD Tools require Blender {0[0]}.{0[1]}.{0[2]}. Please upgrade.".format(self.rss_entry['bpy']))
+			remote_bpy_str = "{0[0]}.{0[1]}.{0[2]}".format(self.rss_entry['bpy']).rstrip("0.")
+			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format(remote_bpy_str))
 			return 'FINISHED'
 		elif self.result == 'LATEST':
-			self.report('INFO',"The latest SMD Tools ({0[0]}.{0[1]}.{0[2]}) are already installed.".format(bl_addon_info['version']))
+			local_ver_str = "{0[0]}.{0[1]}.{0[2]}".format(bl_addon_info['version']).rstrip("0.")
+			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format(local_ver_str))
 			return 'FINISHED'
 			
 		elif self.result == 'SUCCESS':
@@ -130,7 +132,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 		
 	def update(self):
 		remote_ver = self.rss_entry['version']
-		self.remote_ver_str = "{0[0]}.{0[1]}.{0[2]}".format(remote_ver)
+		self.remote_ver_str = "{0[0]}.{0[1]}.{0[2]}".format(remote_ver).rstrip("0.")
 		local_ver = bl_addon_info['version']
 		is_update = False
 		for i in range(min( len(remote_ver), len(local_ver) )):			
@@ -150,8 +152,9 @@ class SmdToolsUpdate(bpy.types.Operator):
 			if diff: # currently there are API changes in each Blender release
 				self.result = 'INCOMPATIBLE'
 				return
-				
-		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{0[0]}{0[1]}{0[2]}.zip".format(remote_ver)
+		
+		ver_url = "{0[0]}{0[1]}{0[2]}".format(remote_ver).rstrip("0.")
+		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format(ver_url)
 		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
 		
 		zip = urllib.request.urlopen(url) # we are already in a try/except block
