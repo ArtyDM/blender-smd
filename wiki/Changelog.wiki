@@ -1,4 +1,16 @@
 #labels Featured
+== 0.11.2 - Janurary 23rd, 2011 ==
+
+Importer:
+
+  * Handle reference SMDs that do not define positions for all bones
+  * Warn on > 128 bones when importing too
+  * Renamed operator to match searches for "QC"
+
+Exporter:
+
+  * Fixed "vertex_group_multi_modifier" exception (what's wrong with bug reports, people?)
+
 == 0.11.1 - Janurary 7th, 2011 ==
 
 Importer:
