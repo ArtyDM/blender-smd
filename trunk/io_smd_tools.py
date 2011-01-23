@@ -19,7 +19,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 11, 2),
+	"version": (0, 12, 0),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -27,7 +27,7 @@ bl_addon_info = {
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
 
-import math, os, time, bpy, random, mathutils, re, ctypes
+import math, os, time, bpy, random, mathutils, re, ctypes, urllib.request
 from bpy import ops
 from bpy.props import *
 vector = mathutils.Vector
@@ -45,6 +45,122 @@ ryz90 = ry90 * rz90
 rx90n = rMat(math.radians(-90),4,'X')
 ry90n = rMat(math.radians(-90),4,'Y')
 rz90n = rMat(math.radians(-90),4,'Z')
+
+# DISABLE THIS if you make third-party changes to the script!
+class SmdToolsUpdate(bpy.types.Operator):
+	bl_idname = "script.update_smd"
+	bl_label = "Check for SMD Tools updates"
+	bl_description = "Connects to http://code.google.com/p/blender-smd/"
+	
+	def execute(self,context):
+		print("SMD Tools update...")
+		self.rss_entry = None
+		self.result = None
+		self.url_err = None
+		
+		def startElem(name,attrs):
+			if name == "entry": self.rss_entry = {'version': 0, 'bpy': 0 }
+			if not self.rss_entry: return
+			
+			if name == "content":
+				magic_words = [ "Blender SMD Tools ", " bpy-" ]
+				
+				def readContent(data):
+					for i in range( len(magic_words) ):
+						if data[: len(magic_words[i]) ] == magic_words[i]:
+							self.rss_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")					
+					
+					if self.rss_entry['version'] and self.rss_entry['bpy']:
+						for val in self.rss_entry:
+							while len(val) < 3:
+								val.append(0)
+								
+						self.update() # download the update
+						parser.EndElementHandler = None # never reach the end of the element
+						parser.CharacterDataHandler = None # ignore future data
+					
+				parser.CharacterDataHandler = readContent
+			
+		def endElem(name):
+			if name == "entry": self.rss_entry = None
+			elif name == "content": # if we reach the end of content, we did not get version info
+				self.result = 'FAIL_PARSE' # this will be overwritten if another entry is valid
+				parser.CharacterDataHandler = None # don't read chars until the next content elem
+		
+		try:
+			# parse RSS
+			feed = urllib.request.urlopen("http://code.google.com/feeds/p/blender-smd/downloads/basic")
+			import xml.parsers.expat
+			parser = xml.parsers.expat.ParserCreate()
+			parser.StartElementHandler = startElem
+			parser.EndElementHandler = endElem
+			
+			parser.Parse(feed.read())
+		except urllib.error.URLError as err:
+			self.url_err = str(err)
+		except xml.parsers.expat.ExpatError as err:
+			print(err)
+			self.result = 'FAIL_PARSE'
+		
+		
+		if self.url_err:
+			self.report('ERROR',"Could not complete download: " + self.url_err[15:-1])
+			print(self.url_err)
+			return 'CANCELLED'
+		elif self.result == 'FAIL_PARSE':
+			self.report('ERROR',"Version information was downloaded, but could not be parsed.")
+			print(feed.read())
+			return 'CANCELLED'
+			
+		elif self.result == 'INCOMPATIBLE':
+			self.report('ERROR',"The latest SMD Tools require Blender {0[0]}.{0[1]}.{0[2]}. Please upgrade.".format(self.rss_entry['bpy']))
+			return 'FINISHED'
+		elif self.result == 'LATEST':
+			self.report('INFO',"The latest SMD Tools ({0[0]}.{0[1]}.{0[2]}) are already installed.".format(bl_addon_info['version']))
+			return 'FINISHED'
+			
+		elif self.result == 'SUCCESS':
+			self.report('INFO',"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
+			bpy.ops.script.reload()
+			return 'FINISHED'
+			
+		else:
+			assert(0) # unhandled error!
+			return 'CANCELLED'
+		
+	def update(self):
+		remote_ver = self.rss_entry['version']
+		self.remote_ver_str = "{0[0]}.{0[1]}.{0[2]}".format(remote_ver)
+		local_ver = bl_addon_info['version']
+		is_update = False
+		for i in range(min( len(remote_ver), len(local_ver) )):			
+			diff = int(remote_ver[i]) - local_ver[i]
+			if diff > 0:
+				is_update = True
+				break
+			elif diff < 0:
+				break		
+		if not is_update:
+			self.result = 'LATEST'
+			return
+		
+		remote_bpy = self.rss_entry['bpy']
+		for i in range(min( len(remote_bpy), len(bpy.app.version) )):
+			diff = int(remote_bpy[i]) - bpy.app.version[i]
+			if diff: # currently there are API changes in each Blender release
+				self.result = 'INCOMPATIBLE'
+				return
+				
+		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{0[0]}{0[1]}{0[2]}.zip".format(remote_ver)
+		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
+		
+		zip = urllib.request.urlopen(url) # we are already in a try/except block
+		import zipfile, io
+		zip = zipfile.ZipFile( io.BytesIO(zip.read()) )
+		zip.extractall(path=getFileDir( os.path.abspath( __file__ ) ))
+		
+		self.result = 'SUCCESS'
+		return
 
 # SMD types
 REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
@@ -1749,7 +1865,7 @@ class SmdImporter(bpy.types.Operator):
 		return 'RUNNING_MODAL'
 
 class Smd_OT_ImportTextures(bpy.types.Operator):
-	bl_idname = "smd_import_textures"
+	bl_idname = "smd.import_textures"
 	bl_label = "Import textures"
 	bl_description = "Browse to a directory to import textures from"
 
@@ -2438,7 +2554,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 		
 		if not ob:
 			ob = context.active_object
-		if ob: 
+		if ob:
 			ad = ob.animation_data
 			if ad:
 				if ad.action:
@@ -2572,7 +2688,10 @@ class SMD_PT_Scene(bpy.types.Panel):
 		SMD_MT_ExportChoice.draw(self,context)
 
 		l.prop(scene,"smd_path",text="Output Folder")
-		row = l.row().split(0.33)
+		l.prop(scene,"smd_studiomdl_branch",text="Target Engine")
+		if scene.smd_studiomdl_branch == 'CUSTOM':
+			l.prop(scene,"smd_studiomdl_custom_path",text="Studiomdl path")
+		row = l.row().split(0.33)		
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
 		
@@ -2625,9 +2744,11 @@ class SMD_PT_Scene(bpy.types.Panel):
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
 					row.prop(object,"smd_subdir",text="")
-						
+			
+			had_armatures = False
 			for object in validObs:
-				if object.type == 'ARMATURE':
+				if object.type == 'ARMATURE' and object.animation_data:
+					had_armatures = True
 					columns.separator() # yes, one for each armature
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
@@ -2641,18 +2762,18 @@ class SMD_PT_Scene(bpy.types.Panel):
 							icon = "ACTION"
 						row.prop(object,"smd_export",text=text,icon=icon,emboss=False)
 						row.prop(object.data,"smd_action_selection",text="")
+						
+			if not had_armatures:
+				columns.row()
 
 		r = l.row()
 		r.prop(scene,"smd_qc_compile")
 		rhs = r.row()
-		rhs.prop(scene,"smd_studiomdl_branch",text="")
-		c = l.column()
-		c.prop(scene,"smd_qc_path")
-		rhs.enabled = c.enabled = scene.smd_qc_compile
-		if scene.smd_studiomdl_branch == 'CUSTOM':
-			c.prop(scene,"smd_studiomdl_custom_path")
+		rhs.prop(scene,"smd_qc_path",text="")
+		rhs.enabled = scene.smd_qc_compile
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
+		l.operator(SmdToolsUpdate.bl_idname,icon='URL')
 
 class SMD_PT_Data(bpy.types.Panel):
 	bl_label = "SMD Export"
@@ -3038,8 +3159,6 @@ class SmdExporter(bpy.types.Operator):
 #        Shared registration        #
 #####################################
 
-type = bpy.types
-
 def menu_func_import(self, context):
 	self.layout.operator(SmdImporter.bl_idname, text="Studiomdl Data (.smd, .vta, .qc)")
 
@@ -3047,15 +3166,15 @@ def menu_func_export(self, context):
 	self.layout.operator(SmdExporter.bl_idname, text="Studiomdl Data (.smd, .vta)")
 
 def register():
-	type.INFO_MT_file_import.append(menu_func_import)
-	type.INFO_MT_file_export.append(menu_func_export)
+	bpy.types.INFO_MT_file_import.append(menu_func_import)
+	bpy.types.INFO_MT_file_export.append(menu_func_export)
 
 	global cached_action_filter_list
 	cached_action_filter_list = 0
 
-	type.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written",subtype='DIR_PATH')
-	type.Scene.smd_qc_compile = BoolProperty(name="QC Compile on Export",description="Compile the specified QC file on export",default=False)
-	type.Scene.smd_qc_path = StringProperty(name="QC File",description="QC file to compile on export. Cannot be internal to Blender.",subtype="FILE_PATH")
+	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
+	bpy.types.Scene.smd_qc_compile = BoolProperty(name="QC Compile on Export",description="Compile the specified QC file on export",default=False)
+	bpy.types.Scene.smd_qc_path = StringProperty(name="QC File",description="QC file to compile on export. Cannot be internal to Blender.", subtype="FILE_PATH")
 	src_branches = (
 	('CUSTOM','Custom Path','User-defined compiler path'),
 	('orangebox','Source 2009','Source 2009'),
@@ -3065,33 +3184,33 @@ def register():
 	('left 4 dead','Left 4 Dead','Left 4 Dead'),
 	('alien swarm','Alien Swarm','Alien Swarm')
 	)
-	type.Scene.smd_studiomdl_branch = EnumProperty(name="Studiomdl Branch",items=src_branches,description="The Source tool branch to compile with",default='orangebox')
-	type.Scene.smd_studiomdl_custom_path = StringProperty(name="Studiomdl Path",description="User-defined path to Studiomdl, for Custom compiles.",subtype="FILE_PATH")
-	type.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
+	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles, and DMX version",default='orangebox')
+	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Studiomdl Path",description="User-defined path to Studiomdl, for Custom compiles.", subtype="FILE_PATH")
+	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
 	
-	type.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
-	type.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
-	type.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
+	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
+	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
+	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 
-	type.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs.")
+	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs.")
 	arm_modes = (
 	('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
 	('FILTERED',"Action Filter","All actions that match the armature's filter term")
 	)
-	type.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
+	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
 	
-	type.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD")
-	type.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
+	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD")
+	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
 	
-	type.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=( 
-	('LEFT', 'Left side', 'Generate polygons on the left side'), 
+	bpy.types.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=(
+	('LEFT', 'Left side', 'Generate polygons on the left side'),
 	('RIGHT', 'Right side', 'Generate polygons on the right side'),
 	('BOTH', 'Both  sides', 'Generate polygons on both sides'),
 	), description="Determines which sides of the mesh resulting from this curve will have polygons",default='LEFT')
 
 def unregister():
-	type.INFO_MT_file_import.remove(menu_func_import)
-	type.INFO_MT_file_export.remove(menu_func_export)
+	bpy.types.INFO_MT_file_import.remove(menu_func_import)
+	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 	
 	Scene = bpy.types.Scene
 	del Scene.smd_path
@@ -3105,13 +3224,13 @@ def unregister():
 	del Object.smd_subdir
 	del Object.smd_action_filter
 	
-	del type.Armature.smd_implicit_zero_bone
-	del type.Armature.smd_action_selection
+	del bpy.types.Armature.smd_implicit_zero_bone
+	del bpy.types.Armature.smd_action_selection
 	
-	del type.Group.smd_export
-	del type.Group.smd_subdir
+	del bpy.types.Group.smd_export
+	del bpy.types.Group.smd_subdir
 	
-	del type.Curve.smd_faces
+	del bpy.types.Curve.smd_faces
 
 if __name__ == "__main__":
     register()
