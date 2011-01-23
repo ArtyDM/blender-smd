@@ -19,9 +19,9 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 11, 1),
+	"version": (0, 11, 2),
 	"blender": (2, 5, 6),
-	"category": "Import/Export",
+	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
@@ -62,6 +62,7 @@ shape_types = ['MESH' ]#, 'SURFACE' ] # Blender can't get shape keys from a surf
 # I hate Python's var redefinition habits
 class smd_info:
 	def __init__(self):
+		self.dmx = 0 # version number, or 0 for SMD
 		self.a = None # Armature object
 		self.amod = None # Original armature modifier
 		self.m = None # Mesh datablock
@@ -154,7 +155,7 @@ def getFileDir(filepath):
 
 # rounds to 6 decimal places, converts between "1e-5" and "0.000001", outputs str
 def getSmdFloat(fval):
-	return "%0.06f" % float(fval)
+	return "{:.6f}".format(float(fval))
 
 # joins up "quoted values" that would otherwise be delimited, removes comments
 def parseQuoteBlockedLine(line,lower=True):
@@ -675,6 +676,9 @@ def readBones():
 		pass
 
 	print("- Imported %i new bones" % smd.boneInfo.numBones())
+	
+	if len(smd.a.data.bones) > 128:
+		log.warning("Source only supports 128 bones!")
 
 # Creates a new armature based on the smd.boneInfo object of class 'bones_info'.
 # This may get called twice, once on initial import and again if importing an animation.
@@ -1050,7 +1054,12 @@ def applyFrameDataRest(frameData):
 
 	for boneName in smd.restBoneNames:
 
-		smd_pos = frameData[boneName]['pos']
+		try:
+			smd_pos = frameData[boneName]['pos']
+		except KeyError:
+			log.error("Bone \"{}\" on armature \"{}\" has no rest position".format(boneName,smd.a.name))
+			continue
+			
 		rotMats[boneName] = frameData[boneName]['rot']
 
 		# *************************************************
@@ -1399,7 +1408,7 @@ def readShapes():
 		if making_base_shape: # create VTA vert ID -> mesh vert ID dictionary
 			# Blender faces share verts; SMD faces don't. To simulate a SMD-like list of verticies, we need to
 			# perform a bit of mathematical kung-fu:
-			mesh_vert_id = smd.m.data.faces[math.floor(cur_id/3)].vertices[cur_id % 3]
+			mesh_vert_id = smd.m.data.faces[math.floor(cur_id/3)].vertices[cur_id % 3] # FIXME: breaks if a face has any unique verts
 
 			if cur_cos == smd.m.data.vertices[mesh_vert_id].co:
 				co_map[cur_id] = mesh_vert_id # create the new dict entry
@@ -1680,7 +1689,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 
 class SmdImporter(bpy.types.Operator):
 	bl_idname = "import.smd"
-	bl_label = "Import SMD/VTA/QC"
+	bl_label = "Import SMD/VTA, QC"
 	bl_options = {'UNDO'}
 
 	# Properties used by the file browser
@@ -2077,7 +2086,7 @@ def writePolys(internal=False):
 						else:
 							continue
 						
-						if group_name == smd.amod.vertex_group_multi_modifier:
+						if group_name == smd.amod.vertex_group:
 							am_vertex_group_weight = group_weight
 							
 						bone = smd.amod.object.data.bones.get(group_name)
@@ -2107,7 +2116,7 @@ def writePolys(internal=False):
 					
 				weight_string = " " + str(len(weights))
 				for link in weights: # one link on one vertex
-					if smd.amod.vertex_group_multi_modifier: # strength modifier
+					if smd.amod.vertex_group: # strength modifier
 						link[1] *= am_vertex_group_weight
 						if smd.amod.invert_vertex_group:
 							link[1] = 1 - link[1]
