@@ -16,10 +16,12 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
+# DISABLE SmdToolsUpdate IF YOU MAKE THIRD-PARTY CHANGES TO THE SCRIPT!
+
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 12, 1),
+	"version": (0, 12, 2),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -27,15 +29,20 @@ bl_addon_info = {
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Studiomdl Data format."}
 
-import math, os, time, bpy, random, mathutils, re, ctypes, urllib.request
+import math, os, time, bpy, random, mathutils, re, ctypes, urllib.request, struct, subprocess, io
 from bpy import ops
 from bpy.props import *
+from struct import unpack,calcsize
 vector = mathutils.Vector
+quat = mathutils.Quaternion
 euler = mathutils.Euler
 matrix = mathutils.Matrix
 rMat = mathutils.Matrix.Rotation
 tMat = mathutils.Matrix.Translation
 pi = math.pi
+
+intsize = calcsize("i")
+floatsize = calcsize("f")
 
 rx90 = rMat(math.radians(90),4,'X')
 ry90 = rMat(math.radians(90),4,'Y')
@@ -46,121 +53,6 @@ rx90n = rMat(math.radians(-90),4,'X')
 ry90n = rMat(math.radians(-90),4,'Y')
 rz90n = rMat(math.radians(-90),4,'Z')
 
-# DISABLE THIS if you make third-party changes to the script!
-class SmdToolsUpdate(bpy.types.Operator):
-	bl_idname = "script.update_smd"
-	bl_label = "Check for SMD Tools updates"
-	bl_description = "Connects to http://code.google.com/p/blender-smd/"
-	
-	def execute(self,context):
-		print("SMD Tools update...")
-		self.rss_entry = None
-		self.result = None
-		self.url_err = None
-		
-		def startElem(name,attrs):
-			if name == "entry": self.rss_entry = {'version': 0, 'bpy': 0 }
-			if not self.rss_entry: return
-			
-			if name == "content":
-				magic_words = [ "Blender SMD Tools ", " bpy-" ]
-				
-				def readContent(data):
-					for i in range( len(magic_words) ):
-						if data[: len(magic_words[i]) ] == magic_words[i]:
-							self.rss_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")					
-					
-					if self.rss_entry['version'] and self.rss_entry['bpy']:
-						for val in self.rss_entry.values():
-							while len(val) < 3:
-								val.append('0')
-								
-						self.update() # download the update
-						parser.EndElementHandler = None # never reach the end of the element
-						parser.CharacterDataHandler = None # ignore future data
-					
-				parser.CharacterDataHandler = readContent
-			
-		def endElem(name):
-			if name == "entry": self.rss_entry = None
-			elif name == "content": # if we reach the end of content, we did not get version info
-				self.result = 'FAIL_PARSE' # this will be overwritten if another entry is valid
-				parser.CharacterDataHandler = None # don't read chars until the next content elem
-		
-		try:
-			# parse RSS
-			feed = urllib.request.urlopen("http://code.google.com/feeds/p/blender-smd/downloads/basic")
-			import xml.parsers.expat
-			parser = xml.parsers.expat.ParserCreate()
-			parser.StartElementHandler = startElem
-			parser.EndElementHandler = endElem
-			
-			parser.Parse(feed.read())
-		except urllib.error.URLError as err:
-			self.url_err = str(err)
-		except xml.parsers.expat.ExpatError as err:
-			print(err)
-			self.result = 'FAIL_PARSE'
-		
-		
-		if self.url_err:
-			self.report('ERROR',"Could not complete download: " + self.url_err)
-			print(self.url_err)
-			return 'CANCELLED'
-		elif self.result == 'FAIL_PARSE':
-			self.report('ERROR',"Version information was downloaded, but could not be parsed.")
-			print(feed.read())
-			return 'CANCELLED'
-			
-		elif self.result == 'INCOMPATIBLE':
-			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.rss_entry['bpy'], sep=".") ))
-			return 'FINISHED'
-		elif self.result == 'LATEST':
-			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_addon_info['version'], sep=".") ))
-			return 'FINISHED'
-			
-		elif self.result == 'SUCCESS':
-			self.report('INFO',"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
-			bpy.ops.script.reload()
-			return 'FINISHED'
-			
-		else:
-			assert(0) # unhandled error!
-			return 'CANCELLED'
-		
-	def update(self):
-		remote_ver = self.rss_entry['version']
-		self.remote_ver_str = PrintVer(remote_ver,sep=".")
-		local_ver = bl_addon_info['version']
-		is_update = False
-		for i in range(min( len(remote_ver), len(local_ver) )):			
-			diff = int(remote_ver[i]) - local_ver[i]
-			if diff > 0:
-				is_update = True
-				break
-			elif diff < 0:
-				break	
-		if not is_update:
-			self.result = 'LATEST'
-			return
-		
-		remote_bpy = self.rss_entry['bpy']
-		for i in range(min( len(remote_bpy), len(bpy.app.version) )):
-			diff = int(remote_bpy[i]) - bpy.app.version[i]
-			if diff: # currently there are API changes in each Blender release
-				self.result = 'INCOMPATIBLE'
-				return
-		
-		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(remote_ver) )
-		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
-		
-		zip = urllib.request.urlopen(url) # we are already in a try/except block
-		import zipfile, io
-		zip = zipfile.ZipFile( io.BytesIO(zip.read()) )
-		zip.extractall(path=getFileDir( os.path.abspath( __file__ ) ))
-		
-		self.result = 'SUCCESS'
-		return
 
 # SMD types
 REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
@@ -178,7 +70,7 @@ shape_types = ['MESH' ]#, 'SURFACE' ] # Blender can't get shape keys from a surf
 # I hate Python's var redefinition habits
 class smd_info:
 	def __init__(self):
-		self.dmx = 0 # version number, or 0 for SMD
+		self.isDMX = 0 # version number, or 0 for SMD
 		self.a = None # Armature object
 		self.amod = None # Original armature modifier
 		self.m = None # Mesh datablock
@@ -194,6 +86,8 @@ class smd_info:
 		self.connectBones = False
 		self.upAxis = 'Z'
 		self.upAxisMat = 1 # vec * 1 == vec
+		
+		self.frameData = []
 
 		self.bakeInfo = []
 
@@ -242,9 +136,12 @@ class logger:
 		self.errors.append(message)
 
 	def errorReport(self, jobName, caller, numSMDs):
-		message = str(numSMDs) + " SMDs " + jobName + " in " + str(round(time.time() - self.startTime,1)) + " seconds with " + str(len(self.errors)) + " errors and " + str(len(self.warnings)) + " warnings"
-				
+		message = "{} SMD{} {}".format(numSMDs,"s" if numSMDs != 1 else "",jobName)
+		if numSMDs:
+			message += " in {} seconds".format( round( time.time() - self.startTime, 1 ) )
+
 		if len(self.errors) or len(self.warnings):
+			message += " with {} errors and {} warnings".format(len(self.errors),len(self.warnings))
 			caller.report('ERROR',message)
 			print(message + ":")
 			stdOutColour(STD_RED)
@@ -255,7 +152,7 @@ class logger:
 				print("  " + msg)
 			stdOutReset()
 		else:
-			caller.report('INFO',str(caller.countSMDs) + " SMDs " + jobName + " in " + str(round(time.time() - self.startTime,1)) + " seconds")
+			caller.report('INFO',message)
 			print(message)
 
 log = None # Initialize this so it is easier for smd_test_suite to access
@@ -264,6 +161,13 @@ log = None # Initialize this so it is easier for smd_test_suite to access
 #        Shared utilities        #
 ##################################
 
+def ValidateBlenderVersion(op):
+	if bpy.app.build_revision.startswith("34076"):
+		return True
+	else:
+		op.report('ERROR',"SMD Tools {} require Blender 2.56a, but this is {} (or an SVN build)".format(PrintVer(bl_addon_info['version']), PrintVer(bpy.app.version)) )
+		return False
+			
 def getFilename(filepath):
 	return filepath.split('\\')[-1].split('/')[-1].rsplit(".")[0]
 def getFileDir(filepath):
@@ -350,14 +254,14 @@ def printTimeMessage(start_time,name,job,type="SMD"):
 
 	print(type,name,"{}ed successfully in".format(job),elapsedtime,"\n")
 
-def PrintVer(in_seq,sep=""):
+def PrintVer(in_seq,sep="."):
 		rlist = list(in_seq[:])
 		rlist.reverse()
 		out = ""
 		for val in rlist:
 			if int(val) == 0 and not len(out):
 				continue
-			out = "{}{}{}".format(str(val),sep,out)
+			out = "{}{}{}".format(str(val),sep if sep else "",out)
 		return out.rstrip(sep)
 
 try:
@@ -882,6 +786,16 @@ def applyPoseForThisFrame(matAllRest, matAllPose):
 		restBone.location = loc
 		restBone.keyframe_insert('location',-1,frame,boneName)
 
+def sortBonesForImport():
+	# Get a list of bone names sorted so parents come before children.
+	# Include all bones in the target armature.
+	smd.restBoneNames = []
+	for bone in smd.a.data.bones:
+		if not bone.parent:
+			smd.restBoneNames.append(bone.name)
+			for child in bone.children_recursive: # depth-first
+				smd.restBoneNames.append(child.name)
+				
 def readFrames():
 	# We only care about the pose data in some SMD types
 	if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
@@ -920,14 +834,7 @@ def readFrames():
 				for child in bone.children_recursive(): # depth-first
 					smd.poseBoneNames.append(child.mangledName)
 
-	# Get a list of bone names sorted so parents come before children.
-	# Include all bones in the target armature.
-	smd.restBoneNames = []
-	for bone in smd.a.data.bones:
-		if not bone.parent:
-			smd.restBoneNames.append(bone.name)
-			for child in bone.children_recursive: # depth-first
-				smd.restBoneNames.append(child.name)
+	sortBonesForImport()
 
 	readFrameData() # Read in all the frames
 
@@ -1177,7 +1084,6 @@ def applyFrameDataRest(frameData):
 		# FIXME: same as Z for now
 		tail_vec = vector([1,0,0])
 		roll_vec = vector([0,1,0])
-
 	for boneName in smd.restBoneNames:
 
 		try:
@@ -1202,7 +1108,7 @@ def applyFrameDataRest(frameData):
 		else:
 			bn.head = smd_pos
 			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
-			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )
+			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )			
 
 	if smd_manager.upAxis == 'Y':
 		upAxisMat = rx90
@@ -1295,6 +1201,45 @@ def applyFrameDataPose(frameData):
 
 	smd.matAllPose.append(matAllPose)
 
+def getMeshMaterial(name):
+	md = smd.m.data
+	original_mat_name = name
+	if original_mat_name in smd.smdNameToMatName:
+		mat_name = smd.smdNameToMatName[original_mat_name]
+	else:
+		mat_name = uniqueName(name,bpy.data.materials.keys(),21) # Max 21 chars in a Blender material name :-(
+		smd.smdNameToMatName[original_mat_name] = mat_name
+	mat = bpy.data.materials.get(mat_name) # Do we have this material already?
+	if mat:
+		if md.materials.get(mat.name): # Look for it on this mesh
+			for i in range(len(md.materials)):
+				if md.materials[i].name == mat_name: # No index() func on PropertyRNA :-(
+					mat_ind = i
+					break
+		else: # material exists, but not on this mesh
+			md.materials.append(mat)
+			mat_ind = len(md.materials) - 1
+	else: # material does not exist
+		print("- New material: %s" % mat_name)
+		mat = bpy.data.materials.new(mat_name)
+		md.materials.append(mat)
+		# Give it a random colour
+		randCol = []
+		for i in range(3):
+			randCol.append(random.uniform(.4,1))
+		mat.diffuse_color = randCol
+		if smd.jobType != PHYS:
+			mat.use_face_texture = True # in case the uninitated user wants a quick rendering
+		else:
+			smd.m.draw_type = 'SOLID'
+		mat_ind = len(md.materials) - 1
+		if len(original_mat_name) > 21: # Save the original name as a custom property.
+			md.materials[mat_ind]['smd_name'] = original_mat_name
+			if not original_mat_name in smd.truncMaterialNames:
+				smd.truncMaterialNames.append(original_mat_name)
+				
+	return mat, mat_ind
+	
 # triangles block
 def readPolys():
 	if smd.jobType not in [ REF, REF_ADD, PHYS ]:
@@ -1339,12 +1284,12 @@ def readPolys():
 	uvs = []
 	mats = []
 
-	smdNameToMatName = {}
+	smd.smdNameToMatName = {}
 	for mat in bpy.data.materials:
 		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
-		smdNameToMatName[smd_name] = mat.name
+		smd.smdNameToMatName[smd_name] = mat.name
 
-	truncMaterialNames = []
+	smd.truncMaterialNames = []
 
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
@@ -1357,47 +1302,7 @@ def readPolys():
 		if line == "end" or "":
 			break
 
-		# Parsing the poly's material
-		original_mat_name = line
-		if original_mat_name in smdNameToMatName:
-			mat_name = smdNameToMatName[original_mat_name]
-		else:
-			mat_name = uniqueName(line,bpy.data.materials.keys(),21) # Max 21 chars in a Blender material name :-(
-			smdNameToMatName[original_mat_name] = mat_name
-		mat = bpy.data.materials.get(mat_name) # Do we have this material already?
-		if mat:
-			if md.materials.get(mat.name): # Look for it on this mesh
-				for i in range(len(md.materials)):
-					if md.materials[i].name == mat_name: # No index() func on PropertyRNA :-(
-						mat_ind = i
-						break
-			else: # material exists, but not on this mesh
-				md.materials.append(mat)
-				mat_ind = len(md.materials) - 1
-		else: # material does not exist
-			print("- New material: %s" % mat_name)
-			mat = bpy.data.materials.new(mat_name)
-			md.materials.append(mat)
-			# Give it a random colour
-			randCol = []
-			for i in range(3):
-				randCol.append(random.uniform(.4,1))
-			mat.diffuse_color = randCol
-			if smd.jobType != PHYS:
-				mat.use_face_texture = True # in case the uninitated user wants a quick rendering
-			else:
-				smd.m.draw_type = 'SOLID'
-			mat_ind = len(md.materials) - 1
-			if len(original_mat_name) > 21: # Save the original name as a custom property.
-				md.materials[mat_ind]['smd_name'] = original_mat_name
-				if not original_mat_name in truncMaterialNames:
-					truncMaterialNames.append(original_mat_name)
-
-		# Would need to do this if the material already existed, but the material will be a shared copy so this step is redundant.
-		#if len(original_mat_name) > 21:
-		#	md.materials[mat_ind]['smd_name'] = original_mat_name
-
-		# Store index for later application to faces
+		mat, mat_ind = getMeshMaterial(line)
 		mats.append(mat_ind)
 
 		# ***************************************************************
@@ -1450,11 +1355,11 @@ def readPolys():
 		# Back in polyland now, with three verts processed.
 		countPolys+= 1
 
-	length = len(truncMaterialNames)
+	length = len(smd.truncMaterialNames)
 	if length > 0:
 		log.warning('%d material name%s truncated to 21 characters' % (length,'s were' if length > 1 else ' was'))
 		print("The following material names were truncated to 21 characters:")
-		for smdName in truncMaterialNames:
+		for smdName in smd.truncMaterialNames:
 			print('  ',smdName)
 
 	if countPolys:
@@ -1471,7 +1376,7 @@ def readPolys():
 		# Apply vertex groups
 		for i in range(len(md.vertices)):
 			for link in weights[i]:
-				smd.m.vertex_groups.assign( [i], link[0], link[1], 'ADD' )
+				smd.m.vertex_groups.assign( [i], link[0], link[1], 'REPLACE' )
 
 		# Build faces
 		# TODO: figure out if it's possible to foreach_set() this data. Note the reversal of indices required.
@@ -1752,12 +1657,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		printTimeMessage(qc.startTime,filename,"import","QC")
 	return qc.numSMDs
 
-# Parses an SMD file
-def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, append = True, from_qc = False):
-	if filepath.endswith("dmx"):
-		print("Skipping DMX file import: format unsupported (%s)" % getFilename(filepath))
-		return
-
+def initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc):
 	global smd
 	smd	= smd_info()
 	smd.jobName = getFilename(filepath)
@@ -1772,16 +1672,23 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 	if not from_qc:
 		global smd_manager
 		smd_manager = smd
+	
+# Parses an SMD file
+def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, append = True, from_qc = False):
+	if filepath.endswith("dmx"):
+		#readDMX( context, filepath, upAxis, connectBones, newscene, smd_type, append, from_qc)
+		print("Skipping DMX file import: format unsupported (%s)" % getFilename(filepath))
+		return 0
+
+	global smd
+	initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc)
 
 	try:
 		smd.file = file = open(filepath, 'r')
-	except IOError: # TODO: work out why errors are swallowed if I don't do this!
-		message = "Could not open SMD file \"{}\"\n\t{}".format(smd.jobName,filepath)
-		if from_qc:
-			log.warning(message + " - skipping!")
-			return
-		else:
-			raise IOError(message) # just error out if it's a direct SMD import
+	except IOError as err: # TODO: work out why errors are swallowed if I don't do this!
+		message = "Could not open SMD file \"{}\": {}\n\t{}".format(smd.jobName,err,filepath)
+		log.error(message)
+		return 0
 
 	if newscene:
 		bpy.context.screen.scene = bpy.data.scenes.new(smd.jobName) # BLENDER BUG: this currently doesn't update bpy.context.scene
@@ -1812,6 +1719,8 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		bpy.ops.object.rotation_apply()
 	'''
 	printTimeMessage(smd.startTime,smd.jobName,"import")
+	
+	return 1
 
 class SmdImporter(bpy.types.Operator):
 	bl_idname = "import.smd"
@@ -1819,7 +1728,7 @@ class SmdImporter(bpy.types.Operator):
 	bl_options = {'UNDO'}
 
 	# Properties used by the file browser
-	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/QC file", maxlen=1024, default="")
+	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA/DMX/QC file", maxlen=1024, default="")
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
 	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
 	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
@@ -1834,7 +1743,10 @@ class SmdImporter(bpy.types.Operator):
 	connectBones = EnumProperty(name="Bone Connection Mode",items=connectionEnum,description="How to choose which bones to connect together",default='COMPATIBILITY')
 	makeCamera = BoolProperty(name="Make camera at $origin",description="For use in viewmodel editing. If not set, an empty will be created instead.",default=False)
 
-	def execute(self, context):
+	def execute(self, context):		
+		if not ValidateBlenderVersion(self):
+			return 'CANCELLED'
+			
 		global log
 		log = logger()
 
@@ -1844,11 +1756,9 @@ class SmdImporter(bpy.types.Operator):
 			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, self.properties.makeCamera, outer_qc=True)
 			bpy.context.scene.objects.active = qc.armature
 		elif self.properties.filepath.endswith('.smd'):
-			readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, append=self.properties.append)
-			self.countSMDs = 1
+			self.countSMDs = readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, append=self.properties.append)
 		elif self.properties.filepath.endswith ('.vta'):
-			readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
-			self.countSMDs = 1
+			self.countSMDs = readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)			
 		elif self.properties.filepath.endswith('.dmx'):
 			self.report('ERROR',"DMX import not supported")
 			return 'CANCELLED'
@@ -1871,6 +1781,8 @@ class SmdImporter(bpy.types.Operator):
 		return 'FINISHED'
 
 	def invoke(self, context, event):
+		if not ValidateBlenderVersion(self):
+			return 'CANCELLED'
 		bpy.context.window_manager.fileselect_add(self)
 		return 'RUNNING_MODAL'
 
@@ -2570,7 +2482,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 				if ad.action:
 					icon = "ACTION"
 					count = 1
-					text = ob.smd_subdir + "\\" + ad.action.name + ".smd"
+					text = "{}{}.{}".format(ob.smd_subdir + "\\" if ob.smd_subdir else "",ad.action.name, "dmx" if smd.isDMX else "smd")
 				elif ad.nla_tracks:
 					nla_actions = []
 					for track in ad.nla_tracks:
@@ -2830,56 +2742,6 @@ class SMD_PT_Data(bpy.types.Panel):
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'BONES'
 
-class SmdClean(bpy.types.Operator):
-	bl_idname = "smd.clean"
-	bl_label = "Clean SMD data"
-	bl_description = "Deletes SMD-related properties"
-	bl_options = {'REGISTER', 'UNDO'}
-	
-	mode = EnumProperty(items=( ('OBJECT','Object','Active object'), ('BONES','Bones','Armature bones'), ('SCENE','Scene','Scene and all contents') ),default='SCENE')
-
-	def execute(self,context):
-		self.numPropsRemoved = 0
-		def removeProps(object,bones=False):
-			if not bones:
-				for prop in object.items():
-					if prop[0].startswith("smd_"):
-						del object[prop[0]]
-						self.numPropsRemoved += 1
-			if bones and object.type == 'ARMATURE':
-				# For some reason deleting custom properties from bones doesn't work well in Edit Mode
-				bpy.context.scene.objects.active = object
-				object_mode = object.mode
-				bpy.ops.object.mode_set(mode='OBJECT')
-				for bone in object.data.bones:
-					removeProps(bone)
-				bpy.ops.object.mode_set(mode=object_mode)
-
-		active_obj = bpy.context.active_object
-		active_mode = active_obj.mode if active_obj else None
-
-		if self.properties.mode == 'SCENE':
-			for object in context.scene.objects:
-				removeProps(object)
-			for group in bpy.data.groups:
-				for g_ob in group.objects:
-					if context.scene in g_ob.users_scene:
-						removeProps(group)
-			removeProps(context.scene)
-			
-		elif self.properties.mode == 'OBJECT':
-			removeProps(active_obj)
-		
-		elif self.properties.mode == 'BONES':
-			removeProps(active_obj,bones=True)
-
-		bpy.context.scene.objects.active = active_obj
-		if active_obj:
-			bpy.ops.object.mode_set(mode=active_mode)
-
-		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
-		return 'FINISHED'
-
 class SmdExporter(bpy.types.Operator):
 	bl_idname = "export.smd"
 	bl_label = "Export SMD/VTA"
@@ -2900,6 +2762,9 @@ class SmdExporter(bpy.types.Operator):
 	groupIndex = IntProperty(default=-1,options={'HIDDEN'})
 
 	def execute(self, context):
+		if not ValidateBlenderVersion(self):
+			return 'CANCELLED'
+		
 		props = self.properties
 
 		if props.exportMode == 'NONE':
@@ -2964,7 +2829,7 @@ class SmdExporter(bpy.types.Operator):
 				bpy.ops.pose.copy()
 				object.animation_data.action = pose_backups[object.name][1]
 				bpy.ops.pose.paste()
-				bpy.ops.anim.keyframe_insert(type=-6) # LocRotScale
+				bpy.ops.anim.keyframe_insert(type='LocRotScale')
 				object.animation_data.action = pose_backups[object.name][0]
 				ops.object.mode_set(mode='OBJECT')
 		context.scene.objects.active = prev_active_ob
@@ -3084,7 +2949,6 @@ class SmdExporter(bpy.types.Operator):
 					studiomdl_path += "studiomdl.exe"
 
 				if os.path.exists(studiomdl_path):
-					import subprocess
 					print("Running studiomdl for \"" + getFilename(context.scene.smd_qc_path) + "\"...\n")
 					subprocess.call([studiomdl_path, "-nop4", bpy.path.abspath(context.scene.smd_qc_path)])
 					print("\n")
@@ -3159,11 +3023,201 @@ class SmdExporter(bpy.types.Operator):
 			ad.action = prev_action
 
 	def invoke(self, context, event):
+		if not ValidateBlenderVersion(self):
+			return 'CANCELLED'
 		if self.properties.exportMode == 'NONE':
 			bpy.ops.wm.call_menu(name="SMD_MT_ExportChoice")
 			return 'PASS_THROUGH'
 		else: # a UI element has chosen a mode for us
 			return self.execute(context)
+
+class SmdClean(bpy.types.Operator):
+	bl_idname = "smd.clean"
+	bl_label = "Clean SMD data"
+	bl_description = "Deletes SMD-related properties"
+	bl_options = {'REGISTER', 'UNDO'}
+	
+	mode = EnumProperty(items=( ('OBJECT','Object','Active object'), ('BONES','Bones','Armature bones'), ('SCENE','Scene','Scene and all contents') ),default='SCENE')
+
+	def execute(self,context):
+		self.numPropsRemoved = 0
+		def removeProps(object,bones=False):
+			if not bones:
+				for prop in object.items():
+					if prop[0].startswith("smd_"):
+						del object[prop[0]]
+						self.numPropsRemoved += 1
+			if bones and object.type == 'ARMATURE':
+				# For some reason deleting custom properties from bones doesn't work well in Edit Mode
+				bpy.context.scene.objects.active = object
+				object_mode = object.mode
+				bpy.ops.object.mode_set(mode='OBJECT')
+				for bone in object.data.bones:
+					removeProps(bone)
+				bpy.ops.object.mode_set(mode=object_mode)
+
+		active_obj = bpy.context.active_object
+		active_mode = active_obj.mode if active_obj else None
+
+		if self.properties.mode == 'SCENE':
+			for object in context.scene.objects:
+				removeProps(object)
+			for group in bpy.data.groups:
+				for g_ob in group.objects:
+					if context.scene in g_ob.users_scene:
+						removeProps(group)
+			removeProps(context.scene)
+			
+		elif self.properties.mode == 'OBJECT':
+			removeProps(active_obj)
+		
+		elif self.properties.mode == 'BONES':
+			removeProps(active_obj,bones=True)
+
+		bpy.context.scene.objects.active = active_obj
+		if active_obj:
+			bpy.ops.object.mode_set(mode=active_mode)
+
+		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
+		return 'FINISHED'
+
+########################
+#        Update        #
+########################
+# DISABLE THIS if you make third-party changes to the script!
+
+class SMD_MT_Updated(bpy.types.Menu):
+	bl_label = "SMD Tools update"	
+	def draw(self,context):
+		self.layout.operator("wm.url_open",text="View changes?",icon='TEXT').url = "http://code.google.com/p/blender-smd/wiki/Changelog"
+
+import xml.parsers.expat, zipfile
+class SmdToolsUpdate(bpy.types.Operator):
+	bl_idname = "script.update_smd"
+	bl_label = "Check for SMD Tools updates"
+	bl_description = "Connects to http://code.google.com/p/blender-smd/"
+	
+	def execute(self,context):
+		print("SMD Tools update...")		
+		self.rss_entry = \
+		self.result = \
+		self.url_err = \
+		self.io_err = None
+		
+		def startElem(name,attrs):
+			if name == "entry": self.rss_entry = {'version': 0, 'bpy': 0 }
+			if not self.rss_entry: return
+			
+			if name == "content":
+				magic_words = [ "Blender SMD Tools ", " bpy-" ]
+				
+				def readContent(data):
+					for i in range( len(magic_words) ):
+						if data[: len(magic_words[i]) ] == magic_words[i]:
+							self.rss_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")					
+					
+					if self.rss_entry['version'] and self.rss_entry['bpy']:
+						for val in self.rss_entry.values():
+							while len(val) < 3:
+								val.append('0')
+						
+						self.update() # download the update
+						parser.EndElementHandler = None # never reach the end of the element
+						parser.CharacterDataHandler = None # ignore future data
+					
+				parser.CharacterDataHandler = readContent
+			
+		def endElem(name):
+			if name == "entry": self.rss_entry = None
+			elif name == "content": # if we reach the end of content, we did not get version info
+				self.result = 'FAIL_PARSE' # this will be overwritten if another entry is valid
+				parser.CharacterDataHandler = None # don't read chars until the next content elem
+		
+		try:
+			# parse RSS
+			feed = urllib.request.urlopen("http://code.google.com/feeds/p/blender-smd/downloads/basic")			
+			parser = xml.parsers.expat.ParserCreate()
+			parser.StartElementHandler = startElem
+			parser.EndElementHandler = endElem
+			
+			parser.Parse(feed.read())
+		except urllib.error.URLError as err:
+			self.url_err = str(err)
+		except xml.parsers.expat.ExpatError as err:
+			print(err)
+			self.result = 'FAIL_PARSE'
+		except zipfile.BadZipfile:
+			self.result == 'FAIL_UNZIP'
+		except IOError as err:
+			self.io_err = str(err)
+		
+		
+		if self.url_err:
+			self.report('ERROR',"Could not complete download: " + self.url_err)
+			print(self.url_err)
+			return 'CANCELLED'
+		elif self.result == 'FAIL_PARSE':
+			self.report('ERROR',"Version information was downloaded, but could not be parsed.")
+			print(feed.read())
+			return 'CANCELLED'
+		elif self.result == 'FAIL_UNZIP':
+			self.report('ERROR',"Update was downloaded, but was corrupt")
+			return 'CANCELLED'
+		elif self.io_err:
+			self.report('ERROR',"Could not install update: " + self.io_err)
+			return 'CANCELLED'
+
+		elif self.result == 'INCOMPATIBLE':
+			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.rss_entry['bpy']) ))
+			return 'FINISHED'
+		elif self.result == 'LATEST':
+			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_addon_info['version']) ))
+			return 'FINISHED'
+			
+		elif self.result == 'SUCCESS':
+			bpy.ops.script.reload()
+			self.report('INFO',"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
+			bpy.ops.wm.call_menu(name="SMD_MT_Updated")
+			return 'FINISHED'
+			
+		else:
+			assert(0) # unhandled error!
+			return 'CANCELLED'
+		
+	def update(self):
+		remote_ver = self.rss_entry['version']
+		self.remote_ver_str = PrintVer(remote_ver)
+		local_ver = bl_addon_info['version']
+		is_update = False
+		for i in range(min( len(remote_ver), len(local_ver) )):			
+			diff = int(remote_ver[i]) - local_ver[i]
+			if diff > 0:
+				is_update = True
+				break
+			elif diff < 0:
+				break	
+		if not is_update:
+			self.result = 'LATEST'
+			return
+		
+		remote_bpy = self.rss_entry['bpy']
+		for i in range(min( len(remote_bpy), len(bpy.app.version) )):
+			diff = int(remote_bpy[i]) - bpy.app.version[i]
+			if diff: # currently there are API changes in each Blender release
+				self.result = 'INCOMPATIBLE'
+				return
+		
+		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(remote_ver,sep="") )
+		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
+		
+		# we are already in a try/except block, any failures will be caught
+		zip = urllib.request.urlopen(url) 	
+		zip = zipfile.ZipFile( io.BytesIO(zip.read()) )
+		zip.extractall(path=getFileDir( os.path.abspath( __file__ ) ))
+		
+		self.result = 'SUCCESS'
+		return
+
 
 #####################################
 #        Shared registration        #
