@@ -1,5 +1,19 @@
 #labels Featured
-== 0.12.1 - Janurary 23rd, 2011 ==
+== 0.12.2 - January 24th, 2011 ==
+
+General:
+
+  * Enforce Blender version (due to confusion between 2.56 and 2.56a)
+  * A link to the changelog is now offered after an update
+  * Improved handling of file I/O and update errors
+  * Moved the update and cleaner operators within the script to improve search results for "SMD" (imp/exp are now first)
+  * Fixed rogue slashes before export target names
+  
+Importer:
+
+  * Internal changes to prepare for DMX support (which won't come until Blender 2.57 due to 2.56 bugs)
+
+== 0.12.1 - January 23rd, 2011 ==
 
 _(0.12 plus hotfix)_
 
@@ -12,7 +26,7 @@ Exporter:
   * UI changes to prepare for DMX support
   * Armatures no longer appear in Scene Configuration unless they have associated animation data (really this time)
 
-== 0.11.2 - Janurary 23rd, 2011 ==
+== 0.11.2 - January 23rd, 2011 ==
 
 Importer:
 
@@ -24,7 +38,7 @@ Exporter:
 
   * Fixed "vertex_group_multi_modifier" exception (what's wrong with bug reports, people?)
 
-== 0.11.1 - Janurary 7th, 2011 ==
+== 0.11.1 - January 7th, 2011 ==
 
 Importer:
 
