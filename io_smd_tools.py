@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 12, 2),
+	"version": (0, 12, 3),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -2482,7 +2482,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 				if ad.action:
 					icon = "ACTION"
 					count = 1
-					text = "{}{}.{}".format(ob.smd_subdir + "\\" if ob.smd_subdir else "",ad.action.name, "dmx" if smd.isDMX else "smd")
+					text = "{}{}.{}".format(ob.smd_subdir + "\\" if ob.smd_subdir else "",ad.action.name, bpy.context.scene.smd_format.lower())
 				elif ad.nla_tracks:
 					nla_actions = []
 					for track in ad.nla_tracks:
@@ -3207,7 +3207,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 				self.result = 'INCOMPATIBLE'
 				return
 		
-		url = "http://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(remote_ver,sep="") )
+		url = "https://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(remote_ver,sep="") )
 		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
 		
 		# we are already in a try/except block, any failures will be caught
@@ -3251,6 +3251,11 @@ def register():
 	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles, and DMX version",default='orangebox')
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Studiomdl Path",description="User-defined path to Studiomdl, for Custom compiles.", subtype="FILE_PATH")
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
+	formats = (
+	('SMD', "SMD", "Studiomdl Data" ),
+	('DMX', "DMX", "Data Model Exchange" )
+	)
+	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD',description="todo")
 	
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
@@ -3282,6 +3287,7 @@ def unregister():
 	del Scene.smd_studiomdl_branch
 	del Scene.smd_studiomdl_custom_path
 	del Scene.smd_up_axis
+	del Scene.smd_format
 	
 	Object = bpy.types.Object
 	del Object.smd_export
