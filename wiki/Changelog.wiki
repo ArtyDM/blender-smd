@@ -1,4 +1,11 @@
 #labels Featured
+== 0.12.3 - January 25th, 2011 ==
+
+General:
+
+  * Fixed UI failure when displaying an export name
+  * Switched to secure HTTP for update downloads
+
 == 0.12.2 - January 24th, 2011 ==
 
 General:
