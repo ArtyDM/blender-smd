@@ -1,4 +1,16 @@
 #labels Featured
+== 0.12.4 - February 2nd, 2011 ==
+
+General:
+
+  * No longer displaying full action export path in scene properties (just the name)
+
+Exporter:
+
+  * Fixed exporting shapes from objects with no modifiers
+  * Improved error handling for QC compiles
+  * Added support for long SMD filenames; make a "smd_name" custom property. There is no GUI for this!
+
 == 0.12.3 - January 25th, 2011 ==
 
 General:
