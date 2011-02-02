@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 12, 3),
+	"version": (0, 12, 4),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -167,7 +167,13 @@ def ValidateBlenderVersion(op):
 	else:
 		op.report('ERROR',"SMD Tools {} require Blender 2.56a, but this is {} (or an SVN build)".format(PrintVer(bl_addon_info['version']), PrintVer(bpy.app.version)) )
 		return False
-			
+
+def getFileExt(flex=False):
+	if flex and bpy.context.scene.smd_format == 'SMD':
+		return ".vta"
+	else:
+		return "." + bpy.context.scene.smd_format.lower()
+		
 def getFilename(filepath):
 	return filepath.split('\\')[-1].split('/')[-1].rsplit(".")[0]
 def getFileDir(filepath):
@@ -261,7 +267,7 @@ def PrintVer(in_seq,sep="."):
 		for val in rlist:
 			if int(val) == 0 and not len(out):
 				continue
-			out = "{}{}{}".format(str(val),sep if sep else "",out)
+			out = "{}{}{}".format(str(val),sep if sep else "",out) # NB last value!
 		return out.rstrip(sep)
 
 try:
@@ -378,6 +384,12 @@ def MakeObjectIcon(object,prefix=None,suffix=None):
 		out += suffix
 	return out
 
+def getObExportName(ob):
+	if ob.get('smd_name'):
+		return ob['smd_name']
+	else:
+		return ob.name
+
 def removeObject(obj):
 	d = obj.data
 	type = obj.type
@@ -394,7 +406,9 @@ def removeObject(obj):
 				bpy.data.armatures.remove(d)
 				
 	return None if d else type
-	
+
+def hasShapes(ob):
+	return ob.type in shape_types and ob.data.shape_keys and len(ob.data.shape_keys.keys) > 1
 ########################
 #        Import        #
 ########################
@@ -1734,7 +1748,7 @@ class SmdImporter(bpy.types.Operator):
 	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
 	
 	# Custom properties
-	append = BoolProperty(name="SMDs extend any existing model", description="Whether SMDs will latch onto an existing armature or create their own.", default=True)
+	append = BoolProperty(name="Extend any existing model", description="Whether imports will latch onto an existing armature or create their own.", default=True)
 	doAnim = BoolProperty(name="Import animations (slow)", default=True)
 	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up'. Ignored for QCs.")
 	connectionEnum = ( ('NONE','Do not connect (sphere bones)','All bones will be unconnected spheres'),
@@ -2412,7 +2426,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		if smd.g:
 			smd.jobName = smd.g.name
 		else:
-			smd.jobName = object.name
+			smd.jobName = getObExportName(object)
 		smd.m = object
 		#smd.a = smd.m.find_armature() # Blender bug: only works on meshes
 		bakeObj(smd.m)
@@ -2451,11 +2465,12 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	if smd.m:
 		if smd.jobType in [REF,PHYS]:
 			writePolys()
-		elif smd.jobType == FLEX and smd.m.data.shape_keys and len(smd.m.modifiers):
-			for mod in smd.m.modifiers:
-				if mod.type != 'ARMATURE':
-					log.warning("Due to a Blender limitation, modifers cannot be applied to shape keys")
-					break
+		elif smd.jobType == FLEX and smd.m.data.shape_keys:
+			if len(smd.m.modifiers):
+				for mod in smd.m.modifiers:
+					if mod.type != 'ARMATURE':
+						log.warning("Due to a Blender limitation, modifers cannot be applied to shape keys")
+						break
 			writeShapes()
 
 	unBake()
@@ -2473,16 +2488,20 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 		icon = "OUTLINER_DATA_ARMATURE"
 		count = 0
 		text = "No Actions or NLA"
-		
+		export_name = False
 		if not ob:
 			ob = context.active_object
+			export_name = True # slight hack since having ob currently aligns with wanting a short name
 		if ob:
 			ad = ob.animation_data
 			if ad:
 				if ad.action:
 					icon = "ACTION"
 					count = 1
-					text = "{}{}.{}".format(ob.smd_subdir + "\\" if ob.smd_subdir else "",ad.action.name, bpy.context.scene.smd_format.lower())
+					if export_name:
+						text = "{}{}.{}".format(ob.smd_subdir + "\\" if ob.smd_subdir else "",ad.action.name, getFileExt())
+					else:
+						text = ad.action.name
 				elif ad.nla_tracks:
 					nla_actions = []
 					for track in ad.nla_tracks:
@@ -2551,19 +2570,20 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 						group = ob.users_group[i]
 						if group.smd_export:
 							want_single_export = False
-							label = group.name + ".smd"
-							for g_ob in group.objects:
-								if g_ob.type in shape_types and g_ob.data.shape_keys and len(g_ob.data.shape_keys.keys) > 1:
-									label += "/.vta"
-									break
+							label = group.name + getFileExt()
+							if bpy.context.scene.smd_format == 'SMD':
+								for g_ob in group.objects:
+									if hasShapes(g_ob):
+										label += "/.vta"
+										break
 							
 							op = l.operator(SmdExporter.bl_idname, text=label, icon="GROUP") # group
 							op.exportMode = 'SINGLE' # will be merged and exported as one
 							op.groupIndex = i
 				# Single
 				if want_single_export:
-					label = ob.name + ".smd"
-					if ob.type in shape_types and ob.data.shape_keys and len(ob.data.shape_keys.keys) > 1:
+					label = getObExportName(ob) + getFileExt()
+					if bpy.context.scene.smd_format == 'SMD' and hasShapes(ob):
 						label += "/.vta"
 					l.operator(SmdExporter.bl_idname, text=label, icon=MakeObjectIcon(ob,prefix="OUTLINER_OB_")).exportMode = 'SINGLE'
 			
@@ -2664,7 +2684,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 						continue
 					
 					row = columns.row()
-					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
+					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=getObExportName(object))
 					row.prop(object,"smd_subdir",text="")
 			
 			had_armatures = False
@@ -2931,32 +2951,48 @@ class SmdExporter(bpy.types.Operator):
 			log.error("Found no valid objects for export")
 		elif context.scene.smd_qc_compile:
 			# ...and compile the QC
-			jobMessage += " and QC compiled"
 			branch = context.scene.smd_studiomdl_branch
-			try:
-				sdk_path = os.environ['SOURCESDK']
+			
+			sdk_path = os.getenv('SOURCESDK')
+			ncf_path = None
+			if sdk_path:
 				ncf_path = sdk_path + "\\..\\..\\common\\"
+			else:
+				# Python vanilla can't access the registry! (I will use the DMX bytecode to work around this)
+				for path in [ os.getenv('PROGRAMFILES(X86)'), os.getenv('PROGRAMFILES') ]:
+					path += "\\steam\\steamapps\\common"
+					if os.path.exists(path):
+						ncf_path = path
+			
+			studiomdl_path = None
+			if branch in ['ep1','source2007','orangebox'] and sdk_path:
+				studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
+			elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm'] and ncf_path:
+				studiomdl_path = ncf_path + branch + "\\bin\\"
+			elif branch == 'CUSTOM':
+				studiomdl_path = context.scene.smd_studiomdl_custom_path = bpy.path.abspath(context.scene.smd_studiomdl_custom_path)
 
-				if branch == 'CUSTOM':
-					studiomdl_path = context.scene.smd_studiomdl_custom_path = bpy.path.abspath(context.scene.smd_studiomdl_custom_path)
-
-				if branch in ['ep1','source2007','orangebox']:
-					studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-				elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm']:
-					studiomdl_path = ncf_path + branch + "\\bin\\"
-
+			if not studiomdl_path:
+				log.error("Could not locate Source SDK installation. Launch it, or run a custom QC compile")
+			else:
 				if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
 					studiomdl_path += "studiomdl.exe"
-
-				if os.path.exists(studiomdl_path):
-					print("Running studiomdl for \"" + getFilename(context.scene.smd_qc_path) + "\"...\n")
-					subprocess.call([studiomdl_path, "-nop4", bpy.path.abspath(context.scene.smd_qc_path)])
-					print("\n")
+				
+				qc_path = bpy.path.abspath(context.scene.smd_qc_path)
+				if len( getFilename(qc_path) ) == 0:
+					log.error("Cannot compile, no QC provided. The SMD Tools do not generate QCs.")
+				elif not os.path.exists(studiomdl_path):
+					log.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
 				else:
-					log.error("Could not access studiomdl at \"" + studiomdl_path + "\"")
-
-			except KeyError:
-				log.error("Source SDK not configured. Launch it, or run a custom QC compile")
+					print( "Running studiomdl for \"{}\"...\n".format(getFilename(qc_path)) )
+					studiomdl = subprocess.Popen([studiomdl_path, "-nop4", qc_path])
+					studiomdl.communicate()
+					
+					if studiomdl.returncode == 0:
+						jobMessage += " and QC compiled"
+					else:
+						log.error("Studiomdl compile failed")
+					print("\n")					
 
 		log.errorReport(jobMessage,self,self.countSMDs)
 		return 'FINISHED'
@@ -2986,14 +3022,14 @@ class SmdExporter(bpy.types.Operator):
 
 		if object.type in mesh_compatible:
 			if groupIndex == -1:
-				path += object.name
+				path += getObExportName(object)
 			else:
 				path += object.users_group[groupIndex].name
 				
-			if writeSMD(context, object, groupIndex, path + ".smd"):
+			if writeSMD(context, object, groupIndex, path + getFileExt()):
 				self.countSMDs += 1
-			if object.type in shape_types and object.data.shape_keys and len(object.data.shape_keys.keys) > 1:
-				if writeSMD(context, object, groupIndex, path + ".vta", FLEX):
+			if bpy.context.scene.smd_format == 'SMD' and hasShapes(object): # DMX will export mesh and shapes to the same file
+				if writeSMD(context, object, groupIndex, path + getFileExt(flex=True), FLEX):
 					self.countSMDs += 1
 		elif object.type == 'ARMATURE':
 			ad = object.animation_data
@@ -3004,11 +3040,11 @@ class SmdExporter(bpy.types.Operator):
 				for action in bpy.data.actions:
 					if action.users and (not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1):
 						ad.action = action
-						if writeSMD(context,object, -1, path + action.name + ".smd",ANIM):
+						if writeSMD(context,object, -1, path + action.name + getFileExt(),ANIM):
 							self.countSMDs += 1
 			elif object.animation_data:
 				if ad.action:
-					if writeSMD(context,object,-1,path + ad.action.name + ".smd",ANIM):
+					if writeSMD(context,object,-1,path + ad.action.name + getFileExt(),ANIM):
 						self.countSMDs += 1
 				elif len(ad.nla_tracks):
 					nla_actions = []
@@ -3018,7 +3054,7 @@ class SmdExporter(bpy.types.Operator):
 								if not strip.mute and strip.action not in nla_actions:
 									nla_actions.append(strip.action)
 									ad.action = strip.action
-									if writeSMD(context,object,-1,path + ad.action.name + ".smd",ANIM):
+									if writeSMD(context,object,-1,path + ad.action.name + getFileExt(),ANIM):
 										self.countSMDs += 1
 			ad.action = prev_action
 
