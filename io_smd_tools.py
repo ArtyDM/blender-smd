@@ -3274,10 +3274,6 @@ class SmdToolsUpdate(bpy.types.Operator):
 		cur_ver = bl_addon_info['version']
 		self.cur_entry = None
 		
-		def _wantEntry():
-			self.cur_entry = entry
-			self.remote_ver_str = PrintVer(remote_ver)		
-
 		for entry in self.rss_entries:
 			remote_ver = entry['version']
 			remote_bpy = entry['bpy']
@@ -3289,16 +3285,14 @@ class SmdToolsUpdate(bpy.types.Operator):
 				if not self.cur_entry:
 					self.result = 'INCOMPATIBLE'
 			else:
-				if not self.cur_entry:
-					_wantEntry()
-				else:
-					for i in range(min( len(remote_ver), len(self.cur_entry['version']) )):
-						diff = int(remote_ver[i]) - int(self.cur_entry['version'][i])
-						if diff > 0:
-							_wantEntry()
-							break
-						elif diff < 0:
-							break
+				for i in range(min( len(remote_ver), len(entry['version']) )):
+					diff = int(remote_ver[i]) - int(entry['version'][i])
+					if diff > 0:
+						self.cur_entry = entry
+						self.remote_ver_str = PrintVer(remote_ver)	
+						break
+					elif diff < 0:
+						break
 
 		if not self.cur_entry:
 			self.result = 'LATEST'
