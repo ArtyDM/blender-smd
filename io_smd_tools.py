@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 12, 4),
+	"version": (0, 13, 0),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -65,7 +65,7 @@ FLEX = 0x6 # $model VTA
 mesh_compatible = [ 'MESH', 'TEXT', 'FONT', 'SURFACE', 'META', 'CURVE' ]
 exportable_types = mesh_compatible[:]
 exportable_types.append('ARMATURE')
-shape_types = ['MESH' ]#, 'SURFACE' ] # Blender can't get shape keys from a surface to a mesh
+shape_types = ['MESH' , 'SURFACE']
 
 # I hate Python's var redefinition habits
 class smd_info:
@@ -74,6 +74,7 @@ class smd_info:
 		self.a = None # Armature object
 		self.amod = None # Original armature modifier
 		self.m = None # Mesh datablock
+		self.shapes = None
 		self.g = None # Group being exported
 		self.file = None
 		self.jobName = None
@@ -86,7 +87,7 @@ class smd_info:
 		self.connectBones = False
 		self.upAxis = 'Z'
 		self.upAxisMat = 1 # vec * 1 == vec
-		
+
 		self.frameData = []
 
 		self.bakeInfo = []
@@ -173,7 +174,7 @@ def getFileExt(flex=False):
 		return ".vta"
 	else:
 		return "." + bpy.context.scene.smd_format.lower()
-		
+
 def getFilename(filepath):
 	return filepath.split('\\')[-1].split('/')[-1].rsplit(".")[0]
 def getFileDir(filepath):
@@ -188,7 +189,7 @@ def parseQuoteBlockedLine(line,lower=True):
 	words = []
 	last_word_start = 0
 	in_quote = in_whitespace = False
-	
+
 	# The last char of the last line in the file was missed
 	if line[-1] != '\n':
 		line += '\n'
@@ -304,7 +305,7 @@ def getUpAxisMat(axis):
 
 def VecXMat(vec, mat):
 	return vec * mat.copy().invert()
-		
+
 # Get a list of bone names sorted so parents come before children.
 # Also assign a unique SMD ID to every bone.
 # Changes smd.boneIDs, smd.boneNameToID, and smd.sortedBones
@@ -375,7 +376,7 @@ def MakeObjectIcon(object,prefix=None,suffix=None):
 		type = 'FONT'
 	else:
 		type = object.type
-	
+
 	out = ""
 	if prefix:
 		out += prefix
@@ -404,7 +405,7 @@ def removeObject(obj):
 				bpy.data.meshes.remove(d)
 			if type == 'ARMATURE':
 				bpy.data.armatures.remove(d)
-				
+
 	return None if d else type
 
 def hasShapes(ob):
@@ -474,10 +475,10 @@ def validateBones():
 		# 2) the rest bone has extra ancestor bones between it and the pose bone's parent (which may be None)
 		# Case 1) is solved by simply ignoring the extra ancestor pose bones.
 		# Case 2) is tricky, must insert extra ancestor bones into the pose armature.
-		
+
 		poseAncestors = poseBoneInfo.ancestors()
 		restAncestors = restBoneInfo.ancestors()
-		
+
 		poseBoneInfo.animParent = None
 
 		if len(restAncestors) > 0:
@@ -534,12 +535,12 @@ class bone_info:
 		self.animParent = None
 		self.extraAncestors = []
 		self.isExtra = False
-	
+
 	def setParent(self,parent):
 		self.parent = parent
 		if parent:
 			parent.addChild(self)
-	
+
 	def addChild(self,child):
 		assert(not child in self.children)
 		self.children.append(child)
@@ -551,7 +552,7 @@ class bone_info:
 			result.append(iter)
 			iter = iter.parent
 		return result
-	
+
 	def sameName(self,other):
 		if not other: return False
 		return self.smdName.lower() == other.smdName.lower()
@@ -583,7 +584,7 @@ class bones_info:
 		self.smdNameToBone = {}
 		self.IDToBone = {}
 		self.nextID = 0
-	
+
 	def addBone(self,bone):
 		assert(not bone in self.bones)
 		assert(not bone.mangledName in self.mangledNameToBone.keys())
@@ -598,7 +599,7 @@ class bones_info:
 		self.IDToBone[bone.ID] = bone
 		if bone.ID >= self.nextID:
 			self.nextID = bone.ID + 1
-	
+
 	def uniqueBoneName(self,smdName):
 		mangledBoneName = smdName
 
@@ -613,22 +614,22 @@ class bones_info:
 
 	def boneList(self):
 		return self.bones
-	
+
 	def hasBone(self,smdName):
 		return smdName.lower() in self.smdNameToBone
-	
+
 	def boneByName(self,name):
 		return self.mangledNameToBone[name]
-	
+
 	def boneBySmdName(self,name):
 		return self.smdNameToBone[name.lower()]
-	
+
 	def boneByID(self,id):
 		return self.IDToBone[id]
-	
+
 	def numBones(self):
 		return len(self.bones)
-		
+
 	@classmethod
 	def fromArmature(cls,arm):
 		info = bones_info()
@@ -709,18 +710,18 @@ def readBones():
 				smd.jobType = REF_ADD
 			validateBones()
 			return
-	
+
 	# Got this far? Then this is a fresh import which needs a new armature.
 	smd.a = createArmature(smd_manager.jobName)
 	smd.a.data.smd_implicit_zero_bone = False # Too easy to break compatibility, plus the skeleton is probably set up already
-	
+
 	try:
 		qc.armature = smd.a
 	except NameError:
 		pass
 
 	print("- Imported %i new bones" % smd.boneInfo.numBones())
-	
+
 	if len(smd.a.data.bones) > 128:
 		log.warning("Source only supports 128 bones!")
 
@@ -738,7 +739,7 @@ def createArmature(armature_name):
 	a.select = True
 	bpy.context.scene.objects.active = a
 	ops.object.mode_set(mode='EDIT')
-	
+
 	warnNames = []
 
 	for bone in smd.boneInfo.boneList():
@@ -809,7 +810,7 @@ def sortBonesForImport():
 			smd.restBoneNames.append(bone.name)
 			for child in bone.children_recursive: # depth-first
 				smd.restBoneNames.append(child.name)
-				
+
 def readFrames():
 	# We only care about the pose data in some SMD types
 	if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
@@ -975,7 +976,7 @@ def readFrames():
 		for i in range(3):
 			dimensions.append(maxs[i] - mins[i])
 		smd_manager.dimensions = dimensions
-		
+
 		length = (dimensions[0] + dimensions[1] + dimensions[2]) / 600 # very small indeed, but a custom bone is used for display
 		if length < 0.001: # Blender silently deletes bones whose length is <= 0.000001
 			length = 0.001 # could be only a single bone (static prop for example)
@@ -1105,7 +1106,7 @@ def applyFrameDataRest(frameData):
 		except KeyError:
 			log.error("Bone \"{}\" on armature \"{}\" has no rest position".format(boneName,smd.a.name))
 			continue
-			
+
 		rotMats[boneName] = frameData[boneName]['rot']
 
 		# *************************************************
@@ -1115,14 +1116,14 @@ def applyFrameDataRest(frameData):
 		bn = smd.a.data.edit_bones[boneName]
 
 		if bn.parent:
-			rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative			
+			rotMats[boneName] *= rotMats[bn.parent.name] # make rotations cumulative
 			bn.head = bn.parent.head + VecXMat(smd_pos, rotMats[bn.parent.name])
 			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
 			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )
 		else:
 			bn.head = smd_pos
 			bn.tail = bn.head + VecXMat(tail_vec, rotMats[boneName])
-			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )			
+			bn.align_roll( VecXMat(roll_vec, rotMats[boneName]) )
 
 	if smd_manager.upAxis == 'Y':
 		upAxisMat = rx90
@@ -1251,9 +1252,9 @@ def getMeshMaterial(name):
 			md.materials[mat_ind]['smd_name'] = original_mat_name
 			if not original_mat_name in smd.truncMaterialNames:
 				smd.truncMaterialNames.append(original_mat_name)
-				
+
 	return mat, mat_ind
-	
+
 # triangles block
 def readPolys():
 	if smd.jobType not in [ REF, REF_ADD, PHYS ]:
@@ -1424,7 +1425,7 @@ def readShapes():
 			smd.m = qc.ref_mesh
 		except NameError:
 			smd.m = bpy.context.active_object # user selection
-
+	smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
 	co_map = {}
 	making_base_shape = True
 	bad_vta_verts = num_shapes = 0
@@ -1451,7 +1452,7 @@ def readShapes():
 		cur_cos = vector([ float(values[1]), float(values[2]), float(values[3]) ])
 
 		if making_base_shape: # create VTA vert ID -> mesh vert ID dictionary
-			# Blender faces share verts; SMD faces don't. To simulate a SMD-like list of verticies, we need to
+			# Blender faces share verts; SMD faces don't. To simulate a SMD-like list of vertices, we need to
 			# perform a bit of mathematical kung-fu:
 			mesh_vert_id = smd.m.data.faces[math.floor(cur_id/3)].vertices[cur_id % 3] # FIXME: breaks if a face has any unique verts
 
@@ -1601,7 +1602,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		if line[0] in ["$collisionmodel","$collisionjoints"]:
 			loadSMD(1,"smd",PHYS)
 			continue
-			
+
 		# origin; this is where viewmodel editors should put their camera, and is in general something to be aware of
 		if line[0] == "$origin":
 			if qc.makeCamera:
@@ -1611,20 +1612,20 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 				data = None
 				name = "empty object"
 			print("QC IMPORTER: created {} at $origin\n".format(name))
-			
+
 			origin = bpy.data.objects.new(qc.jobName + "_origin",data)
 			bpy.context.scene.objects.link(origin)
-			
+
 			origin.rotation_euler = vector([pi/2,0,pi]) + vector(getUpAxisMat(qc.upAxis).invert().to_euler()) # works, but adding seems very wrong!
 			for object in bpy.context.selected_objects:
 				object.select = False
 			origin.select = True
 			bpy.ops.object.rotation_apply()
-			
+
 			for i in range(3):
 				origin.location[i] = float(line[i+1])
 			origin.location *= getUpAxisMat(qc.upAxis).invert()
-			
+
 			if qc.makeCamera:
 				bpy.context.scene.camera = origin
 				origin.data.lens_unit = 'DEGREES'
@@ -1636,7 +1637,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 				origin.data.passepartout_alpha = 1
 			else:
 				origin.empty_draw_type = 'PLAIN_AXES'
-			
+
 			qc.origin = origin
 
 		# QC inclusion
@@ -1657,7 +1658,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 				log.warning(message + " - skipping!")
 
 	file.close()
-	
+
 	if qc.origin:
 		qc.origin.parent = qc.armature
 		if qc.dimensions:
@@ -1686,7 +1687,7 @@ def initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc):
 	if not from_qc:
 		global smd_manager
 		smd_manager = smd
-	
+
 # Parses an SMD file
 def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, append = True, from_qc = False):
 	if filepath.endswith("dmx"):
@@ -1733,7 +1734,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		bpy.ops.object.rotation_apply()
 	'''
 	printTimeMessage(smd.startTime,smd.jobName,"import")
-	
+
 	return 1
 
 class SmdImporter(bpy.types.Operator):
@@ -1746,7 +1747,7 @@ class SmdImporter(bpy.types.Operator):
 	filename = StringProperty(name="Filename", description="Name of SMD/VTA/QC file", maxlen=1024, default="")
 	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
 	filter_glob = StringProperty(default="*.smd;*.qc;*.qci;*.vta", options={'HIDDEN'})
-	
+
 	# Custom properties
 	append = BoolProperty(name="Extend any existing model", description="Whether imports will latch onto an existing armature or create their own.", default=True)
 	doAnim = BoolProperty(name="Import animations (slow)", default=True)
@@ -1757,10 +1758,10 @@ class SmdImporter(bpy.types.Operator):
 	connectBones = EnumProperty(name="Bone Connection Mode",items=connectionEnum,description="How to choose which bones to connect together",default='COMPATIBILITY')
 	makeCamera = BoolProperty(name="Make camera at $origin",description="For use in viewmodel editing. If not set, an empty will be created instead.",default=False)
 
-	def execute(self, context):		
+	def execute(self, context):
 		if not ValidateBlenderVersion(self):
 			return 'CANCELLED'
-			
+
 		global log
 		log = logger()
 
@@ -1772,7 +1773,7 @@ class SmdImporter(bpy.types.Operator):
 		elif self.properties.filepath.endswith('.smd'):
 			self.countSMDs = readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, append=self.properties.append)
 		elif self.properties.filepath.endswith ('.vta'):
-			self.countSMDs = readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)			
+			self.countSMDs = readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
 		elif self.properties.filepath.endswith('.dmx'):
 			self.report('ERROR',"DMX import not supported")
 			return 'CANCELLED'
@@ -1912,13 +1913,13 @@ def writeBones(quiet=False):
 	for boneName in smd.sortedBones:
 		bone = smd.a.data.bones[boneName]
 		if not bone.use_deform: continue
-		
+
 		parent = bone.parent
 		while parent:
 			if parent.use_deform:
 				break
 			parent = parent.parent
-		
+
 		line = str(smd.boneNameToID[boneName]) + " "
 
 		bone_name = bone.get('smd_name')
@@ -1944,13 +1945,13 @@ def writeRestPose():
 	for boneName in smd.sortedBones:
 		bone = smd.a.data.bones[boneName]
 		if not bone.use_deform: continue
-		
+
 		parent = bone.parent
 		while parent:
 			if parent.use_deform:
 				break
 			parent = parent.parent
-		
+
 		if parent:
 			parentRotated = parent.matrix_local * ryz90
 			childRotated = bone.matrix_local * ryz90
@@ -2015,13 +2016,13 @@ def writeFrames():
 		for boneName in smd.sortedBones:
 			pbn = smd.a.pose.bones[boneName]
 			if not pbn.bone.use_deform: continue
-		
+
 			parent = pbn.parent
 			while parent:
 				if parent.bone.use_deform:
 					break
 				parent = parent.parent
-			
+
 			if parent:
 				parentRotated = parent.matrix * ryz90
 				childRotated = pbn.matrix * ryz90
@@ -2051,12 +2052,12 @@ def writeFrames():
 
 # triangles block
 def writePolys(internal=False):
-	
+
 	if not internal:
 		smd.file.write("triangles\n")
 		prev_frame = bpy.context.scene.frame_current
 		have_cleared_pose = False
-		
+
 		for bi in smd.bakeInfo:
 			if bi['baked'].type == 'MESH':
 				# write out each object in turn. Joining them would destroy unique armature modifier settings
@@ -2068,7 +2069,7 @@ def writePolys(internal=False):
 				if len(smd.m.data.faces) == 0:
 					log.error("Object {} has no faces, cannot export".format(smd.jobName))
 					continue
-				
+
 				if smd.amod and not have_cleared_pose:
 					# This is needed due to a Blender bug. Setting the armature to Rest mode doesn't actually
 					# change the pose bones' data!
@@ -2080,23 +2081,23 @@ def writePolys(internal=False):
 					bpy.ops.pose.scale_clear()
 					have_cleared_pose = True
 				bpy.ops.object.mode_set(mode='OBJECT')
-				
+
 				writePolys(internal=True)
-				
+
 		smd.file.write("end\n")
 		bpy.context.scene.frame_set(prev_frame)
 		return
-		
+
 	# internal mode:
 
 	md = smd.m.data
 	face_index = 0
-	
+
 	for uvtex in md.uv_textures:
 		if uvtex.active_render:
 			active_uv_tex = uvtex
 			break
-	
+
 	for face in md.faces:
 		if smd.m.material_slots:
 			mat = smd.m.material_slots[face.material_index].material
@@ -2109,7 +2110,7 @@ def writePolys(internal=False):
 			# Vertex locations, normal directions
 			loc = norms = ""
 			v = md.vertices[face.vertices[i]]
-			
+
 			for j in range(3):
 				loc += " " + getSmdFloat(v.co[j])
 				norms += " " + getSmdFloat(v.normal[j])
@@ -2118,16 +2119,16 @@ def writePolys(internal=False):
 			if not len(md.uv_textures):
 				unBake()
 				raise Exception("PROGRAMMER ERROR: Mesh was not unwrapped")
-				
+
 			uv = ""
 			for j in range(2):
 				uv += " " + getSmdFloat(active_uv_tex.data[face_index].uv[i][j])
-				
+
 			# Weightmaps
 			if smd.amod:
 				weights = []
 				am_vertex_group_weight = 0
-				
+
 				if smd.amod.use_vertex_groups:
 					for j in range(len(v.groups)):
 						group_index = v.groups[j].group
@@ -2137,14 +2138,14 @@ def writePolys(internal=False):
 							group_weight = v.groups[j].weight
 						else:
 							continue
-						
+
 						if group_name == smd.amod.vertex_group:
 							am_vertex_group_weight = group_weight
-							
+
 						bone = smd.amod.object.data.bones.get(group_name)
 						if bone and bone.use_deform:
 							weights.append([smd.boneNameToID[bone.name], group_weight])
-				
+
 				if smd.amod.use_bone_envelopes and not weights: # vertex groups completely override envelopes
 					for pose_bone in smd.amod.object.pose.bones:
 						if not pose_bone.bone.use_deform:
@@ -2152,7 +2153,7 @@ def writePolys(internal=False):
 						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( v.co * smd.m.matrix_world )
 						if weight:
 							weights.append([smd.boneNameToID[pose_bone.name], weight])
-			
+
 			if not smd.amod or not weights:
 				weight_string = " 0"
 				# In Source, unlike in Blender, verts HAVE to be attached to bones. This means that if you have only one bone,
@@ -2165,7 +2166,7 @@ def writePolys(internal=False):
 				assert(total_weight)
 				for link in weights:
 					link[1] *= 1/total_weight # This also handles weights totalling more than 100%
-					
+
 				weight_string = " " + str(len(weights))
 				for link in weights: # one link on one vertex
 					if smd.amod.vertex_group: # strength modifier
@@ -2185,53 +2186,61 @@ def writePolys(internal=False):
 
 # vertexanimation block
 def writeShapes(internal=False):
-	
 	if not internal:
 		have_written_header = False
-		
 		for bi in smd.bakeInfo:
-			if bi['baked'].type != 'MESH' or not bi['baked'].data.shape_keys:
-				continue
-			smd.m = bi['baked']
-			
-			if not have_written_header:				
+			smd.shapes = bi['shapes']
+			smd.m = bi['shapes'][0]
+
+			if not have_written_header:
 				# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
 				smd.file.write("skeleton\n")
-				for i in range(len(smd.m.data.shape_keys.keys)):
+				for i in range(len(smd.shapes)):
 					smd.file.write("time %i\n" % i)
 				smd.file.write("end\n")
 
 				# OK, on to the meat!
 				smd.file.write("vertexanimation\n")
 				have_written_header = True
-		
+
 			writeShapes(internal=True)
-		
+
 		return
-			
+
 	# internal loop:
 	num_shapes = 0
-	
-	for shape_id in range(len(smd.m.data.shape_keys.keys)):
-		shape = smd.m.data.shape_keys.keys[shape_id]
-		smd.file.write("time %i\n" % shape_id)
-
+	num_verts = 0
+	for shape in smd.shapes:
+		smd.file.write( "time {}\n".format(num_shapes) )
+		num_bad_verts = 0
 		smd_vert_id = 0
+		shape.update()
 		for face in smd.m.data.faces:
 			for vert in face.vertices:
-				shape_vert = shape.data[vert]
+				shape_vert = shape.data.vertices[vert]
 				mesh_vert = smd.m.data.vertices[vert]
 				cos = norms = ""
 
-				if shape_id == 0 or (shape_id > 0 and shape_vert.co != mesh_vert.co):
+				diff = shape_vert.co - mesh_vert.co
+				bad_vert = False
+				for ordinate in diff:
+					if not bad_vert and ordinate > 8:
+						num_bad_verts += 1
+						bad_vert = True
+					if ordinate < 0.00001:
+						ordinate = 0
+				if num_shapes == 0 or diff:
 					for i in range(3):
 						cos += " " + getSmdFloat(shape_vert.co[i])
-						norms += " " + getSmdFloat(mesh_vert.normal[i]) # Blender's shape keys do not store normals
+						norms += " " + getSmdFloat(shape_vert.normal[i])
 					smd.file.write(str(smd_vert_id) + cos + norms + "\n")
+					num_verts += 1
 				smd_vert_id +=1
 		num_shapes += 1
+		if num_bad_verts:
+			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape.name,num_bad_verts))
 	smd.file.write("end\n")
-	print("- Exported",num_shapes,"vertex animations")
+	print("- Exported {} vertex animations ({} verts)".format(num_shapes,num_verts))
 	return
 
 # Creates a mesh with object transformations and modifiers applied
@@ -2240,122 +2249,154 @@ def bakeObj(in_object):
 	bi['src'] = in_object
 	for object in bpy.context.selected_objects:
 		object.select = False
-		
+
 	def _ApplyVisualTransform(obj):
 		top_parent = cur_parent = obj
 		while(cur_parent):
 			if not cur_parent.parent:
 				top_parent = cur_parent
 			cur_parent = cur_parent.parent
-		
+
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent
 		bpy.ops.object.location_apply()
-	
+
 	# Indirection to support groups
 	def _ObjectCopy(obj):
 		solidify_fill_rim = False
-		
-		if obj.type in ['MESH','ARMATURE']: # other types get new objects from Blender
-			baked = bi['baked'] = obj.copy()
+
+		selection_backup = bpy.context.selected_objects
+
+		if obj.type in shape_types and obj.data.shape_keys:
+			shape_keys = obj.data.shape_keys.keys
+		else:
+			shape_keys = None
+
+		if smd.jobType == FLEX:
+			num_out = len(shape_keys)
+			bi['shapes'] = []
+		else:
+			num_out = 1
+
+		for i in range(num_out):
+			if shape_keys:
+				cur_shape = shape_keys[i]
+			if smd.jobType == FLEX and cur_shape.mute:
+				print("- Skipping muted shape \"{}\"".format(cur_shape.name))
+				continue
+
+			baked = obj.copy()
+			if not bi.get('baked'):
+				bi['baked'] = baked
 			bpy.context.scene.objects.link(baked)
 			bpy.context.scene.objects.active = baked
 			baked.select = True
-		else:
-			bpy.context.scene.objects.active = obj
-			obj.select = True
-		
-		if obj.type == 'ARMATURE':
-			baked.data = baked.data.copy()
-		elif obj.type in mesh_compatible:
-			has_edge_split = False
-			for mod in obj.modifiers:
-				if mod.type == 'ARMATURE':
-					if smd.a and mod.object != smd.a:
-						log.warning("Found second armature ({}) attached to {}. Ignoring.".format(mod.object.name,obj.name))
-					else:
-						smd.a = mod.object
-						bi['arm_mod'] = mod
 
-				if mod.type == 'EDGE_SPLIT':
-					has_edge_split = True
-				if mod.type == 'SOLIDIFY':
-					if not solidify_fill_rim: solidify_fill_rim = mod.use_rim
+			if shape_keys:
+				baked.data = obj.data.copy()
+				# remove shapes from copy, prevents interference
+				if baked.data.shape_keys:
+					for shape in baked.data.shape_keys.keys:
+						bpy.ops.object.shape_key_remove('EXEC_SCREEN')
+				# transfer desired shape to copy
+				if baked.type == 'MESH':
+					import array
+					cos = array.array('f', [0] * len(baked.data.vertices) * 3 )
+					cur_shape.data.foreach_get("co",cos)
+					#for co in cos:
+					#	co = co *
+					baked.data.vertices.foreach_set("co",cos)
+				elif baked.type == 'SURFACE':
+					# assuming shape keys only modify spline locations here...
+					for i in range( len(baked.data.splines) ):
+						for j in range( len(baked.data.splines[i].points) ):
+							baked.data.splines[i].points[j].co[:3] = cur_shape.data[(i*2)+j].co # what is the 4th value?
+				else:
+					raise TypeError( "Shapes found on unsupported object type (\"{}\", {})".format(obj.name,obj.type) )
 
-			if not has_edge_split and obj.type == 'MESH':
-				edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
-				edgesplit.use_edge_angle = False
-			
-			bpy.context.scene.update()
-			
-			# now do the actual baking
-			if smd.jobType == FLEX:
+			if obj.type == 'ARMATURE':
 				baked.data = baked.data.copy()
-			else:
-				bpy.ops.object.convert(keep_original=True)
-			
-			if obj.type == 'MESH' and bpy.context.active_object != baked: # If Convert actually did create a new mesh...
-				removeObject(baked) # delete the first duplicate
+			elif obj.type in mesh_compatible:
+				has_edge_split = False
+				for mod in obj.modifiers:
+					if mod.type == 'ARMATURE':
+						if smd.a and mod.object != smd.a:
+							log.warning("Found second armature ({}) attached to {}. Ignoring.".format(mod.object.name,obj.name))
+						else:
+							smd.a = mod.object
+							bi['arm_mod'] = mod
+					if mod.type == 'EDGE_SPLIT':
+						has_edge_split = True
+					if mod.type == 'SOLIDIFY' and not solidify_fill_rim:
+						solidify_fill_rim = mod.use_rim
 
-			baked = bi['baked'] = bpy.context.active_object
-			
-			# work on the vertices
-			bpy.ops.object.mode_set(mode='EDIT')
-			bpy.ops.mesh.select_all(action='SELECT')
-			
-			bpy.ops.mesh.quads_convert_to_tris()
-			
-			# project a UV map
-			if len(baked.data.uv_textures) == 0:
-				selection_backup = bpy.context.selected_objects
-				for object in selection_backup:
-					object.select = False
-				
-				baked.select = True
-				bpy.ops.uv.smart_project()
-				
-				for object in selection_backup:
-					object.select = True
-			
-			# handle which sides of a curve should have polys
-			if obj.type == 'CURVE':
-				if obj.data.smd_faces == 'RIGHT':
-					bpy.ops.mesh.duplicate()
-					bpy.ops.mesh.flip_normals()
-				if not obj.data.smd_faces == 'BOTH':
-					bpy.ops.mesh.select_inverse()
-					bpy.ops.mesh.delete()
-				elif solidify_fill_rim:
-					log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
-					
-			bpy.ops.object.mode_set(mode='OBJECT')
+				if not has_edge_split and obj.type == 'MESH':
+					edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
+					edgesplit.use_edge_angle = False
+
+
+				bpy.ops.object.convert(keep_original=True) # bake it!
+
+				# did convert() make a new object?
+				if bpy.context.active_object == baked: # no
+					baked.data = baked.data.copy()
+				else: # yes
+					removeObject(baked)
+					baked = bi['baked'] = bpy.context.active_object
+
+				if smd.jobType == FLEX:
+					baked.name = baked.data.name = "{}_{}".format(obj.name,cur_shape.name)
+					bi['shapes'].append(baked)
+				else:
+					baked.name = baked.data.name = "{}_baked".format(obj.name)
+
+				# work on the vertices
+				bpy.ops.object.mode_set(mode='EDIT')
+				bpy.ops.mesh.select_all(action='SELECT')
+
+				if not smd.isDMX:
+					bpy.ops.mesh.quads_convert_to_tris()
+
+				# project a UV map
+				if len(baked.data.uv_textures) == 0:
+					for object in selection_backup:
+						object.select = False
+
+					baked.select = True
+					bpy.ops.uv.smart_project()
+
+					for object in selection_backup:
+						object.select = True
+
+				# handle which sides of a curve should have polys
+				if obj.type == 'CURVE':
+					if obj.data.smd_faces == 'RIGHT':
+						bpy.ops.mesh.duplicate()
+						bpy.ops.mesh.flip_normals()
+					if not obj.data.smd_faces == 'BOTH':
+						bpy.ops.mesh.select_inverse()
+						bpy.ops.mesh.delete()
+					elif solidify_fill_rim:
+						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
+
+				bpy.ops.object.mode_set(mode='OBJECT')
 
 			if bpy.context.scene.smd_up_axis == 'Y':
 				baked.data.transform(rx90n)
-		
-		# Apply object transforms to the data
-		if baked.type == 'MESH':
-			_ApplyVisualTransform(baked)
-		bpy.ops.object.scale_apply()
-		bpy.ops.object.rotation_apply()
-		
+
+			# Apply object transforms to the data
+			if baked.type == 'MESH':
+				_ApplyVisualTransform(baked)
+			bpy.ops.object.scale_apply()
+			bpy.ops.object.rotation_apply()
+
 		return baked
-		
-	# END _ObjectCopy()
+		# END _ObjectCopy()
 
 	if in_object.type == 'ARMATURE':
-		if in_object.animation_data: # prevent duplicate action being created (fixed in Blender r32962)
-			prev_action = in_object.animation_data.action
-			in_object.animation_data.action = None
-			
 		_ObjectCopy(in_object)
 		smd.a = bi['baked']
-		
-		if in_object.animation_data:
-			in_object.animation_data.action = smd.a.animation_data.action = prev_action
-
 	elif in_object.type in mesh_compatible:
-	
 		# hide all metaballs that we don't want
 		metaballs = []
 		for object in bpy.context.scene.objects:
@@ -2366,7 +2407,7 @@ def bakeObj(in_object):
 					object.data.elements[i].hide = True
 				metaballs.append( dict( ob=object, states = element_states) )
 		bpy.context.scene.update() # actually found a use for this!!
-		
+
 		if not smd.g:
 			_ObjectCopy(in_object)
 		else:
@@ -2377,25 +2418,29 @@ def bakeObj(in_object):
 					smd.bakeInfo.append(bi) # save to manager
 					bi = dict(src=object)
 					if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
-		
+
 		# restore metaball state
 		for meta_state in metaballs:
 			for i in range(len(meta_state['states'])):
 				meta_state['ob'].data.elements[i].hide = meta_state['states'][i]
 
-	if bi.get('baked'):
+	if bi.get('baked') or len(bi.get('shapes')):
 		smd.bakeInfo.append(bi) # save to manager
 
 def unBake():
 	bpy.ops.object.mode_set(mode='OBJECT')
 	for bi in smd.bakeInfo:
-		type = removeObject(bi['baked'])
-		
+		if bi.get('shapes'):
+			for shape in bi['shapes']:
+				type = removeObject(shape)
+		else:
+			type = removeObject(bi['baked'])
+
 		if type == 'MESH':
 			smd.m = bi['src']
 		elif type == 'ARMATURE':
 			smd.a = bi['src']
-		
+
 		del bi
 
 # Creates an SMD file
@@ -2411,7 +2456,11 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		smd.g = object.users_group[groupIndex]
 	smd.startTime = time.time()
 	smd.uiTime = 0
-	
+
+	def _workStartNotice():
+		if not quiet:
+			print( "\nSMD EXPORTER: now working on {}{}".format(smd.jobName," (shape keys)" if smd.jobType == FLEX else "") )
+
 	if object.type in mesh_compatible:
 		# We don't want to bake any meshes with poses applied
 		# NOTE: this won't change the posebone values, but it will remove deformations
@@ -2420,7 +2469,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			if scene_object.type == 'ARMATURE' and scene_object.data.pose_position == 'POSE':
 				scene_object.data.pose_position = 'REST'
 				armatures.append(scene_object)
-				
+
 		if not smd.jobType:
 			smd.jobType = REF
 		if smd.g:
@@ -2428,9 +2477,10 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		else:
 			smd.jobName = getObExportName(object)
 		smd.m = object
+		_workStartNotice()
 		#smd.a = smd.m.find_armature() # Blender bug: only works on meshes
 		bakeObj(smd.m)
-		
+
 		# re-enable poses
 		for object in armatures:
 			object.data.pose_position = 'POSE'
@@ -2440,48 +2490,38 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			smd.jobType = ANIM
 		smd.a = object
 		smd.jobName = object.animation_data.action.name
+		_workStartNotice()
 	else:
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in",exportable_types)
 
-	
-	
-	smd.file = open(filepath, 'w')
-	if smd.jobType == FLEX:
-		flexnotice = " (shape keys)"
-	else:
-		flexnotice = ""
-	if not quiet: print("\nSMD EXPORTER: now working on",smd.jobName + flexnotice)
-	smd.file.write("version 1\n")
-	
 	if smd.a:
-		bakeObj(smd.a) # MUST be baked after the mesh
+		if smd.jobType != FLEX:
+			bakeObj(smd.a) # MUST be baked after the mesh
 		sortBonesForExport() # Get a list of bone names sorted in the order to be exported, and assign a unique SMD ID to every bone.
-	
-	
+
+	smd.file = open(filepath, 'w')
+	smd.file.write("version 1\n")
+
 	# these write empty blocks if no armature is found. Required!
 	writeBones(quiet = smd.jobType == FLEX)
 	writeFrames()
+
 
 	if smd.m:
 		if smd.jobType in [REF,PHYS]:
 			writePolys()
 		elif smd.jobType == FLEX and smd.m.data.shape_keys:
-			if len(smd.m.modifiers):
-				for mod in smd.m.modifiers:
-					if mod.type != 'ARMATURE':
-						log.warning("Due to a Blender limitation, modifers cannot be applied to shape keys")
-						break
 			writeShapes()
 
 	unBake()
 	smd.file.close()
 	if not quiet: printTimeMessage(smd.startTime,smd.jobName,"export")
-	
+
 	return True
 
 class SMD_MT_ExportChoice(bpy.types.Menu):
 	bl_label = "SMD export mode"
-	
+
 	# returns an icon, a label, and the number of valid actions
 	# supports single actions, NLA tracks, or nothing
 	def getActionSingleTextIcon(self,context,ob = None):
@@ -2512,9 +2552,9 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 					icon = "NLA"
 					count = len(nla_actions)
 					text = "NLA actions (" + str(count) + ")"
-		
+
 		return text,icon,count
-	
+
 	# returns the appropriate text for the filtered list of all action
 	def getActionFilterText(self,context):
 		ob = context.active_object
@@ -2529,7 +2569,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 						cached_action_count += 1
 			return "\"" + ob.smd_action_filter + "\" actions (" + str(cached_action_count) + ")"
 		else:
-			return "All actions (" + str(len(bpy.data.actions)) + ")"		
+			return "All actions (" + str(len(bpy.data.actions)) + ")"
 
 	def draw(self, context):
 		# This function is also embedded in property panels on scenes and armatures
@@ -2551,7 +2591,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 			row = l.row()
 			row.operator(SmdExporter.bl_idname, text="No selection") # filler to stop the scene button moving
 			row.enabled = False
-		
+
 		# Normal processing
 		# FIXME: in the properties panel, hidden objects appear in context.selected_objects...in the 3D view they do not
 		elif (ob and len(context.selected_objects) == 1) or embed_arm:
@@ -2560,8 +2600,8 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 				label = subdir + "\\"
 			else:
 				label = ""
-			
-			
+
+
 			if ob.type in mesh_compatible:
 				want_single_export = True
 				# Groups
@@ -2576,7 +2616,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 									if hasShapes(g_ob):
 										label += "/.vta"
 										break
-							
+
 							op = l.operator(SmdExporter.bl_idname, text=label, icon="GROUP") # group
 							op.exportMode = 'SINGLE' # will be merged and exported as one
 							op.groupIndex = i
@@ -2586,8 +2626,8 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 					if bpy.context.scene.smd_format == 'SMD' and hasShapes(ob):
 						label += "/.vta"
 					l.operator(SmdExporter.bl_idname, text=label, icon=MakeObjectIcon(ob,prefix="OUTLINER_OB_")).exportMode = 'SINGLE'
-			
-			
+
+
 			elif ob.type == 'ARMATURE':
 				if embed_arm or ob.data.smd_action_selection == 'CURRENT':
 					text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context)
@@ -2598,14 +2638,14 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 				if embed_arm or (len(bpy.data.actions) and ob.data.smd_action_selection == 'FILTERED'):
 					# filtered action list
 					l.operator(SmdExporter.bl_idname, text=SMD_MT_ExportChoice.getActionFilterText(self,context), icon='ACTION').exportMode = 'ALL_ACTIONS'
-			
+
 			else: # invalid object
 				label = "Cannot export " + ob.name
 				try:
 					l.label(text=label,icon=MakeObjectIcon(ob,prefix='OUTLINER_OB_'))
 				except: # bad icon
 					l.label(text=label,icon='ERROR')
-		
+
 		# Multiple objects
 		elif len(context.selected_objects) > 1 and not embed_arm:
 			l.operator(SmdExporter.bl_idname, text="Selected objects\\groups", icon='GROUP').exportMode = 'MULTI' # multiple obects
@@ -2621,7 +2661,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
 	bl_default_closed = True
-	
+
 	def draw(self, context):
 		l = self.layout
 		scene = context.scene
@@ -2633,10 +2673,10 @@ class SMD_PT_Scene(bpy.types.Panel):
 		l.prop(scene,"smd_studiomdl_branch",text="Target Engine")
 		if scene.smd_studiomdl_branch == 'CUSTOM':
 			l.prop(scene,"smd_studiomdl_custom_path",text="Studiomdl path")
-		row = l.row().split(0.33)		
+		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
-		
+
 		validObs = []
 		for object in scene.objects:
 			if object.type in exportable_types:
@@ -2649,7 +2689,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 			header = columns.row()
 			header.label(text="Object / Group:")
 			header.label(text="Subfolder:")
-			
+
 			had_groups = False
 			for group in bpy.data.groups:
 				for object in group.objects:
@@ -2658,7 +2698,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 						row = columns.row()
 						row.prop(group,"smd_export",icon="GROUP",emboss=True,text=group.name)
 						row.prop(group,"smd_subdir",text="")
-						
+
 						if group.smd_export:
 							for object in group.objects:
 								if not object in validObs:
@@ -2669,10 +2709,10 @@ class SMD_PT_Scene(bpy.types.Panel):
 								row = columns.row().split(0.5)
 								row.prop(object,"smd_export",icon=MakeObjectIcon(object,suffix="_DATA"),emboss=False,text=object.name)
 						break # we've found an object in the scene and drawn the list
-			
+
 			if had_groups:
 				columns.separator()
-				
+
 			for object in validObs: # meshes
 				in_active_group = False
 				if object.type in mesh_compatible:
@@ -2682,11 +2722,11 @@ class SMD_PT_Scene(bpy.types.Panel):
 				if not in_active_group:
 					if object.type == 'ARMATURE':
 						continue
-					
+
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=getObExportName(object))
 					row.prop(object,"smd_subdir",text="")
-			
+
 			had_armatures = False
 			for object in validObs:
 				if object.type == 'ARMATURE' and object.animation_data:
@@ -2697,14 +2737,14 @@ class SMD_PT_Scene(bpy.types.Panel):
 					row.prop(object,"smd_subdir",text="")
 					if object.smd_export:
 						row = columns.row()
-						if object.data.smd_action_selection == 'CURRENT':							
+						if object.data.smd_action_selection == 'CURRENT':
 							text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context,object)
 						elif object.data.smd_action_selection == 'FILTERED':
 							text = SMD_MT_ExportChoice.getActionFilterText(self,context)
 							icon = "ACTION"
 						row.prop(object,"smd_export",text=text,icon=icon,emboss=False)
 						row.prop(object.data,"smd_action_selection",text="")
-						
+
 			if not had_armatures:
 				columns.row()
 
@@ -2732,12 +2772,12 @@ class SMD_PT_Data(bpy.types.Panel):
 			self.draw_Armature(context)
 		elif context.active_object.type == 'CURVE':
 			self.draw_Curve(context)
-			
+
 	def draw_Curve(self, context):
 		c = context.active_object
-		
+
 		self.layout.label(text="Generate polygons on:")
-		
+
 		row = self.layout.row()
 		row.prop(c.data,"smd_faces",expand=True)
 
@@ -2747,18 +2787,18 @@ class SMD_PT_Data(bpy.types.Panel):
 		anim_data = arm.animation_data
 
 		l.prop(arm,"smd_subdir",text="Export Subfolder")
-		
+
 		l.prop(arm.data,"smd_action_selection")
 		l.prop(arm,"smd_action_filter",text="Action Filter")
-		
-		l.prop(arm.data,"smd_implicit_zero_bone")		
+
+		l.prop(arm.data,"smd_implicit_zero_bone")
 
 		self.embed_arm = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
 
 		if anim_data:
 			l.template_ID(anim_data, "action", new="action.new")
-		
+
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'BONES'
 
@@ -2784,7 +2824,7 @@ class SmdExporter(bpy.types.Operator):
 	def execute(self, context):
 		if not ValidateBlenderVersion(self):
 			return 'CANCELLED'
-		
+
 		props = self.properties
 
 		if props.exportMode == 'NONE':
@@ -2822,7 +2862,9 @@ class SmdExporter(bpy.types.Operator):
 
 		print("\nSMD EXPORTER RUNNING")
 		prev_active_ob = context.active_object
-		prev_active_bone = context.active_bone if prev_active_ob and prev_active_ob.type == 'ARMATURE' else None
+		if prev_active_ob and prev_active_ob.type == 'ARMATURE':
+			prev_bone_selection = bpy.context.selected_pose_bones
+			prev_active_bone = context.active_bone
 		prev_selection = context.selected_objects
 		prev_visible = context.visible_objects
 		prev_frame = context.scene.frame_current
@@ -2834,10 +2876,10 @@ class SmdExporter(bpy.types.Operator):
 		if prev_active_ob:
 			prev_active_ob.hide = False
 			ops.object.mode_set(mode='OBJECT')
-				
+
 		pose_backups = {}
 		for object in bpy.context.scene.objects:
-			object.hide = False # lots of operators only work on visible objects	
+			object.hide = False # lots of operators only work on visible objects
 			if object.type == 'ARMATURE' and object.animation_data:
 				context.scene.objects.active = object
 				ops.object.mode_set(mode='POSE')
@@ -2849,6 +2891,7 @@ class SmdExporter(bpy.types.Operator):
 				bpy.ops.pose.copy()
 				object.animation_data.action = pose_backups[object.name][1]
 				bpy.ops.pose.paste()
+				bpy.ops.pose.select_all(action='SELECT')
 				bpy.ops.anim.keyframe_insert(type='LocRotScale')
 				object.animation_data.action = pose_backups[object.name][0]
 				ops.object.mode_set(mode='OBJECT')
@@ -2868,13 +2911,13 @@ class SmdExporter(bpy.types.Operator):
 						break
 					else:
 						ob = None
-			
+
 			if ob:
 				self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
 			else:
 				log.error("The group \"" + group_name + "\" has no active objects")
 				return 'CANCELLED'
-				
+
 
 		elif props.exportMode == 'MULTI':
 			exported_groups = []
@@ -2930,13 +2973,15 @@ class SmdExporter(bpy.types.Operator):
 			ops.object.mode_set(mode=prev_mode)
 		if prev_active_bone:
 			prev_active_ob.data.bones.active = prev_active_bone
-		
+			for i in range( len(prev_active_ob.pose.bones) ):
+				prev_active_ob.data.bones[i].select = True if prev_bone_selection and prev_active_ob.pose.bones[i] in prev_bone_selection else False
+
 		for object in context.scene.objects:
 			object.select = object in prev_selection
 			object.hide = object not in prev_visible
 			if object.type == 'ARMATURE' and object.animation_data:
 				object.animation_data.action = pose_backups[object.name][1] # backed up pose
-		
+
 		context.scene.frame_set(prev_frame) # apply backup pose
 		for object in context.scene.objects:
 			if object.type == 'ARMATURE' and object.animation_data:
@@ -2944,15 +2989,15 @@ class SmdExporter(bpy.types.Operator):
 				pose_backups[object.name][1].use_fake_user = False
 				pose_backups[object.name][1].user_clear()
 				bpy.data.actions.remove(pose_backups[object.name][1]) # remove backup
-		
+
 		jobMessage = "exported"
-		
+
 		if self.countSMDs == 0:
 			log.error("Found no valid objects for export")
 		elif context.scene.smd_qc_compile:
 			# ...and compile the QC
 			branch = context.scene.smd_studiomdl_branch
-			
+
 			sdk_path = os.getenv('SOURCESDK')
 			ncf_path = None
 			if sdk_path:
@@ -2963,7 +3008,7 @@ class SmdExporter(bpy.types.Operator):
 					path += "\\steam\\steamapps\\common"
 					if os.path.exists(path):
 						ncf_path = path
-			
+
 			studiomdl_path = None
 			if branch in ['ep1','source2007','orangebox'] and sdk_path:
 				studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
@@ -2977,7 +3022,7 @@ class SmdExporter(bpy.types.Operator):
 			else:
 				if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
 					studiomdl_path += "studiomdl.exe"
-				
+
 				qc_path = bpy.path.abspath(context.scene.smd_qc_path)
 				if len( getFilename(qc_path) ) == 0:
 					log.error("Cannot compile, no QC provided. The SMD Tools do not generate QCs.")
@@ -2987,12 +3032,12 @@ class SmdExporter(bpy.types.Operator):
 					print( "Running studiomdl for \"{}\"...\n".format(getFilename(qc_path)) )
 					studiomdl = subprocess.Popen([studiomdl_path, "-nop4", qc_path])
 					studiomdl.communicate()
-					
+
 					if studiomdl.returncode == 0:
 						jobMessage += " and QC compiled"
 					else:
 						log.error("Studiomdl compile failed")
-					print("\n")					
+					print("\n")
 
 		log.errorReport(jobMessage,self,self.countSMDs)
 		return 'FINISHED'
@@ -3025,7 +3070,7 @@ class SmdExporter(bpy.types.Operator):
 				path += getObExportName(object)
 			else:
 				path += object.users_group[groupIndex].name
-				
+
 			if writeSMD(context, object, groupIndex, path + getFileExt()):
 				self.countSMDs += 1
 			if bpy.context.scene.smd_format == 'SMD' and hasShapes(object): # DMX will export mesh and shapes to the same file
@@ -3035,7 +3080,7 @@ class SmdExporter(bpy.types.Operator):
 			ad = object.animation_data
 			prev_action = None
 			if ad.action: prev_action = ad.action
-			
+
 			if self.properties.exportMode == 'ALL_ACTIONS':
 				for action in bpy.data.actions:
 					if action.users and (not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1):
@@ -3072,7 +3117,7 @@ class SmdClean(bpy.types.Operator):
 	bl_label = "Clean SMD data"
 	bl_description = "Deletes SMD-related properties"
 	bl_options = {'REGISTER', 'UNDO'}
-	
+
 	mode = EnumProperty(items=( ('OBJECT','Object','Active object'), ('BONES','Bones','Armature bones'), ('SCENE','Scene','Scene and all contents') ),default='SCENE')
 
 	def execute(self,context):
@@ -3103,10 +3148,10 @@ class SmdClean(bpy.types.Operator):
 					if context.scene in g_ob.users_scene:
 						removeProps(group)
 			removeProps(context.scene)
-			
+
 		elif self.properties.mode == 'OBJECT':
 			removeProps(active_obj)
-		
+
 		elif self.properties.mode == 'BONES':
 			removeProps(active_obj,bones=True)
 
@@ -3123,7 +3168,7 @@ class SmdClean(bpy.types.Operator):
 # DISABLE THIS if you make third-party changes to the script!
 
 class SMD_MT_Updated(bpy.types.Menu):
-	bl_label = "SMD Tools update"	
+	bl_label = "SMD Tools update"
 	def draw(self,context):
 		self.layout.operator("wm.url_open",text="View changes?",icon='TEXT').url = "http://code.google.com/p/blender-smd/wiki/Changelog"
 
@@ -3132,50 +3177,53 @@ class SmdToolsUpdate(bpy.types.Operator):
 	bl_idname = "script.update_smd"
 	bl_label = "Check for SMD Tools updates"
 	bl_description = "Connects to http://code.google.com/p/blender-smd/"
-	
+
 	def execute(self,context):
-		print("SMD Tools update...")		
-		self.rss_entry = \
+		print("SMD Tools update...")
+		self.cur_entry = \
 		self.result = \
 		self.url_err = \
 		self.io_err = None
-		
+		self.rss_entries = []
+
 		def startElem(name,attrs):
-			if name == "entry": self.rss_entry = {'version': 0, 'bpy': 0 }
-			if not self.rss_entry: return
-			
+			if name == "entry":
+				self.cur_entry = {'version': 0, 'bpy': 0 }
+				self.rss_entries.append(self.cur_entry)
+			if not self.cur_entry: return
+
 			if name == "content":
 				magic_words = [ "Blender SMD Tools ", " bpy-" ]
-				
+
 				def readContent(data):
 					for i in range( len(magic_words) ):
 						if data[: len(magic_words[i]) ] == magic_words[i]:
-							self.rss_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")					
-					
-					if self.rss_entry['version'] and self.rss_entry['bpy']:
-						for val in self.rss_entry.values():
+							self.cur_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")
+
+					if self.cur_entry['version'] and self.cur_entry['bpy']:
+						for val in self.cur_entry.values():
 							while len(val) < 3:
 								val.append('0')
-						
-						self.update() # download the update
-						parser.EndElementHandler = None # never reach the end of the element
-						parser.CharacterDataHandler = None # ignore future data
-					
+
 				parser.CharacterDataHandler = readContent
-			
+
 		def endElem(name):
-			if name == "entry": self.rss_entry = None
-			elif name == "content": # if we reach the end of content, we did not get version info
-				self.result = 'FAIL_PARSE' # this will be overwritten if another entry is valid
+			if name == "entry": self.cur_entry = None
+			if name == "feed":
+				if len(self.rss_entries):
+					self.update()
+				else:
+					self.result = 'FAIL_PARSE'
+			elif name == "content":
 				parser.CharacterDataHandler = None # don't read chars until the next content elem
-		
+
 		try:
 			# parse RSS
-			feed = urllib.request.urlopen("http://code.google.com/feeds/p/blender-smd/downloads/basic")			
+			feed = urllib.request.urlopen("http://code.google.com/feeds/p/blender-smd/downloads/basic")
 			parser = xml.parsers.expat.ParserCreate()
 			parser.StartElementHandler = startElem
 			parser.EndElementHandler = endElem
-			
+
 			parser.Parse(feed.read())
 		except urllib.error.URLError as err:
 			self.url_err = str(err)
@@ -3186,8 +3234,8 @@ class SmdToolsUpdate(bpy.types.Operator):
 			self.result == 'FAIL_UNZIP'
 		except IOError as err:
 			self.io_err = str(err)
-		
-		
+
+
 		if self.url_err:
 			self.report('ERROR',"Could not complete download: " + self.url_err)
 			print(self.url_err)
@@ -3204,53 +3252,58 @@ class SmdToolsUpdate(bpy.types.Operator):
 			return 'CANCELLED'
 
 		elif self.result == 'INCOMPATIBLE':
-			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.rss_entry['bpy']) ))
+			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.cur_entry['bpy']) ))
 			return 'FINISHED'
 		elif self.result == 'LATEST':
 			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_addon_info['version']) ))
 			return 'FINISHED'
-			
+
 		elif self.result == 'SUCCESS':
 			bpy.ops.script.reload()
 			self.report('INFO',"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
 			bpy.ops.wm.call_menu(name="SMD_MT_Updated")
 			return 'FINISHED'
-			
+
 		else:
+			print(self.result)
+			print(self.cur_entry)
 			assert(0) # unhandled error!
 			return 'CANCELLED'
-		
+
 	def update(self):
-		remote_ver = self.rss_entry['version']
-		self.remote_ver_str = PrintVer(remote_ver)
-		local_ver = bl_addon_info['version']
-		is_update = False
-		for i in range(min( len(remote_ver), len(local_ver) )):			
-			diff = int(remote_ver[i]) - local_ver[i]
-			if diff > 0:
-				is_update = True
-				break
-			elif diff < 0:
-				break	
-		if not is_update:
+		cur_ver = bl_addon_info['version']
+
+		for entry in self.rss_entries:
+			candidate_ver = entry['version']
+			remote_bpy = entry['bpy']
+			for i in range(min( len(remote_bpy), len(bpy.app.version) )):
+				if int(remote_bpy[i]) - bpy.app.version[i]: # currently there are API changes in each Blender release
+					candidate_ver = None
+			if candidate_ver == None:
+				if not self.cur_entry:
+					self.result = 'INCOMPATIBLE'
+				continue
+
+			for i in range(min( len(candidate_ver), len(cur_ver) )):
+				diff = int(candidate_ver[i]) - cur_ver[i]
+				if diff > 0:
+					self.cur_entry = entry
+					self.remote_ver_str = PrintVer(candidate_ver)
+					break
+				elif diff < 0:
+					break
+
+		if not self.cur_entry:
 			self.result = 'LATEST'
 			return
-		
-		remote_bpy = self.rss_entry['bpy']
-		for i in range(min( len(remote_bpy), len(bpy.app.version) )):
-			diff = int(remote_bpy[i]) - bpy.app.version[i]
-			if diff: # currently there are API changes in each Blender release
-				self.result = 'INCOMPATIBLE'
-				return
-		
-		url = "https://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(remote_ver,sep="") )
-		print("Found new version {}, downloading from {}...".format(self.remote_ver_str,url))
-		
+
+		url = "https://blender-smd.googlecode.com/files/io_smd_tools-{}.zip".format( PrintVer(self.cur_entry['version'],sep="") )
+		print("Found new version {}, downloading from {}...".format(self.remote_ver_str, url))
+
 		# we are already in a try/except block, any failures will be caught
-		zip = urllib.request.urlopen(url) 	
+		zip = urllib.request.urlopen(url)
 		zip = zipfile.ZipFile( io.BytesIO(zip.read()) )
 		zip.extractall(path=getFileDir( os.path.abspath( __file__ ) ))
-		
 		self.result = 'SUCCESS'
 		return
 
@@ -3292,7 +3345,7 @@ def register():
 	('DMX', "DMX", "Data Model Exchange" )
 	)
 	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD',description="todo")
-	
+
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
@@ -3303,10 +3356,10 @@ def register():
 	('FILTERED',"Action Filter","All actions that match the armature's filter term")
 	)
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
-	
+
 	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD")
 	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
-	
+
 	bpy.types.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=(
 	('LEFT', 'Left side', 'Generate polygons on the left side'),
 	('RIGHT', 'Right side', 'Generate polygons on the right side'),
@@ -3316,7 +3369,7 @@ def register():
 def unregister():
 	bpy.types.INFO_MT_file_import.remove(menu_func_import)
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
-	
+
 	Scene = bpy.types.Scene
 	del Scene.smd_path
 	del Scene.smd_qc_compile
@@ -3324,18 +3377,18 @@ def unregister():
 	del Scene.smd_studiomdl_custom_path
 	del Scene.smd_up_axis
 	del Scene.smd_format
-	
+
 	Object = bpy.types.Object
 	del Object.smd_export
 	del Object.smd_subdir
 	del Object.smd_action_filter
-	
+
 	del bpy.types.Armature.smd_implicit_zero_bone
 	del bpy.types.Armature.smd_action_selection
-	
+
 	del bpy.types.Group.smd_export
 	del bpy.types.Group.smd_subdir
-	
+
 	del bpy.types.Curve.smd_faces
 
 if __name__ == "__main__":
