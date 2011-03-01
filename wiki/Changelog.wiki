@@ -1,4 +1,17 @@
 #labels Featured
+== 0.13 - March 1st, 2011 ==
+
+General:
+
+  * The updater no longer stops looking for updates the first time it finds a candidate
+
+Exporter:
+
+  * Shapes can now be exported from meshes with modifiers, and from surfaces
+  * Shapes now affect vertex normals
+  * The reference mesh of an object with shapes will now always be the first shape, not whatever happens to be active
+  * Fixed unkeyed poses being preserved only on bones that are selected
+
 == 0.12.4 - February 2nd, 2011 ==
 
 General:
