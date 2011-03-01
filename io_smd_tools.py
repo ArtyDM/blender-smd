@@ -3272,26 +3272,33 @@ class SmdToolsUpdate(bpy.types.Operator):
 
 	def update(self):
 		cur_ver = bl_addon_info['version']
+		self.cur_entry = None
+		
+		def _wantEntry():
+			self.cur_entry = entry
+			self.remote_ver_str = PrintVer(remote_ver)		
 
 		for entry in self.rss_entries:
-			candidate_ver = entry['version']
+			remote_ver = entry['version']
 			remote_bpy = entry['bpy']
 			for i in range(min( len(remote_bpy), len(bpy.app.version) )):
 				if int(remote_bpy[i]) - bpy.app.version[i]: # currently there are API changes in each Blender release
-					candidate_ver = None
-			if candidate_ver == None:
+					remote_ver = None
+					
+			if not remote_ver:
 				if not self.cur_entry:
 					self.result = 'INCOMPATIBLE'
-				continue
-
-			for i in range(min( len(candidate_ver), len(cur_ver) )):
-				diff = int(candidate_ver[i]) - cur_ver[i]
-				if diff > 0:
-					self.cur_entry = entry
-					self.remote_ver_str = PrintVer(candidate_ver)
-					break
-				elif diff < 0:
-					break
+			else:
+				if not self.cur_entry:
+					_wantEntry()
+				else:
+					for i in range(min( len(remote_ver), len(self.cur_entry['version']) )):
+						diff = int(remote_ver[i]) - int(self.cur_entry['version'][i])
+						if diff > 0:
+							_wantEntry()
+							break
+						elif diff < 0:
+							break
 
 		if not self.cur_entry:
 			self.result = 'LATEST'
