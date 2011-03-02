@@ -1,4 +1,14 @@
 #labels Featured
+== 0.13.1 - March 2nd, 2011 ==
+
+Exporter:
+
+  * Fixed exporting objects without armatures
+  * Fixed shape key export from groups
+  * Fixed all verts being exported for each shape, not just changed ones
+  * VTA files are now labelled with shape key names
+  * No longer generating UVs on shape exports
+
 == 0.13 - March 1st, 2011 ==
 
 General:
