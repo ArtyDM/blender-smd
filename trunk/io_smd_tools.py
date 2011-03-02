@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 13, 0),
+	"version": (0, 13, 1),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -408,8 +408,16 @@ def removeObject(obj):
 
 	return None if d else type
 
-def hasShapes(ob):
-	return ob.type in shape_types and ob.data.shape_keys and len(ob.data.shape_keys.keys) > 1
+def hasShapes(ob,groupIndex = -1):
+	def _test(t_ob):
+		return t_ob.type in shape_types and t_ob.data.shape_keys and len(t_ob.data.shape_keys.keys) > 1
+		
+	if groupIndex != -1:
+		for g_ob in ob.users_group[groupIndex].objects:
+			if _test(g_ob): return True
+		return False
+	else:	
+		return _test(ob)
 ########################
 #        Import        #
 ########################
@@ -2185,66 +2193,82 @@ def writePolys(internal=False):
 	return
 
 # vertexanimation block
-def writeShapes(internal=False):
-	if not internal:
-		have_written_header = False
-		for bi in smd.bakeInfo:
-			smd.shapes = bi['shapes']
-			smd.m = bi['shapes'][0]
-
-			if not have_written_header:
-				# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
-				smd.file.write("skeleton\n")
-				for i in range(len(smd.shapes)):
-					smd.file.write("time %i\n" % i)
-				smd.file.write("end\n")
-
-				# OK, on to the meat!
-				smd.file.write("vertexanimation\n")
-				have_written_header = True
-
-			writeShapes(internal=True)
-
-		return
-
-	# internal loop:
-	num_shapes = 0
+def writeShapes(cur_shape = 0):
 	num_verts = 0
-	for shape in smd.shapes:
-		smd.file.write( "time {}\n".format(num_shapes) )
-		num_bad_verts = 0
-		smd_vert_id = 0
-		shape.update()
+
+	def _writeTime(time, label = None):
+		smd.file.write( "time {}{}\n".format(time, " # " + label if label else "") )
+	
+	# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
+	smd.file.write("skeleton\n")
+	_writeTime(0) # shared basis
+	num_shapes = 1
+	for bi in smd.bakeInfo:
+		cur_shapes = len(bi['shapes']) - 1 # don't include basis shapes
+		for i in range(cur_shapes):
+			_writeTime(num_shapes + i,bi['shapes'][i+1].name) # i+1 to skip basis
+		num_shapes += cur_shapes
+	smd.file.write("end\n")	
+
+	smd.file.write("vertexanimation\n")	
+	def _writeVerts(shape, smd_vert_id = 0):
+		num_verts = 0
+		num_bad_verts = 0	
 		for face in smd.m.data.faces:
 			for vert in face.vertices:
 				shape_vert = shape.data.vertices[vert]
 				mesh_vert = smd.m.data.vertices[vert]
-				cos = norms = ""
+				if cur_shape != 0:
+					diff_vec = shape_vert.co - mesh_vert.co
+					bad_vert = False
+					for ordinate in diff_vec:
+						if not bad_vert and ordinate > 8:
+							num_bad_verts += 1
+							bad_vert = True
 
-				diff = shape_vert.co - mesh_vert.co
-				bad_vert = False
-				for ordinate in diff:
-					if not bad_vert and ordinate > 8:
-						num_bad_verts += 1
-						bad_vert = True
-					if ordinate < 0.00001:
-						ordinate = 0
-				if num_shapes == 0 or diff:
+				if cur_shape == 0 or (shape_vert.co != mesh_vert.co or shape_vert.normal != mesh_vert.normal):
+					cos = norms = ""
 					for i in range(3):
 						cos += " " + getSmdFloat(shape_vert.co[i])
 						norms += " " + getSmdFloat(shape_vert.normal[i])
 					smd.file.write(str(smd_vert_id) + cos + norms + "\n")
 					num_verts += 1
+					
 				smd_vert_id +=1
-		num_shapes += 1
 		if num_bad_verts:
 			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape.name,num_bad_verts))
+		
+		return num_verts
+	
+	cur_shape = 0
+	vert_offset = 0
+	total_verts = 0
+	_writeTime(0)
+	for bi in smd.bakeInfo:
+		smd.m = bi['shapes'][0]
+		total_verts += _writeVerts(bi['shapes'][0], total_verts) # write out every vert in the group
+	cur_shape += 1
+	for bi in smd.bakeInfo:
+		smd.shapes = bi['shapes']
+		smd.m = bi['shapes'][0]
+		for shape in smd.shapes:
+			if shape == bi['shapes'][0]:
+				continue # don't write basis shapes
+			_writeTime(cur_shape,shape.name)			
+			total_verts += _writeVerts(shape,vert_offset)
+			cur_shape += 1
+	
+		for face in smd.m.data.faces:
+			for vert in face.vertices:
+				vert_offset += 1 # len(verts) doesn't give doubles
+		
 	smd.file.write("end\n")
-	print("- Exported {} vertex animations ({} verts)".format(num_shapes,num_verts))
+	print("- Exported {} vertex animations ({} verts)".format(cur_shape,total_verts))
+
 	return
 
 # Creates a mesh with object transformations and modifiers applied
-def bakeObj(in_object):
+def bakeObj(in_object):	
 	bi = {}
 	bi['src'] = in_object
 	for object in bpy.context.selected_objects:
@@ -2274,7 +2298,7 @@ def bakeObj(in_object):
 
 		if smd.jobType == FLEX:
 			num_out = len(shape_keys)
-			bi['shapes'] = []
+			bi['shapes'] = []		
 		else:
 			num_out = 1
 
@@ -2345,10 +2369,10 @@ def bakeObj(in_object):
 					baked = bi['baked'] = bpy.context.active_object
 
 				if smd.jobType == FLEX:
-					baked.name = baked.data.name = "{}_{}".format(obj.name,cur_shape.name)
+					baked.name = baked.data.name = "{} > {}".format(obj.name,cur_shape.name)
 					bi['shapes'].append(baked)
 				else:
-					baked.name = baked.data.name = "{}_baked".format(obj.name)
+					baked.name = baked.data.name = "{} (baked)".format(obj.name)
 
 				# work on the vertices
 				bpy.ops.object.mode_set(mode='EDIT')
@@ -2358,7 +2382,7 @@ def bakeObj(in_object):
 					bpy.ops.mesh.quads_convert_to_tris()
 
 				# project a UV map
-				if len(baked.data.uv_textures) == 0:
+				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
 					for object in selection_backup:
 						object.select = False
 
@@ -2414,6 +2438,8 @@ def bakeObj(in_object):
 			have_baked_metaballs = False
 			for object in smd.g.objects:
 				if object.smd_export and bpy.context.scene in object.users_scene and not (object.type == 'META' and have_baked_metaballs):
+					if smd.jobType == FLEX and not object.data.shape_keys:
+						continue
 					bi['baked'] = _ObjectCopy(object)
 					smd.bakeInfo.append(bi) # save to manager
 					bi = dict(src=object)
@@ -2424,7 +2450,7 @@ def bakeObj(in_object):
 			for i in range(len(meta_state['states'])):
 				meta_state['ob'].data.elements[i].hide = meta_state['states'][i]
 
-	if bi.get('baked') or len(bi.get('shapes')):
+	if bi.get('baked') or (bi.get('shapes') and len(bi.get('shapes'))):
 		smd.bakeInfo.append(bi) # save to manager
 
 def unBake():
@@ -2510,7 +2536,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	if smd.m:
 		if smd.jobType in [REF,PHYS]:
 			writePolys()
-		elif smd.jobType == FLEX and smd.m.data.shape_keys:
+		elif smd.jobType == FLEX:
 			writeShapes()
 
 	unBake()
@@ -2612,14 +2638,12 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 							want_single_export = False
 							label = group.name + getFileExt()
 							if bpy.context.scene.smd_format == 'SMD':
-								for g_ob in group.objects:
-									if hasShapes(g_ob):
-										label += "/.vta"
-										break
+								if hasShapes(ob,i):
+									label += "/.vta"
 
 							op = l.operator(SmdExporter.bl_idname, text=label, icon="GROUP") # group
 							op.exportMode = 'SINGLE' # will be merged and exported as one
-							op.groupIndex = i
+							op.groupIndex = i							
 				# Single
 				if want_single_export:
 					label = getObExportName(ob) + getFileExt()
@@ -2971,10 +2995,10 @@ class SmdExporter(bpy.types.Operator):
 		context.scene.objects.active = prev_active_ob
 		if prev_active_ob and context.scene.objects.active:
 			ops.object.mode_set(mode=prev_mode)
-		if prev_active_bone:
-			prev_active_ob.data.bones.active = prev_active_bone
-			for i in range( len(prev_active_ob.pose.bones) ):
-				prev_active_ob.data.bones[i].select = True if prev_bone_selection and prev_active_ob.pose.bones[i] in prev_bone_selection else False
+			if prev_active_ob.type == 'ARMATURE' and prev_active_bone:
+				prev_active_ob.data.bones.active = prev_active_bone
+				for i in range( len(prev_active_ob.pose.bones) ):
+					prev_active_ob.data.bones[i].select = True if prev_bone_selection and prev_active_ob.pose.bones[i] in prev_bone_selection else False
 
 		for object in context.scene.objects:
 			object.select = object in prev_selection
@@ -3073,7 +3097,7 @@ class SmdExporter(bpy.types.Operator):
 
 			if writeSMD(context, object, groupIndex, path + getFileExt()):
 				self.countSMDs += 1
-			if bpy.context.scene.smd_format == 'SMD' and hasShapes(object): # DMX will export mesh and shapes to the same file
+			if bpy.context.scene.smd_format == 'SMD' and hasShapes(object,groupIndex): # DMX will export mesh and shapes to the same file
 				if writeSMD(context, object, groupIndex, path + getFileExt(flex=True), FLEX):
 					self.countSMDs += 1
 		elif object.type == 'ARMATURE':
