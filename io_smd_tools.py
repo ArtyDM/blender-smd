@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 13, 1),
+	"version": (0, 13, 2),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -142,9 +142,14 @@ class logger:
 			message += " in {} seconds".format( round( time.time() - self.startTime, 1 ) )
 
 		if len(self.errors) or len(self.warnings):
-			message += " with {} errors and {} warnings".format(len(self.errors),len(self.warnings))
-			caller.report('ERROR',message)
-			print(message + ":")
+			message += " with {} errors and {} warnings:".format(len(self.errors),len(self.warnings))
+			for err in self.errors:
+				message += "\nERROR: " + err
+			for warn in self.warnings:
+				message += "\nWARNING: " + warn
+			caller.report('ERROR' if len(self.errors) else 'WARNING',message)
+			
+			print(message)
 			stdOutColour(STD_RED)
 			for msg in self.errors:
 				print("  " + msg)
@@ -1920,7 +1925,9 @@ def writeBones(quiet=False):
 	# Write to file
 	for boneName in smd.sortedBones:
 		bone = smd.a.data.bones[boneName]
-		if not bone.use_deform: continue
+		if not bone.use_deform:
+			print(" - Skipping non-deforming bone \"{}\"".format(bone.name))
+			continue
 
 		parent = bone.parent
 		while parent:
@@ -2196,8 +2203,8 @@ def writePolys(internal=False):
 def writeShapes(cur_shape = 0):
 	num_verts = 0
 
-	def _writeTime(time, label = None):
-		smd.file.write( "time {}{}\n".format(time, " # " + label if label else "") )
+	def _writeTime(time, shape = None):
+		smd.file.write( "time {}{}\n".format(time, " # " + shape['shape_name'] if shape else "") )
 	
 	# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
 	smd.file.write("skeleton\n")
@@ -2206,7 +2213,7 @@ def writeShapes(cur_shape = 0):
 	for bi in smd.bakeInfo:
 		cur_shapes = len(bi['shapes']) - 1 # don't include basis shapes
 		for i in range(cur_shapes):
-			_writeTime(num_shapes + i,bi['shapes'][i+1].name) # i+1 to skip basis
+			_writeTime(num_shapes + i, bi['shapes'][i+1] )# i+1 to skip basis
 		num_shapes += cur_shapes
 	smd.file.write("end\n")	
 
@@ -2236,7 +2243,7 @@ def writeShapes(cur_shape = 0):
 					
 				smd_vert_id +=1
 		if num_bad_verts:
-			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape.name,num_bad_verts))
+			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape['shape_name'],num_bad_verts))
 		
 		return num_verts
 	
@@ -2254,7 +2261,7 @@ def writeShapes(cur_shape = 0):
 		for shape in smd.shapes:
 			if shape == bi['shapes'][0]:
 				continue # don't write basis shapes
-			_writeTime(cur_shape,shape.name)			
+			_writeTime(cur_shape,shape)			
 			total_verts += _writeVerts(shape,vert_offset)
 			cur_shape += 1
 	
@@ -2369,10 +2376,10 @@ def bakeObj(in_object):
 					baked = bi['baked'] = bpy.context.active_object
 
 				if smd.jobType == FLEX:
-					baked.name = baked.data.name = "{} > {}".format(obj.name,cur_shape.name)
+					baked.name = baked.data.name = baked['shape_name'] = "{} > {}".format(in_object.name,cur_shape.name)					
 					bi['shapes'].append(baked)
 				else:
-					baked.name = baked.data.name = "{} (baked)".format(obj.name)
+					baked.name = baked.data.name = "{} (baked)".format(in_object.name)
 
 				# work on the vertices
 				bpy.ops.object.mode_set(mode='EDIT')
