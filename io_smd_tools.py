@@ -143,12 +143,6 @@ class logger:
 
 		if len(self.errors) or len(self.warnings):
 			message += " with {} errors and {} warnings:".format(len(self.errors),len(self.warnings))
-			for err in self.errors:
-				message += "\nERROR: " + err
-			for warn in self.warnings:
-				message += "\nWARNING: " + warn
-			caller.report('ERROR' if len(self.errors) else 'WARNING',message)
-			
 			print(message)
 			stdOutColour(STD_RED)
 			for msg in self.errors:
@@ -157,6 +151,12 @@ class logger:
 			for msg in self.warnings:
 				print("  " + msg)
 			stdOutReset()
+			
+			for err in self.errors:
+				message += "\nERROR: " + err
+			for warn in self.warnings:
+				message += "\nWARNING: " + warn
+			caller.report('ERROR' if len(self.errors) else 'WARNING',message)			
 		else:
 			caller.report('INFO',message)
 			print(message)
