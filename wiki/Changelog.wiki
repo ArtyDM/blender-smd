@@ -1,4 +1,15 @@
 #labels Featured
+== 0.13.2 - March 3rd, 2011 ==
+
+General:
+
+  * Errors and warning descriptions are now reported in the UI (as line breaks have become possible)
+
+Exporter:
+
+  * Handle long object names better when labelling VTAs
+  * Note in the console when skipping bones with deformation disabled
+
 == 0.13.1 - March 2nd, 2011 ==
 
 Exporter:
