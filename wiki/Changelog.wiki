@@ -7,7 +7,7 @@ General:
   
 Exporter:
 
-  * New feature: Added wildcard support to QC paths, for batch compiles
+  * *New feature:* Added wildcard support to QC paths, for batch compiles
   * QCs can now be compiled at any time (individually or all at once)
   * Fixed exporting meshes with hidden vertices
   * Number of SMDs/QCs to export/compile is now shown in scene properties
@@ -56,7 +56,7 @@ General:
 
 Exporter:
 
-  * Shapes can now be exported from meshes with modifiers, and from surfaces
+  * *New feature:* Shapes can now be exported from meshes with modifiers, and from surfaces
   * Shapes now affect vertex normals
   * The reference mesh of an object with shapes will now always be the first shape, not whatever happens to be active
   * Fixed unkeyed poses being preserved only on bones that are selected
