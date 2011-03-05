@@ -1911,9 +1911,6 @@ class SMD_PT_material(bpy.types.Panel):
 #        Export        #
 ########################
 
-def hasBoneParent(obj):
-	return (obj.parent_bone and obj.parent_type == 'BONE') or obj.get('bone_parent')
-
 # nodes block
 def writeBones(quiet=False):
 
@@ -2109,7 +2106,8 @@ def writePolys(internal=False):
 
 	md = smd.m.data
 	face_index = 0
-	ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m.parent_bone]) if hasBoneParent(smd.m) else None
+	# bone parent?
+	ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m['bp']]) if smd.m.get('bp') else None
 
 	for uvtex in md.uv_textures:
 		if uvtex.active_render:
@@ -2354,15 +2352,7 @@ def bakeObj(in_object):
 				baked.data = baked.data.copy()
 			elif obj.type in mesh_compatible:
 				has_edge_split = False
-				if hasBoneParent(obj):
-					smd.a = obj.parent
 				for mod in obj.modifiers:
-					if mod.type == 'ARMATURE':
-						if smd.a and mod.object != smd.a:
-							log.warning("Found extra armature \"{}\" attached to object \"{}\". Ignoring.".format(mod.object.name,obj.name))
-						else:
-							smd.a = mod.object
-							bi['arm_mod'] = mod
 					if mod.type == 'EDGE_SPLIT':
 						has_edge_split = True
 					if mod.type == 'SOLIDIFY' and not solidify_fill_rim:
@@ -2383,14 +2373,40 @@ def bakeObj(in_object):
 					baked = bi['baked'] = bpy.context.active_object
 
 				if smd.jobType == FLEX:
-					baked.name = baked.data.name = baked['shape_name'] = "{} > {}".format(in_object.name,cur_shape.name)					
+					baked.name = baked.data.name = baked['shape_name'] = "{} > {}".format(obj.name,cur_shape.name)					
 					bi['shapes'].append(baked)
 				else:
-					baked.name = baked.data.name = "{} (baked)".format(in_object.name)
-
-				if hasBoneParent(obj):
-					baked['bone_parent'] = True # this gets lost when we de-parent otherwise
+					baked.name = baked.data.name = "{} (baked)".format(obj.name)
 				
+				# Handle bone parents / armature modifiers, and warn of multiple associations
+				baked['bp'] = ""
+				envelope_described = False
+				if obj.parent_bone and obj.parent_type == 'BONE':
+					baked['bp'] = obj.parent_bone
+					smd.a = obj.parent
+				for con in obj.constraints:
+					if con.mute:
+						continue
+					if con.type in ['CHILD_OF','COPY_TRANSFORMS'] and con.target.type == 'ARMATURE' and con.subtarget:
+						if baked['bp']:
+							if not envelope_described:
+								print(" - Enveloped to bone \"{}\"".format(baked['bp']))
+							log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj.name))
+						else:
+							baked['bp'] = con.subtarget
+							smd.a = con.target
+				for mod in obj.modifiers:
+					if mod.type == 'ARMATURE':
+						if (smd.a and mod.object != smd.a) or baked['bp']:
+							if not envelope_described:
+								msg = " - Enveloped to {} \"{}\""
+								if baked['bp']: print( msg.format("bone",baked['bp']) )
+								else: print( msg.format("armature",smd.a.name) )
+							log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
+						else:
+							smd.a = mod.object
+							bi['arm_mod'] = mod
+								
 				# work on the vertices
 				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.select_all(action='SELECT')
