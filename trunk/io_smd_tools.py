@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 13, 3),
+	"version": (0, 14, 0),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -136,9 +136,9 @@ class logger:
 		printColour(STD_RED," ERROR:",message)
 		self.errors.append(message)
 
-	def errorReport(self, jobName, caller, numSMDs):
-		message = "{} SMD{} {}".format(numSMDs,"s" if numSMDs != 1 else "",jobName)
-		if numSMDs:
+	def errorReport(self, jobName, output, caller, numOut):
+		message = "{} {}{} {}".format(numOut,output,"s" if numOut != 1 else "",jobName)
+		if numOut:
 			message += " in {} seconds".format( round( time.time() - self.startTime, 1 ) )
 
 		if len(self.errors) or len(self.warnings):
@@ -184,6 +184,11 @@ def getFilename(filepath):
 	return filepath.split('\\')[-1].split('/')[-1].rsplit(".")[0]
 def getFileDir(filepath):
 	return filepath.rstrip(filepath.split('\\')[-1].split('/')[-1])
+
+def _isWild(in_str):
+	wcards = [ "*", "?" ] # , "[", "]" ] # [] are valid in filenames in Windows
+	for char in wcards:
+		if in_str.find(char) != -1: return True
 
 # rounds to 6 decimal places, converts between "1e-5" and "0.000001", outputs str
 def getSmdFloat(fval):
@@ -423,6 +428,13 @@ def hasShapes(ob,groupIndex = -1):
 		return False
 	else:	
 		return _test(ob)
+
+def getDirSep():
+	if os.name is 'nt':
+		return "\\"
+	else:
+		return "/"
+
 ########################
 #        Import        #
 ########################
@@ -1793,7 +1805,7 @@ class SmdImporter(bpy.types.Operator):
 			self.report('ERROR',"File format not recognised")
 			return 'CANCELLED'
 
-		log.errorReport("imported",self,self.countSMDs)
+		log.errorReport("imported","SMD",self,self.countSMDs)
 		if smd.m:
 			smd.m.select = True
 			for area in context.screen.areas:
@@ -2409,6 +2421,7 @@ def bakeObj(in_object):
 								
 				# work on the vertices
 				bpy.ops.object.mode_set(mode='EDIT')
+				bpy.ops.mesh.reveal()
 				bpy.ops.mesh.select_all(action='SELECT')
 
 				if not smd.isDMX:
@@ -2578,6 +2591,66 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 
 	return True
 
+def getQCs():
+	import glob
+	path = bpy.path.abspath(bpy.context.scene.smd_qc_path)
+	out = []
+	for result in glob.glob(path):
+		if result.endswith(".qc"):
+			out.append(result)
+	return out
+
+def compileQCs(path=None):
+	scene = bpy.context.scene
+	branch = scene.smd_studiomdl_branch
+	print("\n")
+
+	sdk_path = os.getenv('SOURCESDK')
+	ncf_path = None
+	if sdk_path:
+		ncf_path = sdk_path + "\\..\\..\\common\\"
+	else:
+		# Python vanilla can't access the registry! (I will use the DMX bytecode to work around this)
+		for path in [ os.getenv('PROGRAMFILES(X86)'), os.getenv('PROGRAMFILES') ]:
+			path += "\\steam\\steamapps\\common"
+			if os.path.exists(path):
+				ncf_path = path
+
+	studiomdl_path = None
+	if branch in ['ep1','source2007','orangebox'] and sdk_path:
+		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
+	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm'] and ncf_path:
+		studiomdl_path = ncf_path + branch + "\\bin\\"
+	elif branch == 'CUSTOM':
+		studiomdl_path = scene.smd_studiomdl_custom_path = bpy.path.abspath(scene.smd_studiomdl_custom_path)
+
+	if not studiomdl_path:
+		log.error("Could not locate Source SDK installation. Launch it to create the relevant files, or run a custom QC compile")
+	else:
+		if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
+			studiomdl_path += "studiomdl.exe"
+
+		if path:
+			qc_paths = [path]
+		else:
+			qc_paths = getQCs()
+		num_good_compiles = 0
+		if len( qc_paths ) == 0:
+			log.error("Cannot compile, no QCs provided. The SMD Tools do not generate QCs.")
+		elif not os.path.exists(studiomdl_path):
+			log.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
+		else:
+			for qc in qc_paths:
+				print( "Running studiomdl for \"{}\"...\n".format(getFilename(qc)) )
+				studiomdl = subprocess.Popen([studiomdl_path, "-nop4", qc])
+				studiomdl.communicate()
+
+				if studiomdl.returncode == 0:
+					num_good_compiles += 1
+				else:
+					log.error("Compile of {}.qc failed. Check the console for details".format(getFilename(qc)))
+		return num_good_compiles
+	
 class SMD_MT_ExportChoice(bpy.types.Menu):
 	bl_label = "SMD export mode"
 
@@ -2598,7 +2671,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 					icon = "ACTION"
 					count = 1
 					if export_name:
-						text = ob.smd_subdir + ("\\" if ob.smd_subdir else "") + ad.action.name + getFileExt()
+						text = ob.smd_subdir + (getDirSep() if ob.smd_subdir else "") + ad.action.name + getFileExt()
 					else:
 						text = ad.action.name
 				elif ad.nla_tracks:
@@ -2628,7 +2701,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 						cached_action_count += 1
 			return "\"" + ob.smd_action_filter + "\" actions (" + str(cached_action_count) + ")"
 		else:
-			return "All actions (" + str(len(bpy.data.actions)) + ")"
+			return "All actions (" + str(len(bpy.data.actions)) + ")", len(bpy.data.actions)
 
 	def draw(self, context):
 		# This function is also embedded in property panels on scenes and armatures
@@ -2656,7 +2729,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 		elif (ob and len(context.selected_objects) == 1) or embed_arm:
 			subdir = ob.get('smd_subdir')
 			if subdir:
-				label = subdir + "\\"
+				label = subdir + getDirSep()
 			else:
 				label = ""
 
@@ -2712,6 +2785,23 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 			l.operator(SmdExporter.bl_idname, text="Scene as configured", icon='SCENE_DATA').exportMode = 'SCENE'
 		#l.operator(SmdExporter.bl_idname, text="Whole .blend", icon='FILE_BLEND').exportMode = 'FILE' # can't do this until scene changes become possible
 
+class SMD_OT_Compile(bpy.types.Operator):
+	bl_idname = "smd.compile_qc"
+	bl_label = "Compile QC"
+	bl_description = "Compile QCs with the Source SDK"
+	
+	filepath = StringProperty(name="File path", description="QC to compile", maxlen=1024, default="", subtype='FILE_PATH')
+	
+	def execute(self,context):
+		global log
+		log = logger()
+		num = compileQCs(self.properties.filepath)
+		if not self.properties.filepath:
+			self.properties.filepath = "QC"
+		log.errorReport("compiled","QC",self, num)
+		return 'FINISHED'
+
+qc_path = qc_paths = qc_path_last_update = 0
 class SMD_PT_Scene(bpy.types.Panel):
 	bl_label = "SMD Export"
 	bl_space_type = "PROPERTIES"
@@ -2733,14 +2823,16 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
-
+		
 		validObs = []
 		for object in scene.objects:
 			if object.type in exportable_types:
 				validObs.append(object)
-
+		
+		num_to_export = 0
 		if len(validObs):
-			l.label(text="Scene Configuration:")
+			validObs.sort(key=lambda ob: ob.name.lower())
+			scene_config_row = l.row()
 			box = l.box()
 			columns = box.column()
 			header = columns.row()
@@ -2748,7 +2840,11 @@ class SMD_PT_Scene(bpy.types.Panel):
 			header.label(text="Subfolder:")
 
 			had_groups = False
+			groups_sorted = []
 			for group in bpy.data.groups:
+				groups_sorted.append(group)
+			groups_sorted.sort(key=lambda g: g.name.lower())
+			for group in groups_sorted:
 				for object in group.objects:
 					if object in validObs:
 						had_groups = True
@@ -2757,6 +2853,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 						row.prop(group,"smd_subdir",text="")
 
 						if group.smd_export:
+							num_to_export += 1
 							for object in group.objects:
 								if not object in validObs:
 									continue
@@ -2783,6 +2880,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=getObExportName(object))
 					row.prop(object,"smd_subdir",text="")
+					if object.smd_export: num_to_export += 1
 
 			had_armatures = False
 			for object in validObs:
@@ -2796,20 +2894,43 @@ class SMD_PT_Scene(bpy.types.Panel):
 						row = columns.row()
 						if object.data.smd_action_selection == 'CURRENT':
 							text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context,object)
+							if object.smd_export: num_to_export += 1
 						elif object.data.smd_action_selection == 'FILTERED':
-							text = SMD_MT_ExportChoice.getActionFilterText(self,context)
+							text, num = SMD_MT_ExportChoice.getActionFilterText(self,context)
+							if object.smd_export: num_to_export += num
 							icon = "ACTION"
 						row.prop(object,"smd_export",text=text,icon=icon,emboss=False)
 						row.prop(object.data,"smd_action_selection",text="")
 
+			scene_config_row.label(text=" Scene Exports ({} file{})".format(num_to_export,"" if num_to_export == 1 else "s"),icon='SCENE_DATA')
 			if not had_armatures:
 				columns.row()
 
+		# QCs
+		global qc_path
+		global qc_paths
+		global qc_path_last_update
+		qc_label_row = l.row()
 		r = l.row()
-		r.prop(scene,"smd_qc_compile")
-		rhs = r.row()
-		rhs.prop(scene,"smd_qc_path",text="")
-		rhs.enabled = scene.smd_qc_compile
+		r.prop(scene,"smd_qc_path",text="")		
+		if scene.smd_qc_path != qc_path or not qc_paths or time.time() > qc_path_last_update + 2:
+			qc_paths = getQCs()
+			print(qc_paths)
+			qc_path = scene.smd_qc_path		
+		qc_path_last_update = time.time()
+		if len(qc_paths) > 1 or _isWild(qc_path):
+			c = l.column_flow(2)
+			for path in qc_paths:
+				c.operator(SMD_OT_Compile.bl_idname,text=getFilename(path)).filepath = path
+
+		qc_label_row.label(text=" QC Compiles ({} file{})".format(len(qc_paths),"" if len(qc_paths) == 1 else "s"),icon='FILE_SCRIPT')
+		compile_row = l.row()
+		compile_row.prop(scene,"smd_qc_compile")
+		compile_row.operator(SMD_OT_Compile.bl_idname,text="Compile all now",icon='SCRIPT')
+		if len(qc_paths) == 0:
+			if scene.smd_qc_path:
+				qc_label_row.label(text=" Invalid path",icon='ERROR')
+			compile_row.enabled = False
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
 		l.operator(SmdToolsUpdate.bl_idname,icon='URL')
@@ -2862,7 +2983,7 @@ class SMD_PT_Data(bpy.types.Panel):
 class SmdExporter(bpy.types.Operator):
 	bl_idname = "export.smd"
 	bl_label = "Export SMD/VTA"
-	bl_description = "Export meshes, actions and shape keys to Studiomdl Data"
+	bl_description = "Export Studiomdl Data files and compile them with QC scripts"
 	bl_options = { 'UNDO' }
 
 	filepath = StringProperty(name="File path", description="File filepath used for importing the SMD/VTA file", maxlen=1024, default="", subtype='FILE_PATH')
@@ -2907,10 +3028,7 @@ class SmdExporter(bpy.types.Operator):
 				return 'CANCELLED'
 
 			if export_root[-1] not in ['\\','/']: # append trailing slash
-				if os.name == 'nt':
-					export_root += "\\"
-				else:
-					export_root += "/"
+				export_root += getDirSep()				
 
 			props.filepath = export_root
 
@@ -3053,50 +3171,11 @@ class SmdExporter(bpy.types.Operator):
 			log.error("Found no valid objects for export")
 		elif context.scene.smd_qc_compile:
 			# ...and compile the QC
-			branch = context.scene.smd_studiomdl_branch
+			num_good_compiles = compileQCs()
+			jobMessage += " and {} QC{} compiled".format(num_good_compiles, "" if num_good_compiles == 1 else "s")
+			print("\n")
 
-			sdk_path = os.getenv('SOURCESDK')
-			ncf_path = None
-			if sdk_path:
-				ncf_path = sdk_path + "\\..\\..\\common\\"
-			else:
-				# Python vanilla can't access the registry! (I will use the DMX bytecode to work around this)
-				for path in [ os.getenv('PROGRAMFILES(X86)'), os.getenv('PROGRAMFILES') ]:
-					path += "\\steam\\steamapps\\common"
-					if os.path.exists(path):
-						ncf_path = path
-
-			studiomdl_path = None
-			if branch in ['ep1','source2007','orangebox'] and sdk_path:
-				studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-			elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm'] and ncf_path:
-				studiomdl_path = ncf_path + branch + "\\bin\\"
-			elif branch == 'CUSTOM':
-				studiomdl_path = context.scene.smd_studiomdl_custom_path = bpy.path.abspath(context.scene.smd_studiomdl_custom_path)
-
-			if not studiomdl_path:
-				log.error("Could not locate Source SDK installation. Launch it, or run a custom QC compile")
-			else:
-				if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
-					studiomdl_path += "studiomdl.exe"
-
-				qc_path = bpy.path.abspath(context.scene.smd_qc_path)
-				if len( getFilename(qc_path) ) == 0:
-					log.error("Cannot compile, no QC provided. The SMD Tools do not generate QCs.")
-				elif not os.path.exists(studiomdl_path):
-					log.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
-				else:
-					print( "Running studiomdl for \"{}\"...\n".format(getFilename(qc_path)) )
-					studiomdl = subprocess.Popen([studiomdl_path, "-nop4", qc_path])
-					studiomdl.communicate()
-
-					if studiomdl.returncode == 0:
-						jobMessage += " and QC compiled"
-					else:
-						log.error("Studiomdl compile failed")
-					print("\n")
-
-		log.errorReport(jobMessage,self,self.countSMDs)
+		log.errorReport(jobMessage,"SMD",self,self.countSMDs)
 		return 'FINISHED'
 
 	# indirection to support batch exporting
@@ -3114,11 +3193,7 @@ class SmdExporter(bpy.types.Operator):
 		# assemble filename
 		path = bpy.path.abspath(getFileDir(props.filepath) + object.smd_subdir)
 		if path and path[-1] not in ['/','\\']:
-			if os.name is 'nt':
-				path += "\\"
-			else:
-				path += "/"
-
+			path += getDirSep()
 		if not os.path.exists(path):
 			os.makedirs(path)
 
@@ -3384,8 +3459,8 @@ def register():
 	cached_action_filter_list = 0
 
 	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
-	bpy.types.Scene.smd_qc_compile = BoolProperty(name="QC Compile on Export",description="Compile the specified QC file on export",default=False)
-	bpy.types.Scene.smd_qc_path = StringProperty(name="QC File",description="QC file to compile on export. Cannot be internal to Blender.", subtype="FILE_PATH")
+	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
+	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported.", subtype="FILE_PATH")
 	src_branches = (
 	('CUSTOM','Custom Path','User-defined compiler path'),
 	('orangebox','Source 2009','Source 2009'),
@@ -3431,6 +3506,7 @@ def unregister():
 	Scene = bpy.types.Scene
 	del Scene.smd_path
 	del Scene.smd_qc_compile
+	del Scene.smd_qc_path
 	del Scene.smd_studiomdl_branch
 	del Scene.smd_studiomdl_custom_path
 	del Scene.smd_up_axis
