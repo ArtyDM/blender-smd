@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 13, 2),
+	"version": (0, 13, 3),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -156,7 +156,7 @@ class logger:
 				message += "\nERROR: " + err
 			for warn in self.warnings:
 				message += "\nWARNING: " + warn
-			caller.report('ERROR' if len(self.errors) else 'WARNING',message)			
+			caller.report('ERROR',message)			
 		else:
 			caller.report('INFO',message)
 			print(message)
@@ -1778,16 +1778,15 @@ class SmdImporter(bpy.types.Operator):
 		global log
 		log = logger()
 
-		if os.name == 'nt': # windows only
-			self.properties.filepath = self.properties.filepath.lower()
-		if self.properties.filepath.endswith('.qc') | self.properties.filepath.endswith('.qci'):
+		filepath_lc = self.properties.filepath.lower()
+		if filepath_lc.endswith('.qc') or filepath_lc.endswith('.qci'):
 			self.countSMDs = readQC(context, self.properties.filepath, False, self.properties.doAnim, self.properties.connectBones, self.properties.makeCamera, outer_qc=True)
 			bpy.context.scene.objects.active = qc.armature
-		elif self.properties.filepath.endswith('.smd'):
+		elif filepath_lc.endswith('.smd'):
 			self.countSMDs = readSMD(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, append=self.properties.append)
-		elif self.properties.filepath.endswith ('.vta'):
+		elif filepath_lc.endswith ('.vta'):
 			self.countSMDs = readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
-		elif self.properties.filepath.endswith('.dmx'):
+		elif filepath_lc.endswith('.dmx'):
 			self.report('ERROR',"DMX import not supported")
 			return 'CANCELLED'
 		else:
@@ -1911,6 +1910,9 @@ class SMD_PT_material(bpy.types.Panel):
 ########################
 #        Export        #
 ########################
+
+def hasBoneParent(obj):
+	return (obj.parent_bone and obj.parent_type == 'BONE') or obj.get('bone_parent')
 
 # nodes block
 def writeBones(quiet=False):
@@ -2107,6 +2109,7 @@ def writePolys(internal=False):
 
 	md = smd.m.data
 	face_index = 0
+	ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m.parent_bone]) if hasBoneParent(smd.m) else None
 
 	for uvtex in md.uv_textures:
 		if uvtex.active_render:
@@ -2140,8 +2143,10 @@ def writePolys(internal=False):
 				uv += " " + getSmdFloat(active_uv_tex.data[face_index].uv[i][j])
 
 			# Weightmaps
-			if smd.amod:
-				weights = []
+			weights = []
+			if ob_weight_str:
+				weight_string = ob_weight_str
+			elif smd.amod:				
 				am_vertex_group_weight = 0
 
 				if smd.amod.use_vertex_groups:
@@ -2169,8 +2174,8 @@ def writePolys(internal=False):
 						if weight:
 							weights.append([smd.boneNameToID[pose_bone.name], weight])
 
-			if not smd.amod or not weights:
-				weight_string = " 0"
+			if not smd.amod or len(weights) == 0:
+				if not ob_weight_str: weight_string = " 0"
 				# In Source, unlike in Blender, verts HAVE to be attached to bones. This means that if you have only one bone,
 				# all verts will be 100% attached to it. To transform only some verts you need a second bone that stays put.
 			else:
@@ -2305,7 +2310,7 @@ def bakeObj(in_object):
 
 		if smd.jobType == FLEX:
 			num_out = len(shape_keys)
-			bi['shapes'] = []		
+			bi['shapes'] = []
 		else:
 			num_out = 1
 
@@ -2349,10 +2354,12 @@ def bakeObj(in_object):
 				baked.data = baked.data.copy()
 			elif obj.type in mesh_compatible:
 				has_edge_split = False
+				if hasBoneParent(obj):
+					smd.a = obj.parent
 				for mod in obj.modifiers:
 					if mod.type == 'ARMATURE':
 						if smd.a and mod.object != smd.a:
-							log.warning("Found second armature ({}) attached to {}. Ignoring.".format(mod.object.name,obj.name))
+							log.warning("Found extra armature \"{}\" attached to object \"{}\". Ignoring.".format(mod.object.name,obj.name))
 						else:
 							smd.a = mod.object
 							bi['arm_mod'] = mod
@@ -2381,6 +2388,9 @@ def bakeObj(in_object):
 				else:
 					baked.name = baked.data.name = "{} (baked)".format(in_object.name)
 
+				if hasBoneParent(obj):
+					baked['bone_parent'] = True # this gets lost when we de-parent otherwise
+				
 				# work on the vertices
 				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.select_all(action='SELECT')
@@ -2572,7 +2582,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 					icon = "ACTION"
 					count = 1
 					if export_name:
-						text = "{}{}.{}".format(ob.smd_subdir + "\\" if ob.smd_subdir else "",ad.action.name, getFileExt())
+						text = ob.smd_subdir + ("\\" if ob.smd_subdir else "") + ad.action.name + getFileExt()
 					else:
 						text = ad.action.name
 				elif ad.nla_tracks:
@@ -2650,7 +2660,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 
 							op = l.operator(SmdExporter.bl_idname, text=label, icon="GROUP") # group
 							op.exportMode = 'SINGLE' # will be merged and exported as one
-							op.groupIndex = i							
+							op.groupIndex = i
 				# Single
 				if want_single_export:
 					label = getObExportName(ob) + getFileExt()
@@ -3389,7 +3399,7 @@ def register():
 	)
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
 
-	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD")
+	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD",default=True)
 	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
 
 	bpy.types.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=(
