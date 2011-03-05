@@ -1,4 +1,17 @@
 #labels Featured
+== 0.14 - March 5th, 2011 ==
+
+General:
+
+  * Items in Scene Configuration are now sorted by name
+  
+Exporter:
+
+  * New feature: Added wildcard support to QC paths, for batch compiles
+  * QCs can now be compiled at any time (individually or all at once)
+  * Fixed exporting meshes with hidden vertices
+  * Number of SMDs/QCs to export/compile is now shown in scene properties
+
 == 0.13.3 - March 5th, 2011 ==
 
 General:
