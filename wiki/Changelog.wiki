@@ -1,4 +1,19 @@
 #labels Featured
+== 0.13.3 - March 5th, 2011 ==
+
+General:
+
+  * Groups now start with combined SMD export enabled
+  * Fixed errors and warnings appearing twice in the console
+  * Fixed reports with warnings but not errors not being pop-ups
+  * Fixed two dots appearing in action export names
+  * Improved support for case-sensitive filesystems
+  
+Exporter:
+
+  * *New feature:* support for parent bones and constraints to bones.
+  * Improved warnings when multiple envelopes are found
+
 == 0.13.2 - March 3rd, 2011 ==
 
 General:
