@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 14, 0),
+	"version": (0, 14, 1),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -185,8 +185,8 @@ def getFilename(filepath):
 def getFileDir(filepath):
 	return filepath.rstrip(filepath.split('\\')[-1].split('/')[-1])
 
-def _isWild(in_str):
-	wcards = [ "*", "?" ] # , "[", "]" ] # [] are valid in filenames in Windows
+def isWild(in_str):
+	wcards = [ "*", "?", "[", "]" ]
 	for char in wcards:
 		if in_str.find(char) != -1: return True
 
@@ -2219,16 +2219,27 @@ def writeShapes(cur_shape = 0):
 	num_verts = 0
 
 	def _writeTime(time, shape = None):
-		smd.file.write( "time {}{}\n".format(time, " # " + shape['shape_name'] if shape else "") )
+		if shape:
+			src_name = ""
+			for bi in smd.bakeInfo:
+				for shape_candidate in bi['shapes']:
+					if shape_candidate['shape_name'] == shape['shape_name']:
+						src_name += shape_candidate['src_name'] + ", "
+			src_name = src_name[:-2]
+		smd.file.write( "time {}{}\n".format(time, " # {} ({})".format(shape['shape_name'],src_name) if shape else "") )
 	
 	# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
 	smd.file.write("skeleton\n")
 	_writeTime(0) # shared basis
 	num_shapes = 1
+	shapes_written = []
 	for bi in smd.bakeInfo:
 		cur_shapes = len(bi['shapes']) - 1 # don't include basis shapes
 		for i in range(cur_shapes):
-			_writeTime(num_shapes + i, bi['shapes'][i+1] )# i+1 to skip basis
+			shape = bi['shapes'][i+1] # i+1 to skip basis
+			if shape['shape_name'] in shapes_written: continue
+			_writeTime(num_shapes + i, shape )
+			shapes_written.append(shape['shape_name'])
 		num_shapes += cur_shapes
 	smd.file.write("end\n")	
 
@@ -2265,28 +2276,37 @@ def writeShapes(cur_shape = 0):
 	cur_shape = 0
 	vert_offset = 0
 	total_verts = 0
+	
+	# Basis
 	_writeTime(0)
 	for bi in smd.bakeInfo:
 		smd.m = bi['shapes'][0]
 		total_verts += _writeVerts(bi['shapes'][0], total_verts) # write out every vert in the group
 	cur_shape += 1
+	
+	# Everything else
+	shapes_written = []
 	for bi in smd.bakeInfo:
 		smd.shapes = bi['shapes']
 		smd.m = bi['shapes'][0]
 		for shape in smd.shapes:
-			if shape == bi['shapes'][0]:
-				continue # don't write basis shapes
-			_writeTime(cur_shape,shape)			
-			total_verts += _writeVerts(shape,vert_offset)
+			if shape == bi['shapes'][0] or shape['shape_name'] in shapes_written:
+				continue # don't write basis shapes, don't re-write shared shapes
+			_writeTime(cur_shape,shape)
 			cur_shape += 1
+			vert_offset = 0
+			for bi in smd.bakeInfo:
+				for shape_candidate in bi['shapes']:
+					if shape_candidate['shape_name'] == shape['shape_name']:
+						last_verts = _writeVerts(shape_candidate,vert_offset)
+						total_verts += last_verts
+				for face in bi['baked'].data.faces:
+					for vert in face.vertices:
+						vert_offset += 1 # len(verts) doesn't give doubles
+			shapes_written.append(shape['shape_name'])
 	
-		for face in smd.m.data.faces:
-			for vert in face.vertices:
-				vert_offset += 1 # len(verts) doesn't give doubles
-		
 	smd.file.write("end\n")
 	print("- Exported {} vertex animations ({} verts)".format(cur_shape,total_verts))
-
 	return
 
 # Creates a mesh with object transformations and modifiers applied
@@ -2385,7 +2405,8 @@ def bakeObj(in_object):
 					baked = bi['baked'] = bpy.context.active_object
 
 				if smd.jobType == FLEX:
-					baked.name = baked.data.name = baked['shape_name'] = "{} > {}".format(obj.name,cur_shape.name)					
+					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
+					baked['src_name'] = obj.name
 					bi['shapes'].append(baked)
 				else:
 					baked.name = baked.data.name = "{} (baked)".format(obj.name)
@@ -2495,7 +2516,7 @@ def bakeObj(in_object):
 		for meta_state in metaballs:
 			for i in range(len(meta_state['states'])):
 				meta_state['ob'].data.elements[i].hide = meta_state['states'][i]
-
+				
 	if bi.get('baked') or (bi.get('shapes') and len(bi.get('shapes'))):
 		smd.bakeInfo.append(bi) # save to manager
 
@@ -2591,13 +2612,20 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 
 	return True
 
-def getQCs():
+def getQCs(path = None):
 	import glob
-	path = bpy.path.abspath(bpy.context.scene.smd_qc_path)
+	ext = ".qc"
 	out = []
+	internal = False
+	if not path:
+		path = bpy.path.abspath(bpy.context.scene.smd_qc_path)
+		internal = True
 	for result in glob.glob(path):
-		if result.endswith(".qc"):
+		if result.endswith(ext):
 			out.append(result)
+
+	if not internal and not len(out) and not path.endswith(ext):
+		out = getQCs(path + ext)
 	return out
 
 def compileQCs(path=None):
@@ -2844,7 +2872,9 @@ class SMD_PT_Scene(bpy.types.Panel):
 			for group in bpy.data.groups:
 				groups_sorted.append(group)
 			groups_sorted.sort(key=lambda g: g.name.lower())
+			want_sep = False
 			for group in groups_sorted:
+				if want_sep: columns.separator()
 				for object in group.objects:
 					if object in validObs:
 						had_groups = True
@@ -2854,19 +2884,17 @@ class SMD_PT_Scene(bpy.types.Panel):
 
 						if group.smd_export:
 							num_to_export += 1
+							rows = columns.column_flow(2)
 							for object in group.objects:
-								if not object in validObs:
-									continue
-								if object.type == 'ARMATURE':
-									columns.row().label(text="Groups cannot export armatures (OB: " + object.name + ")")
-									continue
-								row = columns.row().split(0.5)
-								row.prop(object,"smd_export",icon=MakeObjectIcon(object,suffix="_DATA"),emboss=False,text=object.name)
+								if object in validObs and object.type != 'ARMATURE':
+									rows.prop(object,"smd_export",icon=MakeObjectIcon(object,suffix="_DATA"),emboss=False,text=object.name)
+							want_sep = True
 						break # we've found an object in the scene and drawn the list
 
 			if had_groups:
 				columns.separator()
-
+				
+			had_obs = False
 			for object in validObs: # meshes
 				in_active_group = False
 				if object.type in mesh_compatible:
@@ -2880,13 +2908,18 @@ class SMD_PT_Scene(bpy.types.Panel):
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=getObExportName(object))
 					row.prop(object,"smd_subdir",text="")
+					had_obs = True
 					if object.smd_export: num_to_export += 1
+					
+			if had_obs:
+				columns.separator()
 
 			had_armatures = False
+			want_sep = False
 			for object in validObs:
 				if object.type == 'ARMATURE' and object.animation_data:
+					if want_sep: columns.separator()
 					had_armatures = True
-					columns.separator() # yes, one for each armature
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
 					row.prop(object,"smd_subdir",text="")
@@ -2901,24 +2934,22 @@ class SMD_PT_Scene(bpy.types.Panel):
 							icon = "ACTION"
 						row.prop(object,"smd_export",text=text,icon=icon,emboss=False)
 						row.prop(object.data,"smd_action_selection",text="")
+						want_sep = True
 
 			scene_config_row.label(text=" Scene Exports ({} file{})".format(num_to_export,"" if num_to_export == 1 else "s"),icon='SCENE_DATA')
-			if not had_armatures:
-				columns.row()
-
+			
 		# QCs
 		global qc_path
 		global qc_paths
 		global qc_path_last_update
 		qc_label_row = l.row()
 		r = l.row()
-		r.prop(scene,"smd_qc_path",text="")		
+		r.prop(scene,"smd_qc_path",text="")
 		if scene.smd_qc_path != qc_path or not qc_paths or time.time() > qc_path_last_update + 2:
 			qc_paths = getQCs()
-			print(qc_paths)
 			qc_path = scene.smd_qc_path		
 		qc_path_last_update = time.time()
-		if len(qc_paths) > 1 or _isWild(qc_path):
+		if len(qc_paths) > 1 or isWild(qc_path):
 			c = l.column_flow(2)
 			for path in qc_paths:
 				c.operator(SMD_OT_Compile.bl_idname,text=getFilename(path)).filepath = path
@@ -3041,7 +3072,9 @@ class SmdExporter(bpy.types.Operator):
 			prev_bone_selection = bpy.context.selected_pose_bones
 			prev_active_bone = context.active_bone
 		prev_selection = context.selected_objects
-		prev_visible = context.visible_objects
+		prev_visible = [] # visible_objects isn't useful due to layers
+		for ob in context.scene.objects:
+			if not ob.hide: prev_visible.append(ob)
 		prev_frame = context.scene.frame_current
 
 		# store Blender mode user was in before export
@@ -3124,8 +3157,10 @@ class SmdExporter(bpy.types.Operator):
 				if object.smd_export:
 					should_export = True
 					if object.users_group:
-						if (group.smd_export for group in object.users_group):
-							should_export = False
+						for group in object.users_group:
+							if group.smd_export:
+								should_export = False
+								break
 					if should_export:
 						self.exportObject(context,object)
 
