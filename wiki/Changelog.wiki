@@ -1,4 +1,17 @@
 #labels Featured
+== 0.14.1 - March 6th, 2011 ==
+
+General:
+
+  * Scene properties: groups now display their member objects in two columns
+
+Exporter:
+
+  * Fixed being unable to export ungrouped objects (WTF! Blender/Python bug?)
+  * Fixed objects in inactive layers being marked hidden after export
+  * Groups: shape keys with the same name are now merged together
+  * If no QCs are found, try adding ".qc" to the search path
+
 == 0.14 - March 5th, 2011 ==
 
 General:
