@@ -1,4 +1,18 @@
 #labels Featured
+== 0.14.2 - March 13th, 2011 ==
+
+Importer:
+
+  * LODs and collision meshes are now imported to separate layers, which all start active
+  * Improved recognition of QC variables (e.g. blah$var$blah)
+
+Exporter:
+
+  * Fixed per-face and per-object smooth/flat setting being ignored
+  * Names of face textures (assigned when UV mapping) can now be set to override names of materials
+  * The list of objects to export can now be restricted to active scene layers
+  * The UI now shows which engine branch a QC was compiled with
+
 == 0.14.1 - March 6th, 2011 ==
 
 General:
