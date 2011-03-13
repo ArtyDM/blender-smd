@@ -1,9 +1,11 @@
 #labels Featured
-== 0.14.2 - March 13th, 2011 ==
+== 0.14.3 - March 13th, 2011 ==
 
 General:
 
   * Fixed the updater (sigh)
+
+== 0.14.2 - March 13th, 2011 ==
 
 Importer:
 
