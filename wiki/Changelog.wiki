@@ -1,6 +1,10 @@
 #labels Featured
 == 0.14.2 - March 13th, 2011 ==
 
+General:
+
+  * Fixed the updater (sigh)
+
 Importer:
 
   * LODs and collision meshes are now imported to separate layers, which all start active
