@@ -3520,8 +3520,8 @@ class SmdToolsUpdate(bpy.types.Operator):
 				if not self.cur_entry:
 					self.result = 'INCOMPATIBLE'
 			else:
-				for i in range(min( len(remote_ver), len(entry['version']) )):
-					diff = int(remote_ver[i]) - int(entry['version'][i])
+				for i in range(min( len(remote_ver), len(cur_ver) )):
+					diff = int(remote_ver[i]) - int(cur_ver[i])
 					if diff > 0:
 						self.cur_entry = entry
 						self.remote_ver_str = PrintVer(remote_ver)	
