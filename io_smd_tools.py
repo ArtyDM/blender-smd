@@ -21,7 +21,7 @@
 bl_addon_info = {
 	"name": "SMD Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 14, 1),
+	"version": (0, 14, 2),
 	"blender": (2, 5, 6),
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -66,6 +66,16 @@ mesh_compatible = [ 'MESH', 'TEXT', 'FONT', 'SURFACE', 'META', 'CURVE' ]
 exportable_types = mesh_compatible[:]
 exportable_types.append('ARMATURE')
 shape_types = ['MESH' , 'SURFACE']
+
+src_branches = (
+('CUSTOM','Custom SDK Path','User-defined compiler path'),
+('orangebox','Source 2009','Source 2009'),
+('source2007','Source 2007','Source 2007'),
+('ep1','Source 2006','Source 2006'),
+('left 4 dead 2','Left 4 Dead 2','Left 4 Dead 2'),
+('left 4 dead','Left 4 Dead','Left 4 Dead'),
+('alien swarm','Alien Swarm','Alien Swarm')
+)
 
 # I hate Python's var redefinition habits
 class smd_info:
@@ -189,6 +199,11 @@ def isWild(in_str):
 	wcards = [ "*", "?", "[", "]" ]
 	for char in wcards:
 		if in_str.find(char) != -1: return True
+		
+def getEngineBranchName():
+	for branch in src_branches:
+		if branch[0] == bpy.context.scene.smd_studiomdl_branch:
+			return branch[1]
 
 # rounds to 6 decimal places, converts between "1e-5" and "0.000001", outputs str
 def getSmdFloat(fval):
@@ -410,7 +425,7 @@ def removeObject(obj):
 			obj.animation_data.action = None # avoid horrible Blender bug that leads to actions being deleted
 
 		bpy.data.objects.remove(obj)
-		if d.users == 0:
+		if d and d.users == 0:
 			if type == 'MESH':
 				bpy.data.meshes.remove(d)
 			if type == 'ARMATURE':
@@ -1038,24 +1053,23 @@ def readFrames():
 
 def readFrameData():
 	smd.frameData = []
-	frameData = {}
-	HaveReadFrame = False
+	cur_frame = {}
+	if smd.file.readline() == "end\n": return # skip first frame header
+	
 	for line in smd.file:
 
 		if line == "end\n":
-			smd.frameData.append(frameData)
+			smd.frameData.append(cur_frame)
 			break
 
 		values = line.split()
 
 		if values[0] == "time": # n.b. frame number is a dummy value, all frames are equally spaced
-			if HaveReadFrame:
-				if smd.jobType == REF:
-					log.warning("Found animation in reference mesh \"{}\", ignoring!".format(smd.jobName))
-					continue
-				smd.frameData.append(frameData)
-				frameData = {}
-			HaveReadFrame = True
+			if smd.jobType == REF:
+				log.warning("Found animation in reference mesh \"{}\", ignoring!".format(smd.jobName))
+				continue
+			smd.frameData.append(cur_frame)
+			cur_frame = {}
 			continue
 
 		# Lookup the mangled bone name for this SMD's bone ID.
@@ -1071,7 +1085,7 @@ def readFrameData():
 		# Also, the floats are inversed to transition them from Source (DirectX; left-handed) to Blender (OpenGL; right-handed)
 		rotMat = rMat(-smd_rot.x, 3,'X') * rMat(-smd_rot.y, 3,'Y') * rMat(-smd_rot.z, 3,'Z')
 
-		frameData[boneName] = {'pos':smd_pos, 'rot':rotMat}
+		cur_frame[boneName] = {'pos':smd_pos, 'rot':rotMat}
 
 	# Handle any extra bones added to the pose armature.
 	# This code is just like the rest-pose export code, used to determine the smd_pos and smd_rot
@@ -1280,6 +1294,13 @@ def getMeshMaterial(name):
 
 	return mat, mat_ind
 
+def setLayer():
+	layers = [False] * len(smd.m.layers)
+	layers[smd.layer] = bpy.context.scene.layers[smd.layer] = True
+	smd.m.layers = layers
+	if smd.jobType == PHYS:
+		smd.a.layers[smd.layer] = True
+
 # triangles block
 def readPolys():
 	if smd.jobType not in [ REF, REF_ADD, PHYS ]:
@@ -1295,6 +1316,7 @@ def readPolys():
 	smd.m.data.show_double_sided = False
 	smd.m.parent = smd.a
 	bpy.context.scene.objects.link(smd.m)
+	setLayer()
 	if smd.jobType == REF:
 		try:
 			qc.ref_mesh = smd.m # for VTA import
@@ -1515,7 +1537,8 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		smd_manager = qc
 
 	file = open(filepath, 'r')
-	in_bodygroup = False
+	in_bodygroup = in_lod = False
+	lod = 0
 	for line in file:
 		line = parseQuoteBlockedLine(line)
 		if len(line) == 0:
@@ -1523,10 +1546,16 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		#print(line)
 
 		# handle individual words (insert QC variable values, change slashes)
-		for i in range(len(line)):
-			if line[i][0] == "$" and line[i][1:] in qc.vars:
-				line[i] = qc.vars[line[i][1:]]
-			line[i] = line[i].replace("/","\\") # studiomdl is Windows-only
+		i = 0
+		for word in line:
+			for var in qc.vars.keys():
+				kw = "${}$".format(var)
+				pos = word.find(kw)
+				if pos != -1:
+					word = word.replace(word[pos:pos+len(kw)], qc.vars[var])
+					
+			line[i] = word.replace("/","\\") # studiomdl is Windows-only
+			i += 1			
 
 		# register new QC variable
 		if line[0] == "$definevariable":
@@ -1552,7 +1581,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 			qc.upAxisMat = getUpAxisMat(line[1])
 			continue
 
-		def loadSMD(word_index,ext,type, append=True):
+		def loadSMD(word_index,ext,type, append=True,layer=0):
 			path = line[word_index]
 			if line[word_index][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = appendExt(path,ext)
@@ -1560,16 +1589,24 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 				path = qc.cd() + appendExt(path,ext)
 			if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
 				qc.imported_smds.append(path)
-				readSMD(context,path,qc.upAxis,connectBones,False,type,append,from_qc=True)
+				readSMD(context,path,qc.upAxis,connectBones,False,type,append,from_qc=True,target_layer=layer)
 				qc.numSMDs += 1
 
 		# meshes
 		if line[0] in ["$body","$model"]:
 			loadSMD(2,"smd",REF,True) # create new armature no matter what
 			continue
-		if line[0] == "replacemodel":
-			loadSMD(2,"smd",REF_ADD)
+		if line[0] == "$lod":
+			in_lod = True
+			lod += 1
 			continue
+		if in_lod:
+			if line[0] == "replacemodel":
+				loadSMD(2,"smd",REF_ADD,layer=lod)
+				continue
+			if "}" in line:
+				in_lod = False
+				continue
 		if line[0] == "$bodygroup":
 			in_bodygroup = True
 			continue
@@ -1625,7 +1662,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 
 		# physics mesh
 		if line[0] in ["$collisionmodel","$collisionjoints"]:
-			loadSMD(1,"smd",PHYS)
+			loadSMD(1,"smd",PHYS,layer=10) # FIXME: what if there are >10 LODs?
 			continue
 
 		# origin; this is where viewmodel editors should put their camera, and is in general something to be aware of
@@ -1697,7 +1734,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		printTimeMessage(qc.startTime,filename,"import","QC")
 	return qc.numSMDs
 
-def initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc):
+def initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc,target_layer):
 	global smd
 	smd	= smd_info()
 	smd.jobName = getFilename(filepath)
@@ -1705,6 +1742,7 @@ def initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc):
 	smd.append = append
 	smd.startTime = time.time()
 	smd.connectBones = connectBones
+	smd.layer = target_layer
 	if upAxis:
 		smd.upAxis = upAxis
 		smd.upAxisMat = getUpAxisMat(upAxis)
@@ -1714,19 +1752,19 @@ def initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc):
 		smd_manager = smd
 
 # Parses an SMD file
-def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, append = True, from_qc = False):
+def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type = None, append = True, from_qc = False,target_layer = 0):
 	if filepath.endswith("dmx"):
 		#readDMX( context, filepath, upAxis, connectBones, newscene, smd_type, append, from_qc)
 		print("Skipping DMX file import: format unsupported (%s)" % getFilename(filepath))
 		return 0
 
 	global smd
-	initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc)
+	initSMD(filepath,smd_type,append,connectBones,upAxis,from_qc,target_layer)
 
 	try:
 		smd.file = file = open(filepath, 'r')
 	except IOError as err: # TODO: work out why errors are swallowed if I don't do this!
-		message = "Could not open SMD file \"{}\": {}\n\t{}".format(smd.jobName,err,filepath)
+		message = "Could not open SMD file \"{}\": {}".format(smd.jobName,err)
 		log.error(message)
 		return 0
 
@@ -2129,7 +2167,11 @@ def writePolys(internal=False):
 	for face in md.faces:
 		if smd.m.material_slots:
 			mat = smd.m.material_slots[face.material_index].material
-			mat_name = mat['smd_name'] if mat.get('smd_name') else mat.name
+			image = active_uv_tex.data[face_index].image
+			if bpy.context.scene.smd_use_image_names and image:
+				mat_name = image.name
+			else:
+				mat_name = mat['smd_name'] if mat.get('smd_name') else mat.name
 			smd.file.write(mat_name + "\n")
 		else:
 			smd.file.write(smd.jobName + "\n")
@@ -2138,10 +2180,10 @@ def writePolys(internal=False):
 			# Vertex locations, normal directions
 			loc = norms = ""
 			v = md.vertices[face.vertices[i]]
-
+			norm = v.normal if face.use_smooth else face.normal
 			for j in range(3):
 				loc += " " + getSmdFloat(v.co[j])
-				norms += " " + getSmdFloat(v.normal[j])
+				norms += " " + getSmdFloat(norm[j])
 
 			# UVs
 			if not len(md.uv_textures):
@@ -2503,8 +2545,9 @@ def bakeObj(in_object):
 			_ObjectCopy(in_object)
 		else:
 			have_baked_metaballs = False
+			validObs = getValidObs()
 			for object in smd.g.objects:
-				if object.smd_export and bpy.context.scene in object.users_scene and not (object.type == 'META' and have_baked_metaballs):
+				if object.smd_export and object in validObs and not (object.type == 'META' and have_baked_metaballs):
 					if smd.jobType == FLEX and not object.data.shape_keys:
 						continue
 					bi['baked'] = _ObjectCopy(object)
@@ -2795,7 +2838,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 						l.label(text=text, icon=icon)
 				if embed_arm or (len(bpy.data.actions) and ob.data.smd_action_selection == 'FILTERED'):
 					# filtered action list
-					l.operator(SmdExporter.bl_idname, text=SMD_MT_ExportChoice.getActionFilterText(self,context), icon='ACTION').exportMode = 'ALL_ACTIONS'
+					l.operator(SmdExporter.bl_idname, text=SMD_MT_ExportChoice.getActionFilterText(self,context)[0], icon='ACTION').exportMode = 'ALL_ACTIONS'
 
 			else: # invalid object
 				label = "Cannot export " + ob.name
@@ -2826,8 +2869,22 @@ class SMD_OT_Compile(bpy.types.Operator):
 		num = compileQCs(self.properties.filepath)
 		if not self.properties.filepath:
 			self.properties.filepath = "QC"
-		log.errorReport("compiled","QC",self, num)
+		log.errorReport("compiled","{} QC".format(getEngineBranchName()),self, num)
 		return 'FINISHED'
+
+def getValidObs():
+	validObs = []
+	s = bpy.context.scene
+	for o in s.objects:
+		if o.type in exportable_types:
+			if s.smd_layer_filter:
+				for i in range( len(o.layers) ):
+					if o.layers[i] and s.layers[i]:
+						validObs.append(o)
+						break
+			else:
+				validObs.append(o)
+	return validObs
 
 qc_path = qc_paths = qc_path_last_update = 0
 class SMD_PT_Scene(bpy.types.Panel):
@@ -2840,6 +2897,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 	def draw(self, context):
 		l = self.layout
 		scene = context.scene
+		num_to_export = 0
 
 		self.embed_scene = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -2851,16 +2909,13 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
-		
-		validObs = []
-		for object in scene.objects:
-			if object.type in exportable_types:
-				validObs.append(object)
-		
-		num_to_export = 0
+
+		validObs = getValidObs()
+		l.row()
+		scene_config_row = l.row()
+
 		if len(validObs):
 			validObs.sort(key=lambda ob: ob.name.lower())
-			scene_config_row = l.row()
 			box = l.box()
 			columns = box.column()
 			header = columns.row()
@@ -2936,7 +2991,12 @@ class SMD_PT_Scene(bpy.types.Panel):
 						row.prop(object.data,"smd_action_selection",text="")
 						want_sep = True
 
-			scene_config_row.label(text=" Scene Exports ({} file{})".format(num_to_export,"" if num_to_export == 1 else "s"),icon='SCENE_DATA')
+		scene_config_row.label(text=" Scene Exports ({} file{})".format(num_to_export,"" if num_to_export == 1 else "s"),icon='SCENE_DATA')
+			
+		r = l.row()
+		r.prop(scene,"smd_use_image_names",text="Use images names")
+		r.prop(scene,"smd_layer_filter",text="Active layer(s) only")
+		l.row()
 			
 		# QCs
 		global qc_path
@@ -3207,7 +3267,7 @@ class SmdExporter(bpy.types.Operator):
 		elif context.scene.smd_qc_compile:
 			# ...and compile the QC
 			num_good_compiles = compileQCs()
-			jobMessage += " and {} QC{} compiled".format(num_good_compiles, "" if num_good_compiles == 1 else "s")
+			jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
 			print("\n")
 
 		log.errorReport(jobMessage,"SMD",self,self.countSMDs)
@@ -3216,7 +3276,15 @@ class SmdExporter(bpy.types.Operator):
 	# indirection to support batch exporting
 	def exportObject(self,context,object,flex=False,groupIndex=-1):
 		props = self.properties
-
+		
+		validObs = getValidObs()
+		if groupIndex == -1: 
+			if not object in validObs:
+				return
+		else:
+			if len(set(validObs).intersection( set(object.users_group[groupIndex].objects) )) == 0:
+				return
+		
 		# handle subfolder
 		if len(object.smd_subdir) == 0 and object.type == 'ARMATURE':
 			object.smd_subdir = "anims"
@@ -3252,11 +3320,11 @@ class SmdExporter(bpy.types.Operator):
 				for action in bpy.data.actions:
 					if action.users and (not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1):
 						ad.action = action
-						if writeSMD(context,object, -1, path + action.name + getFileExt(),ANIM):
+						if writeSMD(context,object, -1, path + action.name + getFileExt(), ANIM):
 							self.countSMDs += 1
 			elif object.animation_data:
 				if ad.action:
-					if writeSMD(context,object,-1,path + ad.action.name + getFileExt(),ANIM):
+					if writeSMD(context,object,-1,path + ad.action.name + getFileExt(), ANIM):
 						self.countSMDs += 1
 				elif len(ad.nla_tracks):
 					nla_actions = []
@@ -3266,7 +3334,7 @@ class SmdExporter(bpy.types.Operator):
 								if not strip.mute and strip.action not in nla_actions:
 									nla_actions.append(strip.action)
 									ad.action = strip.action
-									if writeSMD(context,object,-1,path + ad.action.name + getFileExt(),ANIM):
+									if writeSMD(context,object,-1,path + ad.action.name + getFileExt(), ANIM):
 										self.countSMDs += 1
 			ad.action = prev_action
 
@@ -3496,15 +3564,6 @@ def register():
 	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
 	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported.", subtype="FILE_PATH")
-	src_branches = (
-	('CUSTOM','Custom Path','User-defined compiler path'),
-	('orangebox','Source 2009','Source 2009'),
-	('source2007','Source 2007','Source 2007'),
-	('ep1','Source 2006','Source 2006'),
-	('left 4 dead 2','Left 4 Dead 2','Left 4 Dead 2'),
-	('left 4 dead','Left 4 Dead','Left 4 Dead'),
-	('alien swarm','Alien Swarm','Alien Swarm')
-	)
 	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles, and DMX version",default='orangebox')
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Studiomdl Path",description="User-defined path to Studiomdl, for Custom compiles.", subtype="FILE_PATH")
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
@@ -3513,6 +3572,8 @@ def register():
 	('DMX', "DMX", "Data Model Exchange" )
 	)
 	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD',description="todo")
+	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Images Override Materials",description="If a face has a preview image assigned, export that instead of the face's material",default=False)
+	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export active layers only",description="Only consider objects in active viewport layers for export",default=False)
 
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
@@ -3546,6 +3607,8 @@ def unregister():
 	del Scene.smd_studiomdl_custom_path
 	del Scene.smd_up_axis
 	del Scene.smd_format
+	del Scene.smd_use_image_names
+	del Scene.smd_layer_filter
 
 	Object = bpy.types.Object
 	del Object.smd_export
