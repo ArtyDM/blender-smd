@@ -1,4 +1,25 @@
 #labels Featured
+== 0.15 - March 31st, 2011 ==
+
+General:
+
+  * Updated for Blender 2.57
+  * Promoted important info reports to errors, due to presumed Blender bug that hides info and warning reports
+
+DMX-Model:
+
+  * Initial commit. Requires Alien Swarm Tier0.dll, but not Steam.
+  
+Importer:
+
+  * New feature: DMX mesh, skeleton, attachment and animation import. This requires a separate download. KeyValues2 encoding is not supported, which leads to oddness with all the TF2 models except Pyro!
+  * Fixed $definevariable case issues
+  * Up axis now defaults to the scene's target axis
+  
+Exporter:
+
+  * Greatly optimised shape key export (>200% faster)
+
 == 0.14.3 - March 13th, 2011 ==
 
 General:
