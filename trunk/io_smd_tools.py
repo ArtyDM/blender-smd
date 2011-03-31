@@ -3844,7 +3844,7 @@ class SmdClean(bpy.types.Operator):
 		if active_obj:
 			bpy.ops.object.mode_set(mode=active_mode)
 
-		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
+		self.report('ERROR',"Deleted {} SMD properties".format(self.numPropsRemoved)) # INFO
 		return 'FINISHED'
 
 ########################
@@ -3919,8 +3919,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 			self.result == 'FAIL_UNZIP'
 		except IOError as err:
 			self.io_err = str(err)
-
-
+			
 		if self.url_err:
 			self.report('ERROR',"Could not complete download: " + self.url_err)
 			print(self.url_err)
@@ -3940,7 +3939,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.cur_entry['bpy']) ))
 			return 'FINISHED'
 		elif self.result == 'LATEST':
-			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_info['version']) ))
+			self.report('ERROR',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_info['version']) )) # INFO
 			return 'FINISHED'
 
 		elif self.result == 'SUCCESS':
@@ -3950,6 +3949,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 			return 'FINISHED'
 
 		else:
+			print("Unhandled error!")
 			print(self.result)
 			print(self.cur_entry)
 			assert(0) # unhandled error!
