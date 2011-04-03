@@ -1,4 +1,14 @@
 #labels Featured
+== 0.15.1 - April 3rd, 2011 ==
+
+General:
+
+  * Fixed auto updater, again
+
+Exporter:
+
+  * Fixed exporting objects without UV maps
+
 == 0.15 - March 31st, 2011 ==
 
 General:
