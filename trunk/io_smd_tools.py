@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 0),
+	"version": (0, 15, 1),
 	"blender": (2, 5, 7),
 	"api": 35899,
 	"category": "Import-Export",
@@ -2941,15 +2941,6 @@ def bakeObj(in_object):
 				if not smd.isDMX:
 					bpy.ops.mesh.quads_convert_to_tris()
 				
-				# project a UV map
-				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
-					bpy.ops.object.select_all(action="DESELECT")
-					baked.select = True
-					bpy.ops.uv.smart_project()
-
-					for object in selection_backup:
-						object.select = True
-
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
 					if obj.data.smd_faces == 'RIGHT':
@@ -2962,6 +2953,15 @@ def bakeObj(in_object):
 						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
 
 				bpy.ops.object.mode_set(mode='OBJECT')
+				
+				# project a UV map
+				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
+					bpy.ops.object.select_all(action="DESELECT")
+					baked.select = True
+					bpy.ops.uv.smart_project()
+
+					for object in selection_backup:
+						object.select = True
 
 			if bpy.context.scene.smd_up_axis == 'Y':
 				baked.data.transform(rx90n)
@@ -3900,6 +3900,8 @@ class SmdToolsUpdate(bpy.types.Operator):
 				else:
 					self.result = 'FAIL_PARSE'
 			elif name == "content":
+				if not (self.cur_entry['version'] and self.cur_entry['bpy']):
+					self.rss_entries.pop()
 				parser.CharacterDataHandler = None # don't read chars until the next content elem
 
 		try:
