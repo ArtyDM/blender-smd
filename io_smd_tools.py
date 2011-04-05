@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 2),
+	"version": (0, 15, 3),
 	"blender": (2, 5, 7),
 	"api": 35899,
 	"category": "Import-Export",
@@ -2963,8 +2963,9 @@ def bakeObj(in_object):
 					for object in selection_backup:
 						object.select = True
 
-			if bpy.context.scene.smd_up_axis == 'Y':
-				baked.data.transform(rx90n)
+				if bpy.context.scene.smd_up_axis == 'Y':
+					baked.data.transform(rx90n)
+			
 			# Apply object transforms to the data
 			if baked.type == 'MESH':
 				_ApplyVisualTransform(baked)				

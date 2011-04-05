@@ -37,6 +37,8 @@ const CUtlVector<CDmxElement*>* GetJointList()
 		return jointList_new;
 
 	CDmxElement* skeleton = DmeModelRoot->GetValue<CDmxElement*>("skeleton");
+	if (!skeleton)
+		FatalErr("Could not find skeleton");
 	const CUtlVector<CDmxElement*>* jointList = &skeleton->GetArray<CDmxElement*>("jointList");
 	if (jointList->Count())
 		return jointList;
