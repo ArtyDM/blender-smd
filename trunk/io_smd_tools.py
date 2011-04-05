@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 1),
+	"version": (0, 15, 2),
 	"blender": (2, 5, 7),
 	"api": 35899,
 	"category": "Import-Export",
@@ -920,7 +920,7 @@ def TidyArmature():
 		maxs = [0,0,0]
 		mins = [0,0,0]
 		for bone in smd.a.data.bones:
-			if smd.m.vertex_groups.get(bone.name):
+			if not smd.m or smd.m.vertex_groups.get(bone.name):
 				for i in range(3):
 					maxs[i] = max(maxs[i],bone.head_local[i])
 					mins[i] = min(mins[i],bone.head_local[i])
@@ -1267,7 +1267,7 @@ def applyFrameDataPose(frameData):
 
 def getMeshMaterial(in_name):
 	md = smd.m.data
-	long_name = len(in_name) > 24
+	long_name = len(in_name) > 21
 	mat = None
 	for candidate in bpy.data.materials: # Do we have this material already?
 		if candidate.name == in_name or candidate.get('smd_name') == in_name:
@@ -3883,7 +3883,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 				def readContent(data):
 					for i in range( len(magic_words) ):
 						if data[: len(magic_words[i]) ] == magic_words[i]:
-							self.cur_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split(".")
+							self.cur_entry['version' if i == 0 else 'bpy'] = data[ len(magic_words[i]) :].split()[0].split(".")
 
 					if self.cur_entry['version'] and self.cur_entry['bpy']:
 						for val in self.cur_entry.values():
@@ -3973,7 +3973,10 @@ class SmdToolsUpdate(bpy.types.Operator):
 					self.result = 'INCOMPATIBLE'
 			else:
 				for i in range(min( len(remote_ver), len(cur_ver) )):
-					diff = int(remote_ver[i]) - int(cur_ver[i])
+					try:
+						diff = int(remote_ver[i]) - int(cur_ver[i])
+					except ValueError:
+						continue
 					if diff > 0:
 						self.cur_entry = entry
 						self.remote_ver_str = PrintVer(remote_ver)
