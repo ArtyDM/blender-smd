@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include <iostream>
+#include "dmserializers\idmserializers.h"
 
 void FatalErr(const char* msg) {
 	Error(msg);
@@ -47,6 +48,23 @@ void IterateDmxElement(CDmxElement* DmeModelRoot)
 	}
 }
 
+class CDmxKeyValues2ErrorStack
+{
+public:
+	static CUtlSymbolTableLargeBase<CNonThreadsafeTree<0>,0> GetSymbolTable();
+	void SetFilename(char const *);
+	void IncrementCurrentLine();
+	void SetCurrentLine(int);
+	int GetCurrentLine() const;
+	int Push(CUtlSymbolLarge);
+	void Pop();
+	void Reset(int,CUtlSymbolLarge);
+	void ReportError(char const *,...);
+	
+	CUtlSymbolTableLargeBase<CNonThreadsafeTree<0>,0> m_ErrorSymbolTable;
+};
+extern CDmxKeyValues2ErrorStack g_KeyValues2ErrorStack;
+
 CDmxElement* DmeModelRoot;
 
 int CALLBACK WinMain(
@@ -78,6 +96,7 @@ int CALLBACK WinMain(
 
 	fdmx.seekg(0);
 	char* c_buf = new char[size];
+	memset(c_buf,0,size);
 	fdmx.read(c_buf,size);
 
 	// validate header
@@ -111,28 +130,38 @@ int CALLBACK WinMain(
 	// Allocate
 	DECLARE_DMX_CONTEXT();
 	DmeModelRoot = (CDmxElement*)DMXAlloc( size + 512 );
+	CUtlBuffer v_buf(0,size);
+	v_buf.SetExternalBuffer(c_buf,size,size);
+	c_buf = 0;
+	pos = 0;
 
 	if (KV2)
 	{
-		Error("Cannot decode KeyValues2 DMX");
-		return 1;
-		// decode KeyValues2
-		//DecodeKV2(&fdmx);
+		bool UnserializeTextDMX(const char* pFilename,CUtlBuffer &buf,CDmxElement** ppRoot);
+		UnserializeTextDMX(__argv[1],v_buf,&DmeModelRoot);
+
+		DecodeKV2(&fdmx);
+
 	}
 	else
 	{
-		// transfer to Source API
-		CUtlBuffer v_buf(0,size);
-		v_buf.SetExternalBuffer(c_buf,size,size);
-		c_buf = 0;
-		pos = 0;
-
-		// Unserialise
-		if (!UnserializeDMX(v_buf,&DmeModelRoot))
-			FatalErr("DMX decoding failed");
+		UnserializeDMX(v_buf,&DmeModelRoot);
 	}
 
-	fdmx.close();		
+	fdmx.close();
+	
+	if (!DmeModelRoot)
+	{
+		if (KV2)
+		{
+			Error("Cannot decode KeyValues2");
+		}
+		else
+		{
+			FatalErr("DMX decoding failed");
+		}
+		return 1;
+	}
 
 	CDmxElement* model = DmeModelRoot->GetValue<CDmxElement*>("model");
 	if (model)
