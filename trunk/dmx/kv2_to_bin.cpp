@@ -3,21 +3,64 @@
 enum contexts_t
 {
 	NONE,
+	HEADER,
+	VALUE,
 	ELEMENT,
 	ARRAY,
-	END
+	END_ARRAY,
+	END_ELEMENT,
+	END_FILE
 } contexts;
 
-CDmxElement* DecodeElement(const char* in_type);
+struct ElementIDLink
+{
+	char m_ID[37];
+	CDmxElement* m_Target;
+	CUtlVector<CDmxAttribute*> WantLinks;
 
-char* curLine;
-CDmxElement* curElem = DmeModelRoot;
+	ElementIDLink(const char* ID,CDmxElement* Dme)
+	{
+		memcpy(m_ID,ID,36);
+		m_ID[37] = 0;
+		m_Target = Dme;
+	}
+
+	bool operator== (const char* szOther)
+	{
+		return ( strcmp(m_ID,szOther) == 0);
+	}
+};
+
+CUtlVector<ElementIDLink> ElementIDs;
+
+ElementIDLink GetElementIDLink(const char* name)
+{
+	for (int i=0;i<ElementIDs.Count();i++)
+	{
+		if (ElementIDs.Element(i) == name)
+			return ElementIDs.Element(i);
+	}
+}
+
+CDmxElement* DecodeElement(CDmxAttribute* Attr, const char* in_type);
+
 ifstream* g_file;
 
-contexts_t ParseLine(char* line,CUtlStringList& words)
+contexts_t ParseLine(CUtlStringList* words)
 {
+	if (g_file->eof())
+		return END_FILE;
+
 	contexts_t retVal = NONE;
+
+	char curLine[512];
+	g_file->getline(curLine,512);
 	unsigned int LineLen = strlen(curLine)+1;
+
+	if (curLine[0] == '<')
+		return HEADER;
+
+	words->RemoveAll();
 
 	char* curWord = new char[LineLen];
 	memset(curWord,0,LineLen);
@@ -37,7 +80,8 @@ contexts_t ParseLine(char* line,CUtlStringList& words)
 			unsigned int WordLen = strlen(curWord)+1;
 			char* WholeWord = new char[WordLen];
 			memcpy(WholeWord,curWord,WordLen);
-			words.AddToTail(WholeWord);
+			words->AddToTail(WholeWord);
+			retVal = VALUE;
 			memset(curWord,0,LineLen);
 			InQuote = false;
 		}
@@ -46,8 +90,10 @@ contexts_t ParseLine(char* line,CUtlStringList& words)
 			switch(cur)
 			{
 			case '}':
+				retVal = END_ELEMENT;
+				break;
 			case ']':
-				retVal = END;
+				retVal = END_ARRAY;
 				break;
 			case '{':
 				retVal = ELEMENT;
@@ -79,7 +125,7 @@ DmAttributeType_t GetKV2Type(const char* TypeString)
 	memcpy(MangledType,TypeString,len);
 	char* Underscore = strstr(MangledType,"_");
 	if (Underscore)
-		*Underscore = '\0'; // don't care if it's an array or not
+		*Underscore = 0; // don't care if it's an array or not
 
 	DmAttributeType_t Type = AT_UNKNOWN;
 
@@ -111,190 +157,240 @@ DmAttributeType_t GetKV2Type(const char* TypeString)
 		Type = AT_VOID;
 	else if ( strcmp(MangledType,"time") == 0)
 		Type = AT_TIME;
-	else if ( strcmp(MangledType,"element") == 0)
+	else if (
+			strcmp(MangledType,"element") == 0
+			||
+			strcmp(MangledType,"elementid") == 0
+			)
 		Type = AT_ELEMENT;
 
 	delete[] MangledType;
 	return Type;
 }
 
-void* GetKV2Attribute(const CUtlStringList* words, int& bytes_out, DmAttributeType_t type = AT_UNKNOWN)
+namespace Decoders
 {
-	bool IsArray = type != AT_UNKNOWN;
-	void* retVal = 0;
-	char* value = 0;
-
-	if (IsArray)
-	{
-		value = words->Element(0);
-	}
+void DecodeInt(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)
+		Attr->SetValue<int>(atoi(words->Element(2)));
 	else
 	{
-		assert(words->Count() == 3);
-		type = GetKV2Type(words->Element(1));
-		value = words->Element(2);
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<int>().AddToTail( atoi(array_words.Element(0)) );
 	}
-
-	CUtlStringList ValueWords;
-	ParseLine(value,ValueWords);
-
-	DWORD fval;
-	Color colVal;
-	Vector4D vecVal;
-	VMatrix matVal;
-
-	switch (type)
-	{
-	case AT_INT:
-		retVal = (void*)atoi(value);
-		bytes_out = sizeof(int);
-		break;
-	case AT_FLOAT:
-		fval = atof(value); // can't cast directly to void
-		retVal = (void*)fval;
-		bytes_out = sizeof(float);
-		break;
-	case AT_BOOL:
-		retVal = (void*)strcmp(value,"false");
-		bytes_out = sizeof(bool);
-		break;
-	case AT_COLOR:
-		for (int i=0;i<3;i++)
-			colVal[i] = atoi(ValueWords.Element(i));
-		retVal = (void*)&colVal;
-		bytes_out = sizeof(bool);
-		break;
-	case AT_VECTOR2:
-		for (int i=0;i<2;i++)
-			vecVal[i] = atof(ValueWords.Element(i));
-		retVal = (void*)&vecVal;
-		bytes_out = sizeof(Vector2D);
-		break;
-	case AT_VECTOR3:
-	case AT_QANGLE:
-		for (int i=0;i<3;i++)
-			vecVal[i] = atof(ValueWords.Element(i));
-		retVal = (void*)&vecVal;
-		bytes_out = sizeof(Vector);
-		break;
-	case AT_VECTOR4:
-	case AT_QUATERNION: // might change someday?
-		for (int i=0;i<4;i++)
-			vecVal[i] = atof(ValueWords.Element(i));
-		retVal = (void*)&vecVal;
-		bytes_out = sizeof(Vector4D);
-		break;
-	case AT_VMATRIX:
-		for (int i=0;i<4;i++)
-			for (int j=0;j<4;j++)
-				matVal.m[i][j] = atof(ValueWords.Element(i));
-		retVal = (void*)&matVal;
-		bytes_out = sizeof(VMatrix);
-		break;
-	case AT_STRING:
-		retVal = value;
-		bytes_out = strlen(value) + 1;
-		break;
-	case AT_VOID:
-		retVal = value;
-		bytes_out = strlen(value);
-		break;
-	case AT_ELEMENT:
-		retVal = DecodeElement(ValueWords.Element(0));
-		bytes_out = sizeof(CDmxElement);
-		break;
-	}
-
-	return memcpy(MemAlloc_Alloc(bytes_out),retVal,bytes_out); // leak!!
 }
 
-CDmxElement* DecodeElement(const char* in_type)
+void DecodeFloat(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)	
+		Attr->SetValue<float>(atof(words->Element(2)));
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<int>().AddToTail( atof(array_words.Element(0)));
+	}
+}
+
+void DecodeBool(CDmxAttribute* Attr,const CUtlStringList* words) // integer bool
+{
+	if (words->Count() == 3)	
+		Attr->SetValue<bool>( atoi(words->Element(2)) != 0 );
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<bool>().AddToTail( atoi(array_words.Element(0)) != 0 );
+	}
+}
+
+Color DecodeColor(char* value)
+{
+	Color res;
+	char* c = value;
+	int i = 0;
+	while (*c && *c != '"')
+	{
+		if (*c == ' ')
+		{
+			*c = 0;
+			res[i] = atoi(value);
+			value = c + 1;
+			i++;
+		}
+		c++;
+	}
+	return res;
+}
+
+void DecodeColor(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)	
+		Attr->SetValue<Color>(DecodeColor(words->Element(2)));
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<Color>().AddToTail( DecodeColor(array_words.Element(0)) );
+	}
+}
+
+template <typename T>
+T DecodeFloats_internal(char* value)
+{
+	T res;
+	char* c = value;
+	int i = 0;
+	while (*c && *c != '"')
+	{
+		if (*c == ' ')
+		{
+			*c = 0;
+			res[i] = atof(value);
+			value = c + 1;
+			i++;
+		}
+		c++;
+	}
+	return res;
+}
+
+template <typename T>
+void DecodeFloats(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)	
+		Attr->SetValue<T>(DecodeFloats_internal<T>(words->Element(2)));
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<T>().AddToTail( DecodeFloats_internal<T>(array_words.Element(0)) );
+	}
+}
+
+void DecodeString(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)	
+		Attr->SetValue(words->Element(2));
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<CUtlString>().AddToTail( array_words.Element(0) );
+	}
+}
+
+void DecodeBinary(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)	
+		Attr->SetValue<CUtlBinaryBlock>( CUtlBinaryBlock( words->Element(2),strlen(words->Element(2)) ) ); // is b0 allowed??
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<CUtlBinaryBlock>().AddToTail( CUtlBinaryBlock( words->Element(2),strlen(words->Element(2)) ) );
+	}
+}
+
+void DecodeTime(CDmxAttribute* Attr,const CUtlStringList* words)
+{
+	if (words->Count() == 3)	
+		Attr->SetValue<DmeTime_t>( DmeTime_t(atof(words->Element(2))) );
+	else
+	{
+		CUtlStringList array_words;
+		while ( ParseLine(&array_words) == VALUE)
+			Attr->GetArrayForEdit<DmeTime_t>().AddToTail( DmeTime_t(atof(words->Element(2))) );
+	}
+}
+
+}
+
+void DecodeAttribute(CDmxElement* Dme,CUtlStringList* AttrWords)
+{
+	DmAttributeType_t type = GetKV2Type(AttrWords->Element(1));
+
+	if (type == AT_UNKNOWN && AttrWords->Count() == 2)
+		type = AT_ELEMENT;
+	
+	CDmxAttribute* Attr = Dme->AddAttribute(AttrWords->Element(0));
+
+	using namespace Decoders;
+	switch(type)
+	{
+	case AT_INT:
+		DecodeInt(Attr,AttrWords);
+		break;
+	case AT_FLOAT:
+		DecodeFloat(Attr,AttrWords);
+		break;
+	case AT_BOOL:
+		DecodeBool(Attr,AttrWords);
+		break;
+	case AT_COLOR:
+		DecodeColor(Attr,AttrWords);
+		break;
+	case AT_VECTOR2:
+		DecodeFloats<Vector2D>(Attr,AttrWords);
+		break;
+	case AT_VECTOR3:
+		DecodeFloats<Vector>(Attr,AttrWords);
+		break;
+	case AT_VECTOR4:
+		DecodeFloats<Vector4D>(Attr,AttrWords);
+		break;
+	case AT_QANGLE:
+		DecodeFloats<QAngle>(Attr,AttrWords);
+		break;
+	case AT_QUATERNION:
+		DecodeFloats<Quaternion>(Attr,AttrWords);
+		break;
+	case AT_VMATRIX:
+		//DecodeFloats<VMatrix>(Attr,AttrWords);
+		break;
+	case AT_STRING:
+		DecodeString(Attr,AttrWords);
+		break;
+	case AT_VOID:
+		DecodeBinary(Attr,AttrWords); // got a problem with that?
+		break;
+	case AT_TIME:
+		DecodeTime(Attr,AttrWords);
+		break;
+	case AT_ELEMENT:
+		if (AttrWords->Count() == 2)
+			DecodeElement(Attr,AttrWords->Element(1));
+		else if (AttrWords->Count() == 3)
+		{
+			if ( strcmp(AttrWords->Element(1),"elementid") == 0)
+				ElementIDs.AddToTail(ElementIDLink(AttrWords->Element(2),Dme));
+		}
+		break;
+	}
+}
+
+CDmxElement* DecodeElement(CDmxAttribute* Attr, const char* in_type)
 {
 	CDmxElement* curElem = CreateDmxElement(in_type);
-	CDmxAttribute* curAttr;
-	
-	while (strlen(curLine))
+	if (Attr)
+		Attr->SetValue<CDmxElement*>(curElem);
+
+	CUtlStringList ElemWords;
+	while (ParseLine(&ElemWords) < END_ELEMENT)
 	{
-		CUtlStringList words;
-		ParseLine(curLine,words);
-		
-		if (words.Count())
+		/*if (ElemWords.Count())
 		{
-			for (int i=0; i<words.Count();i++)
-				Msg("%s ",words.Element(i));
+			for (int i=0; i<ElemWords.Count();i++)
+				Msg("%s ",ElemWords.Element(i));
 			Msg("\n");
+		}*/
 
-			char *name=0,*value=0;
-			DmAttributeType_t type;
-
-			if (words.Count() == 3)
-			{
-				curAttr = curElem->AddAttribute(words.Element(0));
-				type = GetKV2Type(words.Element(1));
-			}
-			
-			if (words.Count() < 3)
-			{
-				CUtlStringList ValueWords;
-				g_file->getline(curLine,512);
-				contexts_t opener = ParseLine(curLine,ValueWords);
-				ValueWords.RemoveAll();
-					
-				CUtlVector<void*> values;
-				CUtlVector<int> test;
-				switch( opener )
-				{
-				case ARRAY:
-					curAttr = curElem->AddAttribute(words.Element(0));
-					curAttr->GetArrayForEdit<int>();
-					
-					type = GetKV2Type(words.Element(1));
-					int size = 0;
-					g_file->getline(curLine,512);					
-					while (ParseLine(curLine,ValueWords) != END && strlen(curLine))
-					{
-						values.AddToTail(GetKV2Attribute(&ValueWords,size,type));
-						g_file->getline(curLine,512);
-					}
-					break;
-				case ELEMENT:
-					if(words.Count() == 2)
-						curElem->AddAttribute(words.Element(0))->SetValue(DecodeElement(words.Element(1)));
-					else
-						curElem = CreateDmxElement(words.Element(0));
-					break;
-				default:
-					FatalErr("Invalid Keyvalues2 file");
-					break;
-				}
-
-			}
-
-			/*name = words[0];
-			if (words.Count() == 1)
-			{
-				curAttr->SetValue(DecodeElement(name));
-				continue;
-			}
-			type =  words[1];
-			value = words[2];
-
-			curAttr = curElem->AddAttribute(name);
-
-			Msg("%s\n",name);
-
-			if (strcmp(type,"elementid") == 0)
-				continue; //curAttr->SetValue<CDmxElement*>(0);
-			else if (strcmp(type,"string") == 0)
-				curAttr->SetValue<CUtlString>(value);
-			else if (strcmp(type,"bool") == 0)
-				curAttr->SetValue<bool>(value[0] == 1);
-			else if (strcmp(type,"float") == 0)
-				curAttr->SetValue<float>(atof(value));
-			else if (strcmp(type,"int") == 0)
-				curAttr->SetValue<int>(atoi(value));*/
-		}
-		g_file->getline(curLine,512);
+		if (ElemWords.Count() > 1)
+			DecodeAttribute(curElem,&ElemWords);
+		else
+			continue;
 	}
 
 	return curElem;
@@ -303,17 +399,30 @@ CDmxElement* DecodeElement(const char* in_type)
 void DecodeKV2(ifstream* file)
 {
 	g_file = file;
-	curLine = new char[512];
 	file->seekg(0);
-	file->getline(curLine,512);
-	while (strlen(curLine))
+	CUtlStringList RootWords;
+	while (1)
 	{
-		if (curLine[0] != '<')
+		CDmxElement* Dme;
+
+		contexts_t ParseResult = ParseLine(&RootWords);
+		switch( ParseResult )
 		{
+		case END_FILE:
+			goto stop;
+		case HEADER:
+			continue;
+		case VALUE:
+			Dme = DecodeElement(0,RootWords.Element(0));
 			if (!DmeModelRoot)
-				DmeModelRoot = DecodeElement("DmElement");
+				DmeModelRoot = Dme;
 		}
-		file->getline(curLine,512);
 	}
-	delete[] curLine;
+
+	stop:
+	CUtlBuffer buf;
+	SerializeDMX(buf,DmeModelRoot);
+	FILE* f = fopen("C:\\Users\\Tom\\Desktop\\test.dmx","w");
+	fwrite(buf.Base(),1,buf.TellPut(),f);
+	fclose(f);
 }
