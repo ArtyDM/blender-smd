@@ -1,4 +1,11 @@
 #labels Featured
+== 0.15.2 - April 5th, 2011 ==
+
+Importer:
+
+  * Fixed importing SMD skeletons
+  * Fixed importing materials with long names
+
 == 0.15.1 - April 3rd, 2011 ==
 
 General:
