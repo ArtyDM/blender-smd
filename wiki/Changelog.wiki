@@ -1,4 +1,10 @@
 #labels Featured
+== 0.15.3 - April 5th, 2011 ==
+
+Exporter:
+
+  * Fixed exporting Y-up armatures
+
 == 0.15.2 - April 5th, 2011 ==
 
 Importer:
