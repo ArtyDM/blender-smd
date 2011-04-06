@@ -3987,8 +3987,9 @@ class SmdToolsUpdate(bpy.types.Operator):
 		for entry in self.rss_entries:
 			remote_ver = entry['version']
 			remote_bpy = entry['bpy']
+			stable_api = (2,56,5)
 			for i in range(min( len(remote_bpy), len(bpy.app.version) )):
-				if int(remote_bpy[i]) - bpy.app.version[i]: # currently there are API changes in each Blender release
+				if int(remote_bpy[i]) > stable_api and int(remote_bpy[i]) > bpy.app.version[i]:
 					remote_ver = None
 
 			if not remote_ver:
