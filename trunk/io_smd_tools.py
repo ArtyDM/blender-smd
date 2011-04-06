@@ -3989,7 +3989,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 			remote_bpy = entry['bpy']
 			stable_api = (2,56,5)
 			for i in range(min( len(remote_bpy), len(bpy.app.version) )):
-				if int(remote_bpy[i]) > stable_api and int(remote_bpy[i]) > bpy.app.version[i]:
+				if int(remote_bpy[i]) > stable_api[i] and int(remote_bpy[i]) > bpy.app.version[i]:
 					remote_ver = None
 
 			if not remote_ver:
