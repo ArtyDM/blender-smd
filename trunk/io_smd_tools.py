@@ -21,8 +21,8 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 3),
-	"blender": (2, 5, 7),
+	"version": (0, 15, 4),
+	"blender": (2, 56, 5),
 	"api": 35899,
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
@@ -198,10 +198,10 @@ def benchTotal():
 	return time.time() - benchStart
 
 def ValidateBlenderVersion(op):
-	if bpy.app.build_revision.startswith("35899"):
+	if int(bpy.app.build_revision) >35899:
 		return True
 	else:
-		op.report('ERROR',"SMD Tools {} require Blender 2.57 RC1, but this is {} (or an SVN build)".format(PrintVer(bl_info['version']), PrintVer(bpy.app.version)) )
+		op.report('ERROR',"SMD Tools {} require Blender 2.57 RC1 or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bpy.app.version)) )
 		return False
 
 def getFileExt(flex=False):
@@ -606,6 +606,7 @@ class bone_info:
 		self.animParent = None
 		self.extraAncestors = []
 		self.isExtra = False
+		self.head = vector([0,0,0])
 
 	def setParent(self,parent):
 		self.parent = parent
@@ -920,10 +921,10 @@ def TidyArmature():
 		maxs = [0,0,0]
 		mins = [0,0,0]
 		for bone in smd.a.data.bones:
-			if not smd.m or smd.m.vertex_groups.get(bone.name):
-				for i in range(3):
-					maxs[i] = max(maxs[i],bone.head_local[i])
-					mins[i] = min(mins[i],bone.head_local[i])
+			#if not smd.m or smd.m.vertex_groups.get(bone.name):
+			for i in range(3):
+				maxs[i] = max(maxs[i],bone.head_local[i])
+				mins[i] = min(mins[i],bone.head_local[i])
 
 		dimensions = []
 		for i in range(3):
@@ -1222,6 +1223,8 @@ def applyFrameDataPose(frameData):
 
 	for boneName in smd.poseBoneNames:
 
+		if not frameData.get(boneName):
+			continue
 		smd_pos = frameData[boneName]['pos']
 		rotMats[boneName] = frameData[boneName]['rot']
 
@@ -1247,7 +1250,10 @@ def applyFrameDataPose(frameData):
 		x_axis = VecXMat(x_vec, rotMats[boneName])
 		y_axis = VecXMat(y_vec, rotMats[boneName])
 		z_axis = VecXMat(z_vec, rotMats[boneName])
-		location = boneInfo.head.copy()
+		if boneInfo.head:
+			location = boneInfo.head.copy()
+		else:
+			location = smd.a.bones[poseBoneNames].head
 
 		x_axis.resize_4d()
 		x_axis[3] = 0
@@ -1261,7 +1267,8 @@ def applyFrameDataPose(frameData):
 
 	if smd_manager.upAxis == 'Y':
 		for boneName in smd.poseBoneNames:
-			matAllPose[boneName]['mat'] = rx90 * matAllPose[boneName]['mat']# global rot around X
+			if matAllPose.get(boneName):
+				matAllPose[boneName]['mat'] = rx90 * matAllPose[boneName]['mat']# global rot around X
 
 	smd.matAllPose.append(matAllPose)
 
@@ -1842,7 +1849,7 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		else:
 			log.warning(msg)
 
-	smd.file = io.BytesIO(out)
+	smd.file = io.BufferedReader(io.BytesIO(out))
 
 	def get_bool():
 		return smd.file.read(1) != b'\x00'
@@ -1866,17 +1873,25 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 	def get_name():
 		return get_string( get_int() )
 
-	def FindParent():
+	def FindParent(debug = False):
+		result = None
 		while len(smd.parent_chain):
 			candidate = smd.parent_chain[-1]
 			if candidate['chdn'] > 0:
-				candidate['chdn'] -= 1
-				return candidate
+				if not result:
+					result = candidate
+					if debug: print("Got",result.name,"({})".format(candidate['chdn']))
+					candidate['chdn'] -= 1
+				else:
+					break
 			else:
+				if debug: print("Popping",smd.parent_chain[-1].name)
 				smd.parent_chain.pop()
+		#if result:
+		#	print(bone.name if bone else atch.name,"parent is",result.name)
+		return result
 				
 	def readDMXMesh():
-		#bench("SKEL") # including bones
 		if not smd.jobType: smd.jobType = REF
 		lastob = smd.m
 		
@@ -1930,10 +1945,16 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 				#last = now
 
 			elif block_name == "FACE":
-				mat_dir, mat_name = get_name().replace("\\","/").rsplit("/",1)
+				mat_info = get_name().replace("\\","/").rsplit("/",1)
+				if len(mat_info) == 2:
+					mat_name = mat_info[1]
+				else:
+					mat_name = mat_info[0]
 
 				mat, mat_ind = getMeshMaterial(mat_name)
-				mat['smd_dir'] = mat_dir + "/"
+				
+				if len(mat_info) == 2:
+					mat['smd_dir'] = mat_info[0] + "/"
 
 				face_array_len = get_int()
 				faces = []
@@ -2015,8 +2036,8 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 				#bench("WMAP")
 
 			else:
-				smd.file.seek(-4,1)
-				
+				if smd.file.peek():
+					smd.file.seek(-4,1)
 				bpy.ops.object.mode_set(mode='OBJECT')
 				bpy.context.scene.objects.active = ob
 				if smd.jobType == PHYS:
@@ -2042,7 +2063,9 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 
 		atch.parent = smd.a
 		atch.parent_type = 'BONE'
-		atch.parent_bone = FindParent().name
+		parent = FindParent()
+		if parent:
+			atch.parent_bone = parent.name
 		
 		rigid = get_bool()
 		world_align = get_bool()
@@ -2080,8 +2103,7 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		
 		smd.boneInfo = bones_info.fromArmature(smd_manager.a)
 
-		for i in range(len(bones)*2):
-			assert(get_string(4) == "CHAN")
+		while get_string(4) == "CHAN":
 			data_type = get_string(1)
 			boneid = get_int()
 			try:
@@ -2125,7 +2147,7 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		readFrames() # actually applies them
 		bench("ANIM")
 	
-	while( smd.file.readable() ):
+	while( smd.file.peek() ):
 
 		block_name = get_string(4)
 
@@ -2158,10 +2180,11 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 				g_trans *= GetMat()
 
 		elif block_name == "CHDN":
-			parent = bone if bone else ob# if ob else smd.m
+			parent = bone if bone else ob
 			if parent:
 				smd.parent_chain.append(parent)
-				parent['chdn'] = get_int()
+				val = get_int()
+				parent['chdn'] = val
 
 		elif block_name == "SKEL":
 			if context.active_object:
@@ -2194,17 +2217,16 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		elif block_name == "ATCH":
 			readDMXAtch()
 		elif block_name == "MESH":
+			bone = None
 			if smd.a and smd_manager.a != smd.a:
 				validateBones(qc.a)
-			readDMXMesh()
+			readDMXMesh()			
 		elif block_name == "ANIM":
 			readDMXAnim()
 
-		else: # unrecognised block
+		else:
+			print("unrecognised MODL block at {}".format(smd.file.tell()))
 			break
-			if smd.file.readable():
-				seek_len = min(4,get_int())
-				smd.file.seek(seek_len, io.SEEK_CUR)
 
 	if 0:#smd.m:
 		smd.m.select = True
@@ -2278,8 +2300,8 @@ class SmdImporter(bpy.types.Operator):
 					xy = int(max(smd.m.dimensions[0],smd.m.dimensions[1]))
 					space.grid_lines = max(space.grid_lines, xy)
 					space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
-		if bpy.context.space_data.type == 'VIEW_3D':
-			bpy.ops.view3d.view_selected()
+		if bpy.context.space_data.type == 'VIEW_3D':			
+			bpy.ops.view3d.view_all()
 		return 'FINISHED'
 
 	def invoke(self, context, event):

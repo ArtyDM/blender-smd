@@ -125,17 +125,37 @@ void WriteBone(CDmxElement* DmeJoint,bool ListOnly = false)
 	int NumChildren = children->Count();
 	if (NumChildren)
 	{
-		OutputStr("CHDN");
-		OutputInt(NumChildren);
 		for (int i=0; i < NumChildren; i++ )
 		{
 			CDmxElement* pCur = children->Element(i);
-			if ( strcmp(pCur->GetTypeString(), "DmeDag") == 0) {
-				if (!ListOnly)
-					WriteAttachment(pCur);
-			}
+			if (
+					strcmp(pCur->GetTypeString(), "DmeJoint") == 0
+					||
+					(
+						strcmp(pCur->GetTypeString(), "DmeDag") == 0
+						&&
+						pCur->GetValue<CDmxElement*>("shape")
+					)
+				)
+				continue;
 			else
-				WriteBone(pCur,ListOnly);
+				DmeJoint->GetAttribute("children")->GetArrayForEdit<CDmxElement*>().Remove(i); // not something we want to export
+		}
+		NumChildren = children->Count();
+		if (NumChildren)
+		{
+			OutputStr("CHDN");
+			OutputInt(NumChildren);
+			for (int i=0; i < NumChildren; i++ )
+			{
+				CDmxElement* pCur = children->Element(i);
+				if ( strcmp(pCur->GetTypeString(), "DmeDag") == 0) {
+					if (!ListOnly)
+						WriteAttachment(pCur);
+				}
+				else
+					WriteBone(pCur,ListOnly);
+			}
 		}
 	}
 }
@@ -216,8 +236,8 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 					
 					for ( int j=0; j < NumWeightedBones; j++)
 					{
-						Output(&weights->Element(cur),sizeof(float));
-						OutputInt( wtIndices->Element(cur));
+						OutputFloat(weights->Element(cur));
+						OutputInt(wtIndices->Element(cur));
 						cur++;
 					}
 				}
@@ -247,23 +267,23 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 
 const CUtlVector<CDmxElement*>* WriteSkeleton(CDmxElement* DmeModel, int version, bool ListOnly = false)
 {
-	const CUtlVector<CDmxElement*>* jointList = GetJointList();
+	const CUtlVector<CDmxElement*>* children = &DmeModel->GetArray<CDmxElement*>("children");
 	bool HadBones = false;
 	
-	for ( int i = 0; i < jointList->Count(); i++ )
+	for ( int i = 0; i < children->Count(); i++ )
 	{
-		if ( strcmp(jointList->Element(i)->GetTypeString(),"DmeJoint") == 0 )
+		if ( strcmp(children->Element(i)->GetTypeString(),"DmeJoint") == 0 )
 		{
 			if (!HadBones)
 			{
 				OutputStr("SKEL");
 				HadBones = true;
 			}
-			WriteBone(jointList->Element(i),ListOnly);
+			WriteBone(children->Element(i),ListOnly);
 		}
 	}
 	if (HadBones)
-		return jointList;
+		return GetJointList();
 
 	return 0;
 }
@@ -346,7 +366,7 @@ void WriteAnimation(CDmxElement* anim, int version)
 				continue;
 
 			CDmxElement* toElement = channel->GetValue<CDmxElement*>("toElement");
-			if (!toElement || strcmp(FindChild(skeleton,toElement)->GetTypeString(),"DmeJoint") != 0)
+			if (!toElement || !FindChild(skeleton,toElement) || strcmp(FindChild(skeleton,toElement)->GetTypeString(),"DmeJoint") != 0)
 				continue;
 			const char* name = FindChild(skeleton,toElement)->GetName();
 
