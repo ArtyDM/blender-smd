@@ -1,4 +1,15 @@
 #labels Featured
+== 0.15.4 - April 6th, 2011 ==
+
+General:
+
+  * Relaxed Blender version checking, as now we are into RCs the addon API should be stable.
+
+Importer:
+
+  * Fixed importing DMX materials without a folder
+  * Fixed importing DMX animations that don't define every bone
+
 == 0.15.3 - April 5th, 2011 ==
 
 Exporter:
