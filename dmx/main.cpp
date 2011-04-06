@@ -48,24 +48,7 @@ void IterateDmxElement(CDmxElement* DmeModelRoot)
 	}
 }
 
-class CDmxKeyValues2ErrorStack
-{
-public:
-	static CUtlSymbolTableLargeBase<CNonThreadsafeTree<0>,0> GetSymbolTable();
-	void SetFilename(char const *);
-	void IncrementCurrentLine();
-	void SetCurrentLine(int);
-	int GetCurrentLine() const;
-	int Push(CUtlSymbolLarge);
-	void Pop();
-	void Reset(int,CUtlSymbolLarge);
-	void ReportError(char const *,...);
-	
-	CUtlSymbolTableLargeBase<CNonThreadsafeTree<0>,0> m_ErrorSymbolTable;
-};
-extern CDmxKeyValues2ErrorStack g_KeyValues2ErrorStack;
-
-CDmxElement* DmeModelRoot;
+CDmxElement* DmeModelRoot = 0;
 
 int CALLBACK WinMain(
   __in  HINSTANCE hInstance,
@@ -136,30 +119,15 @@ int CALLBACK WinMain(
 	pos = 0;
 
 	if (KV2)
-	{
-		bool UnserializeTextDMX(const char* pFilename,CUtlBuffer &buf,CDmxElement** ppRoot);
-		UnserializeTextDMX(__argv[1],v_buf,&DmeModelRoot);
-
 		DecodeKV2(&fdmx);
-
-	}
 	else
-	{
 		UnserializeDMX(v_buf,&DmeModelRoot);
-	}
 
 	fdmx.close();
 	
 	if (!DmeModelRoot)
 	{
-		if (KV2)
-		{
-			Error("Cannot decode KeyValues2");
-		}
-		else
-		{
-			FatalErr("DMX decoding failed");
-		}
+		FatalErr("DMX decoding failed");
 		return 1;
 	}
 

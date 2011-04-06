@@ -163,7 +163,7 @@ copy "$(TargetPath)" "C:\blender-2.57-RC1-r35899-windows64"</Command>
       <AdditionalDependencies>dmxloader.lib;mathlib.lib;tier0.lib;tier1.lib;tier2.lib;interfaces.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(TargetPath)" "C:\blender-2.57-RC1-r35899-windows64"
+      <Command>copy "$(TargetPath)" "C:\blender-2.57-RC2-r36007-windows32"
 ;copy "$(TargetPath)" "C:\blender-svn\install\win32-mingw"
 </Command>
     </PostBuildEvent>
