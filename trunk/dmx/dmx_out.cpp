@@ -100,47 +100,49 @@ void WriteAttachment(CDmxElement* DmeDag)
 
 void WriteBone(CDmxElement* DmeJoint,bool ListOnly = false)
 {
-	assert(strcmp(DmeJoint->GetTypeString(),"DmeJoint") == 0);
+	assert(
+		strcmp(DmeJoint->GetTypeString(),"DmeJoint") == 0
+		||
+		strcmp(DmeJoint->GetTypeString(), "DmeDag") == 0
+	);
 
 	static const CUtlVector<CDmxElement*>* TransformList = &DmeModelRoot->GetValue<CDmxElement*>("skeleton")->GetArray<CDmxElement*>("baseStates").Element(0)->GetArray<CDmxElement*>("transforms");
-
-	/*static const CUtlVector<CDmxElement*>* jointTransforms = &DmeModelRoot->GetValue<CDmxElement*>("skeleton")->GetArray<CDmxElement*>("jointTransforms");
-	if (!jointTransforms) {
-		FatalErr("Invalid DMX: Skeleton but no jointTransforms");
-	}*/
 
 	if ( DmeJoint->HasAttribute("written") )
 		return;
 	DmeJoint->AddAttribute("written");
 
-	OutputStr("BONE");
-	WriteName(DmeJoint);
 	int ID = GetJointList()->Find(DmeJoint);
+
+	OutputStr("BONE");
+	WriteName(DmeJoint);	
 	OutputInt(ID);
 	
 	if (!ListOnly)
 		WriteTransform(DmeJoint->GetValue<CDmxElement*>("transform"));
 
+	//assert( strcmp(DmeJoint->GetName(),"prp_sleeve_L") != 0);
+
 	const CUtlVector<CDmxElement*>* children = &DmeJoint->GetArray<CDmxElement*>("children");
 	int NumChildren = children->Count();
+	CUtlVector<int> ToRemove;
 	if (NumChildren)
 	{
 		for (int i=0; i < NumChildren; i++ )
 		{
 			CDmxElement* pCur = children->Element(i);
 			if (
-					strcmp(pCur->GetTypeString(), "DmeJoint") == 0
-					||
-					(
-						strcmp(pCur->GetTypeString(), "DmeDag") == 0
-						&&
-						pCur->GetValue<CDmxElement*>("shape")
-					)
+				strcmp(pCur->GetTypeString(), "DmeJoint") == 0
+				||
+				strcmp(pCur->GetTypeString(), "DmeDag") == 0
 				)
 				continue;
 			else
-				DmeJoint->GetAttribute("children")->GetArrayForEdit<CDmxElement*>().Remove(i); // not something we want to export
+				ToRemove.AddToHead(i); // removing during the loop would lead to elements being skipped			
 		}
+		for (int i=0; i < ToRemove.Count(); i++ )
+			DmeJoint->GetAttribute("children")->GetArrayForEdit<CDmxElement*>().Remove( ToRemove.Element(i) );
+
 		NumChildren = children->Count();
 		if (NumChildren)
 		{
@@ -149,7 +151,11 @@ void WriteBone(CDmxElement* DmeJoint,bool ListOnly = false)
 			for (int i=0; i < NumChildren; i++ )
 			{
 				CDmxElement* pCur = children->Element(i);
-				if ( strcmp(pCur->GetTypeString(), "DmeDag") == 0) {
+				if (
+					strcmp(pCur->GetTypeString(), "DmeDag") == 0
+					&&
+					pCur->GetValue<CDmxElement*>("shape")
+				) {
 					if (!ListOnly)
 						WriteAttachment(pCur);
 				}
@@ -173,12 +179,13 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 	{
 		if ( strcmp(shape->GetTypeString(),"DmeMesh") == 0 )
 		{
-			CDmxElement* DmeMesh = shape;
-			CDmxElement* DmeVertexData = DmeMesh->GetValue<CDmxElement*>("currentState");
-		
 			OutputStr("MESH");
-			WriteName(DmeMesh);
+			WriteName(shape);
+			
 			WriteTransform(DmeMesh->GetValue<CDmxElement*>("transform"));
+
+			CDmxElement* DmeMesh = shape;
+			CDmxElement* DmeVertexData = DmeMesh->GetValue<CDmxElement*>("currentState");		
 	
 			OutputStr("VERT");
 			const CUtlVector<Vector>* pos		= &DmeVertexData->GetArray<Vector>("positions");
@@ -265,24 +272,33 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 	}
 }
 
-const CUtlVector<CDmxElement*>* WriteSkeleton(CDmxElement* DmeModel, int version, bool ListOnly = false)
+bool GotBones = false;
+
+void StartBoneWrite(CDmxElement* DmeModel, bool ListOnly) // indirection to support skeleton > model > bones
 {
 	const CUtlVector<CDmxElement*>* children = &DmeModel->GetArray<CDmxElement*>("children");
-	bool HadBones = false;
-	
+
 	for ( int i = 0; i < children->Count(); i++ )
 	{
 		if ( strcmp(children->Element(i)->GetTypeString(),"DmeJoint") == 0 )
 		{
-			if (!HadBones)
-			{
+			if (!GotBones)
 				OutputStr("SKEL");
-				HadBones = true;
-			}
+			GotBones = true;
 			WriteBone(children->Element(i),ListOnly);
 		}
+		else if ( strcmp(children->Element(i)->GetTypeString(),"DmeModel") == 0 )
+			StartBoneWrite(children->Element(i), ListOnly);
 	}
-	if (HadBones)
+}
+
+const CUtlVector<CDmxElement*>* WriteSkeleton(CDmxElement* DmeModel, int version, bool ListOnly = false)
+{
+	const CUtlVector<CDmxElement*>* children = &DmeModel->GetArray<CDmxElement*>("children");
+	
+	StartBoneWrite(DmeModel,ListOnly);
+
+	if (GotBones)
 		return GetJointList();
 
 	return 0;
@@ -336,6 +352,7 @@ void WriteAnimation(CDmxElement* anim, int version)
 
 	float FPS = anim->GetValue<int>("frameRate");
 	float finalFPS = FPS * timeFrame->GetValue<float>("scale");
+	if (finalFPS == 0) finalFPS = 30; // assumed
 	OutputFloat(finalFPS);
 	
 	float duration;
