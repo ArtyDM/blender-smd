@@ -1,4 +1,30 @@
 #labels Featured
+== DMX-Model 0.2 - April 7th, 2011 ==
+
+  * KeyValues2 support. All TF2 models can now be imported.
+  * Fixed importing bones with "foreign objects" as children
+  * Fixed not importing DmeDag bones (are they any different from DmeJoint?)
+  * Fixed mesh transforms never being written out
+  * Fixed handling of animations that don't define a framerate (by assuming 30fps)
+
+== SMD Tools 0.15.5 - April 7th, 2011 ==
+
+General:
+
+  * Fixed large UI gaps when a group or armature was filtered from the Scene Exports list
+
+Importer:
+
+  * Fixed infinite recursion when a file was missing
+  * Fixed not storing long bone names
+  * Fixed importing DMX materials without a folder
+  * Fixed importing DMX animations that don't define every bone
+  * Fixed Y-up SMD meshes being in outdated positions until the user caused them to update
+  * Fixed importing pure animation QCs
+  * Fixed $definemacro by ignoring it (for now at least)
+  * Fixed trying to import $animation names when appearing in a $sequence
+  * Fixed hidden armatures becoming visible after DMX import
+
 == 0.15.4 - April 6th, 2011 ==
 
 General:
