@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 4),
+	"version": (0, 15, 5),
 	"blender": (2, 56, 5),
 	"api": 35899,
 	"category": "Import-Export",
@@ -231,6 +231,9 @@ def getSmdFloat(fval):
 
 # joins up "quoted values" that would otherwise be delimited, removes comments
 def parseQuoteBlockedLine(line,lower=True):
+	if len(line) == 0:
+		return ["\n"]
+
 	words = []
 	last_word_start = 0
 	in_quote = in_whitespace = False
@@ -287,6 +290,9 @@ def parseQuoteBlockedLine(line,lower=True):
 
 	if needBracket:
 		words.append("{")
+	
+	if line.endswith("\\\\\n") and (len(words) == 0 or words[-1] != "\\\\"):
+		words.append("\\\\") # macro continuation beats everything
 
 	return words
 
@@ -1225,6 +1231,7 @@ def applyFrameDataPose(frameData):
 
 		if not frameData.get(boneName):
 			continue
+
 		smd_pos = frameData[boneName]['pos']
 		rotMats[boneName] = frameData[boneName]['rot']
 
@@ -1475,6 +1482,7 @@ def readPolys():
 
 		if smd_manager.upAxis == 'Y':
 			md.transform(rx90)
+			md.update()
 
 		if badWeights:
 			log.warning(badWeights,"vertices weighted to invalid bones!")
@@ -1547,6 +1555,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		qc.jobName = filename
 		qc.root_filedir = filedir
 		qc.makeCamera = makeCamera
+		qc.animation_names = []
 		if newscene:
 			bpy.context.screen.scene = bpy.data.scenes.new(filename) # BLENDER BUG: this currently doesn't update bpy.context.scene
 		else:
@@ -1573,6 +1582,12 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 					word = word.replace(word[pos:pos+len(kw)], qc.vars[var])					
 			line[i] = word.replace("/","\\") # studiomdl is Windows-only
 			i += 1
+			
+		# Skip macros
+		if line[0] == "$definemacro":
+			log.warning("Skipping macro in QC {}".format(filename))
+			while line[-1] == "\\\\":
+				line = parseQuoteBlockedLine( file.readline())
 
 		# register new QC variable
 		if line[0] == "$definevariable":
@@ -1602,22 +1617,27 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 		if line[0] == "$definebone":
 			pass # TODO
 
-		def loadSMD(word_index,ext,type, append=True,layer=0):
+		def loadSMD(word_index,ext,type, append=True,layer=0,in_file_recursion = False):
 			path = line[word_index]
 			if line[word_index][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = appendExt(path,ext)
 			else:
 				path = qc.cd() + appendExt(path,ext)
 			if not os.path.exists(path):
-				loadSMD(word_index,"dmx",type,append,layer)
-				return
+				if not in_file_recursion:
+					if loadSMD(word_index,"dmx",type,append,layer,True):
+						return True
+					else:
+						log.error("Could not open file",path)
+						return False
 			if not path in qc.imported_smds: # FIXME: an SMD loaded once relatively and once absolutely will still pass this test
 				qc.imported_smds.append(path)
 				if path.endswith("dmx"):
 					readDMX(context,path,qc.upAxis,connectBones,False,type,append,from_qc=True,target_layer=layer)
 				else:
 					readSMD(context,path,qc.upAxis,connectBones,False,type,append,from_qc=True,target_layer=layer)				
-				qc.numSMDs += 1
+				qc.numSMDs += 1				
+			return True
 
 		# meshes
 		if line[0] in ["$body","$model"]:
@@ -1670,7 +1690,13 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 					num_words_to_skip = 5
 					continue
 				# there are many more keywords, but they can only appear *after* an SMD is referenced
-				loadSMD(i,"smd",ANIM)
+				
+				if not qc.a: qc.a = findArmature()
+				
+				if line[i].lower() not in qc.animation_names:
+					loadSMD(i,"smd",ANIM)
+					if line[0] == "$animation":
+						qc.animation_names.append(line[1].lower())
 				break
 			continue
 
@@ -1733,7 +1759,8 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 			if line[1][1] == ":": # absolute path; QCs can only be compiled on Windows
 				path = line[1]
 			else:
-				path = filedir + line[1] # special case: ignores dir stack
+				path = qc.root_filedir + line[1] # special case: ignores dir stack
+
 			if not path.endswith(".qc") and not path.endswith(".qci"):
 				if os.path.exists(appendExt(path,".qci")):
 					path = appendExt(path,".qci")
@@ -1832,7 +1859,12 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 	smd.isDMX = 16
 	smd.smdNameToMatName = {}
 	target_arm = findArmature()
+	if target_arm:
+		arm_hide = target_arm.hide
 	benchReset()
+	ob = bone = restData = smd.atch = smd.a = None
+	
+	print( "\nDMX IMPORTER: now working on",getFilename(filepath) )
 
 	try:
 		dmx = subprocess.Popen( ("dmx_model.exe", filepath) ,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1845,7 +1877,7 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		msg = "{} ({})".format(err.decode('ASCII'), getFilename(filepath))
 		if dmx.returncode > 0:
 			log.error(msg)
-			return
+			return 0
 		else:
 			log.warning(msg)
 
@@ -1890,10 +1922,41 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		#if result:
 		#	print(bone.name if bone else atch.name,"parent is",result.name)
 		return result
+		
+	def dmxGenerateArmature():
+		bpy.context.scene.objects.active = smd.a
+		if restData:
+			bpy.ops.object.mode_set(mode='OBJECT')
+			sortBonesForImport()
+			smd.frameData.append(restData)
+			bpy.ops.object.mode_set(mode='EDIT')
+			applyFrameDataRest(restData)
+		TidyArmature()
+		
+	def readDMXTransform(target = None):
+		pos = get_vec(3)
+		rot = get_quat()
+		def GetMat():
+			return tMat(pos * rot.to_matrix().inverted())
+
+		if target:
+			target.matrix_local *= GetMat()			
+		elif smd.atch:
+			atch = smd.atch
+			atch.location = pos * rz90 * ry90 # works?!?
+			atch.rotation_euler = vector(rot.to_euler()) # doesn't
+		elif bone:
+			restData[bone.name] = {'pos':pos, 'rot':rot.inverted().to_matrix()}
+		elif ob:
+			ob.matrix_local *= GetMat()
+		else:
+			pass #g_trans *= GetMat()
+		bpy.context.scene.update()
 				
 	def readDMXMesh():
 		if not smd.jobType: smd.jobType = REF
 		lastob = smd.m
+		ob = bone = smd.atch = None
 		
 		if bpy.context.active_object:
 			bpy.ops.object.mode_set(mode='OBJECT')
@@ -1903,7 +1966,8 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		ob = smd.m = bpy.data.objects.new(name=name, object_data=bpy.data.meshes.new(name=name))
 		context.scene.objects.link(ob)
 		context.scene.objects.active = ob
-		ob.rotation_euler.rotate(getUpAxisMat(upAxis))
+		ob.matrix_world *= getUpAxisMat(upAxis)
+		bpy.context.scene.update()
 		
 		if len(smd.meshes):
 			group = bpy.data.groups.get(smd.jobName)
@@ -1924,9 +1988,12 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 			amod.use_bone_envelopes = False
 
 		while( smd.file.readable() ):
-			block_name = get_string(4)			
+			block_name = get_string(4)
+			
+			if block_name == "TRFM":
+				readDMXTransform(ob)
 
-			if block_name == "VERT":
+			elif block_name == "VERT":
 				num_verts = get_int()
 				ob.data.vertices.add(num_verts)
 				verts = []
@@ -2081,9 +2148,11 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 			removeObject(smd.a)
 			smd.a = findArmature()
 			print("ARM",smd.a.name)'''
-		removeObject(smd.a)
+		if target_arm:
+			removeObject(smd.a)
+		else:
+			dmxGenerateArmature()
 		smd.a = target_arm
-		print(smd.a.name)
 		smd.a.hide = False
 			
 		fps = get_float()
@@ -2109,14 +2178,14 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 			try:
 				bone_name = smd.boneIDs[boneid]
 			except KeyError:
-				print(smd.boneIDs)
-				raise
+				bone_name = "DMXNULL"
+				frame = -1 # read to dummy frame
 			num_layers = get_int()
 			
 			for layer in range(num_layers):
 				assert(get_string(1) == "L") # start of a new layer
 				
-				num_frames = get_int()				
+				num_frames = get_int()
 				for frame in range(num_frames):
 					frame_float = get_float() * fps
 					frame = frame_int = int(round(frame_float,0))
@@ -2130,6 +2199,9 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 						smd.frameData[frame][bone_name]['pos'] = get_vec(3)
 					elif data_type == "o":
 						smd.frameData[frame][bone_name]['rot'] = get_quat().to_matrix().inverted()
+						
+		if smd.file.peek():
+			smd.file.seek(-4,1)
 		
 		for i in range(1,len(smd.frameData)):
 			for bone in smd.a.data.bones:
@@ -2144,9 +2216,16 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 				if not cur.get('rot'):
 					cur['rot'] = "empty"
 		
+		# Remove children of missing bones...depending on how DMX works this may have to be changed to the 
+		# SMD system of "bridging the gap"
+		for i in range(1,len(smd.frameData)):
+			for bone in smd.a.data.bones:
+				if smd.frameData[i].get(bone.name) and bone.parent and not smd.frameData[i].get(bone.parent.name):
+					del smd.frameData[i][bone.name]
+					continue
+		
 		readFrames() # actually applies them
-		bench("ANIM")
-	
+		
 	while( smd.file.peek() ):
 
 		block_name = get_string(4)
@@ -2156,28 +2235,13 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 			if modl_ver != 1:
 				log.error("dmx-model version is {}, expected 1".format(modl_ver))
 				return 0
-			ob = bone = smd.atch = smd.a = None
 			g_trans = rMat(0,4,"Z")
 			mdl_name = get_string( get_int() )
 			if context.scene.name.startswith("Scene"):
 				context.scene.name = mdl_name
 
 		elif block_name == "TRFM":
-			pos = get_vec(3)
-			rot = get_quat()
-			def GetMat():
-				return tMat(pos * rot.to_matrix().inverted())
-
-			if smd.atch:
-				atch = smd.atch
-				atch.location = pos * rz90 * ry90 # works?!?
-				atch.rotation_euler = vector(rot.to_euler()) # doesn't
-			elif bone:
-				restData[bone.name] = {'pos':pos, 'rot':rot.inverted().to_matrix()}
-			elif ob:
-				ob.matrix_local *= GetMat()
-			else:
-				g_trans *= GetMat()
+			readDMXTransform()
 
 		elif block_name == "CHDN":
 			parent = bone if bone else ob
@@ -2206,12 +2270,14 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 			name = get_name()
 			id = get_int()
 			
-			bone = smd.a.data.edit_bones.new(name=name)
+			bone = smd.a.data.edit_bones.new(name=name[:29]) # Blender RC2 hang avoidance
+			if bone.name != name:
+				bone['smd_name'] = name
 			bone['smd_id'] = id
 			smd.boneIDs[id] = name
 			max_bone_id = max(max_bone_id,id)		
 			bone.tail = (0,1,0)
-				
+
 			bone.parent = FindParent()
 
 		elif block_name == "ATCH":
@@ -2220,6 +2286,8 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 			bone = None
 			if smd.a and smd_manager.a != smd.a:
 				validateBones(qc.a)
+			if not smd.a and append:
+				smd.a = findArmature()
 			readDMXMesh()			
 		elif block_name == "ANIM":
 			readDMXAnim()
@@ -2227,24 +2295,13 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		else:
 			print("unrecognised MODL block at {}".format(smd.file.tell()))
 			break
-
-	if 0:#smd.m:
-		smd.m.select = True
-		context.scene.objects.active = smd.m
-		bpy.ops.object.mode_set(mode='EDIT')
-		bpy.ops.object.mode_set(mode='OBJECT')
-
-		bench("MEUP")
 	
 	if smd.a and smd.jobType == REF:
-		bpy.ops.object.mode_set(mode='OBJECT')
-		bpy.context.scene.objects.active = smd.a
-		sortBonesForImport()
-		smd.frameData.append(restData)
-		bpy.ops.object.mode_set(mode='EDIT')
-		applyFrameDataRest(restData)
-		TidyArmature()
+		dmxGenerateArmature()
 
+	if smd.a and target_arm:
+		smd.a.hide = arm_hide
+	bench("DMX imported in")
 	return 1
 
 class SmdImporter(bpy.types.Operator):
@@ -2287,10 +2344,13 @@ class SmdImporter(bpy.types.Operator):
 		elif filepath_lc.endswith('.dmx'):
 			self.countSMDs = readDMX(context, self.properties.filepath, self.properties.upAxis, self.properties.connectBones, append=self.properties.append)
 		else:
-			self.report('ERROR',"File format not recognised")
+			if len(filepath_lc) == 0:
+				self.report('ERROR',"No file selected")
+			else:
+				self.report('ERROR',"File format not recognised")
 			return 'CANCELLED'
 
-		log.errorReport("imported","SMD",self,self.countSMDs)
+		log.errorReport("imported","file",self,self.countSMDs)
 		if self.countSMDs and smd.m:
 			smd.m.select = True
 			for area in context.screen.areas:
@@ -3055,8 +3115,7 @@ def unBake():
 # Creates an SMD file
 def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = False ):
 	if filepath.endswith("dmx"):
-		print("Skipping DMX file export: format unsupported (%s)" % getFilename(filepath))
-		return
+		return writeDMX( context, object, groupIndex, filepath, smd_type, quiet )
 
 	global smd
 	smd	= smd_info()
@@ -3403,6 +3462,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 			want_sep = False
 			for group in groups_sorted:
 				if want_sep: columns.separator()
+				want_sep = False
 				for object in group.objects:
 					if object in validObs:
 						had_groups = True
@@ -3447,6 +3507,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 			for object in validObs:
 				if object.type == 'ARMATURE' and object.animation_data:
 					if want_sep: columns.separator()
+					want_sep = False
 					had_armatures = True
 					row = columns.row()
 					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
@@ -3743,7 +3804,7 @@ class SmdExporter(bpy.types.Operator):
 			jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
 			print("\n")
 
-		log.errorReport(jobMessage,"SMD",self,self.countSMDs)
+		log.errorReport(jobMessage,"file",self,self.countSMDs)
 		return 'FINISHED'
 
 	# indirection to support batch exporting
