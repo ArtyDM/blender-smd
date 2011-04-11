@@ -135,12 +135,18 @@ class qc_info:
 	def cd(self):
 		return self.root_filedir + "".join(self.dir_stack)
 
+class SMD_MT_GetDMXModel(bpy.types.Menu):
+	bl_label = "DMX support unavailable"
+	def draw(self,context):
+		self.layout.operator("wm.url_open",text="Could not locate DMX-Model. Download now?",icon='SCRIPTWIN').url = "http://code.google.com/p/blender-smd/downloads/list"
+
 # error reporting
 class logger:
 	def __init__(self):
 		self.warnings = []
 		self.errors = []
 		self.startTime = time.time()
+		self.wantDMXDownloadPrompt = False
 
 	def warning(self, *string):
 		message = " ".join(str(s) for s in string)
@@ -176,6 +182,11 @@ class logger:
 		else:
 			caller.report('INFO',message)
 			print(message)
+			
+		if self.wantDMXDownloadPrompt:
+			stdOutColour(STD_YELLOW)
+			print("\nFor DMX support, download DMX-Model from http://code.google.com/p/blender-smd/downloads/list")
+			stdOutReset()
 
 log = None # Initialize this so it is easier for smd_test_suite to access
 
@@ -198,7 +209,7 @@ def benchTotal():
 	return time.time() - benchStart
 
 def ValidateBlenderVersion(op):
-	if int(bpy.app.build_revision) >35899:
+	if int(bpy.app.build_revision[:5]) > 35899:
 		return True
 	else:
 		op.report('ERROR',"SMD Tools {} require Blender 2.57 RC1 or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bpy.app.version)) )
@@ -1870,6 +1881,7 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		dmx = subprocess.Popen( ("dmx_model.exe", filepath) ,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 	except OSError as err:
 		log.error("Could not launch DMX-Model:",str(err))
+		log.wantDMXDownloadPrompt = True
 		return 0
 
 	out, err = dmx.communicate()
