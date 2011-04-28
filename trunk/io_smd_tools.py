@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 6),
+	"version": (0, 15, 7),
 	"blender": (2, 56, 5),
 	"api": 35899,
 	"category": "Import-Export",
@@ -98,6 +98,7 @@ class smd_info:
 		self.connectBones = False
 		self.upAxis = 'Z'
 		self.upAxisMat = 1 # vec * 1 == vec
+		self.truncMaterialNames = []
 		
 		# DMX stuff
 		self.attachments = []
@@ -1387,8 +1388,6 @@ def readPolys():
 		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
 		smd.smdNameToMatName[smd_name] = mat.name
 
-	smd.truncMaterialNames = []
-
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
 	# and one for the vertices on each polygon that loops three times. We're entering the poly one now.
@@ -2652,7 +2651,7 @@ def writePolys(internal=False):
 					for mat_slot in bi['baked'].material_slots:
 						mat = mat_slot.material
 						if mat.get('smd_name') and mat not in materials:
-							smd.file.write( "# Blender material \"{}\" has smd_name \"{}\"\n".format(mat.name,mat['smd_name']) )
+							smd.file.write( "// Blender material \"{}\" has smd_name \"{}\"\n".format(mat.name,mat['smd_name']) )
 							materials.append(mat)
 
 		for bi in smd.bakeInfo:
