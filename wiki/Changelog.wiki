@@ -1,4 +1,21 @@
 #labels Featured
+== SMD Tools 0.15.7 - April 28th, 2011 ==
+
+Importer:
+
+  * Fixed DMX import with long material names
+
+Exporter:
+
+  * Fixed writing invalid SMDs in cases of long material names
+
+== SMD Tools 0.15.6 - April 11th, 2011 ==
+
+General:
+
+  * Fixed version validation failing in some Blender builds
+  * Added a console message for downloading DMX-Model if a DMX is encountered without it
+
 == DMX-Model 0.2 - April 7th, 2011 ==
 
   * KeyValues2 support. All TF2 models can now be imported.
