@@ -1,4 +1,14 @@
 #labels Featured
+== SMD Tools 0.15.8 - May 11th, 2011 ==
+
+Importer:
+
+  * Collision meshes imported from a QC now have a wireframe overlay instead of being flat shaded (smoothing is required for concave collision meshes to compile properly)
+  
+Exporter:
+
+  * Added Portal 2 compile support
+
 == SMD Tools 0.15.7 - April 28th, 2011 ==
 
 Importer:
