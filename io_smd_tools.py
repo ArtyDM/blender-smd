@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 7),
+	"version": (0, 15, 8),
 	"blender": (2, 56, 5),
 	"api": 35899,
 	"category": "Import-Export",
@@ -75,7 +75,8 @@ src_branches = (
 ('ep1','Source 2006','Source 2006'),
 ('left 4 dead 2','Left 4 Dead 2','Left 4 Dead 2'),
 ('left 4 dead','Left 4 Dead','Left 4 Dead'),
-('alien swarm','Alien Swarm','Alien Swarm')
+('alien swarm','Alien Swarm','Alien Swarm'),
+('portal 2','Portal 2','Portal 2')
 )
 
 # I hate Python's var redefinition habits
@@ -1486,9 +1487,13 @@ def readPolys():
 		bpy.context.scene.objects.active = smd.m
 		ops.object.mode_set(mode='EDIT')
 		ops.mesh.remove_doubles()
-		if smd.jobType != PHYS:
-			ops.mesh.faces_shade_smooth()
+		ops.mesh.faces_shade_smooth()
 		ops.object.mode_set(mode='OBJECT')
+		
+		if smd.jobType == PHYS:
+			# Phys meshes must have smoothed normals if they are to compile properly,
+			# so now doing this instead
+			smd.m.show_wire = True
 
 		if smd_manager.upAxis == 'Y':
 			md.transform(rx90)
@@ -3233,7 +3238,7 @@ def compileQCs(path=None):
 	studiomdl_path = None
 	if branch in ['ep1','source2007','orangebox'] and sdk_path:
 		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm'] and ncf_path:
+	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2'] and ncf_path:
 		studiomdl_path = ncf_path + branch + "\\bin\\"
 	elif branch == 'CUSTOM':
 		studiomdl_path = scene.smd_studiomdl_custom_path = bpy.path.abspath(scene.smd_studiomdl_custom_path)
