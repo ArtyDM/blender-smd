@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 8),
+	"version": (0, 15, 9),
 	"blender": (2, 56, 5),
 	"api": 35899,
 	"category": "Import-Export",
@@ -3755,7 +3755,7 @@ class SmdExporter(bpy.types.Operator):
 			for group in bpy.data.groups:
 				if group.smd_export:
 					for object in group.objects:
-						if object.smd_export and bpy.context.scene in object.users_scene:
+						if object.smd_export and object.type in exportable_types and object.type != 'ARMATURE' and bpy.context.scene in object.users_scene:
 							g_index = -1
 							for i in range(len(object.users_group)):
 								if object.users_group[i] == group:
@@ -3766,7 +3766,7 @@ class SmdExporter(bpy.types.Operator):
 			for object in bpy.context.scene.objects:
 				if object.smd_export:
 					should_export = True
-					if object.users_group:
+					if object.users_group and object.type != 'ARMATURE':
 						for group in object.users_group:
 							if group.smd_export:
 								should_export = False
@@ -3814,7 +3814,7 @@ class SmdExporter(bpy.types.Operator):
 
 		if self.countSMDs == 0:
 			log.error("Found no valid objects for export")
-		elif context.scene.smd_qc_compile:
+		elif context.scene.smd_qc_compile and context.scene.smd_qc_path:
 			# ...and compile the QC
 			num_good_compiles = compileQCs()
 			jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
