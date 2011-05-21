@@ -1,4 +1,11 @@
 #labels Featured
+== SMD Tools 0.15.9 - May 21st, 2011 ==
+
+Exporter:
+
+  * Fixed whole-scene exports when a group contains an armature or a non-exportable object
+  * Fixed trying to compile on export when the QC path is blank
+
 == SMD Tools 0.15.8 - May 11th, 2011 ==
 
 Importer:
