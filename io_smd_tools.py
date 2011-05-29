@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 9),
+	"version": (0, 15, 10),
 	"blender": (2, 56, 5),
 	"api": 35899,
 	"category": "Import-Export",
@@ -2655,7 +2655,7 @@ def writePolys(internal=False):
 				if bi['baked'].type == 'MESH':
 					for mat_slot in bi['baked'].material_slots:
 						mat = mat_slot.material
-						if mat.get('smd_name') and mat not in materials:
+						if mat and mat.get('smd_name') and mat not in materials:
 							smd.file.write( "// Blender material \"{}\" has smd_name \"{}\"\n".format(mat.name,mat['smd_name']) )
 							materials.append(mat)
 
@@ -2701,6 +2701,7 @@ def writePolys(internal=False):
 			active_uv_tex = uvtex
 			break
 
+	bad_face_mats = 0
 	for face in md.faces:
 		if smd.m.material_slots:
 			mat = smd.m.material_slots[face.material_index].material
@@ -2708,7 +2709,11 @@ def writePolys(internal=False):
 			if bpy.context.scene.smd_use_image_names and image:
 				mat_name = getFilename(image.filepath) # not using data name as it can be truncated and custom props can't be used here
 			else:
-				mat_name = mat['smd_name'] if mat.get('smd_name') else mat.name
+				if mat:
+					mat_name = mat['smd_name'] if mat.get('smd_name') else mat.name
+				else:
+					mat_name = "Material"
+					bad_face_mats += 1
 			smd.file.write(mat_name + "\n")
 		else:
 			smd.file.write(smd.jobName + "\n")
@@ -2790,6 +2795,8 @@ def writePolys(internal=False):
 
 		face_index += 1
 
+	if bad_face_mats:
+		log.warning("{} faces on {} assigned to empty material slots".format(bad_face_mats,smd.jobName))
 	print("- Exported",face_index,"polys")
 	return
 
