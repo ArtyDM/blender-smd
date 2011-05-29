@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 0.15.10 - May 29th, 2011 ==
+
+Exporter:
+
+  * Fixed exporting objects with faces assigned to empty material slots
+
 == SMD Tools 0.15.9 - May 21st, 2011 ==
 
 Exporter:
