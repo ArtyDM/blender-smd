@@ -1,4 +1,22 @@
 #labels Featured
+== SMD Tools 1.0 - June 24th, 2011 ==
+
+The SMD Tools are more or less feature complete (DMX export isn't viable right now) and have proven themselves stable so, after well over 50 releases, *welcome to 1.0!*
+
+General:
+
+  * Updated to Blender 2.58 API. 2.57 is no longer supported.
+  * Info reports are fixed in 2.58; started using them again
+  * Changed the import and export operators' internal names to fit Blender's tweaked naming scheme
+  
+Importer:
+
+  * Fixed DMX physics meshes not receiving wireframe highlight
+
+Exporter:
+
+  * Fixed exporting objects with vertices that have zero weight but are somehow still associated with bones (Blender bug?)
+
 == SMD Tools 0.15.10 - May 29th, 2011 ==
 
 Exporter:
