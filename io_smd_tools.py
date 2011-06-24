@@ -21,9 +21,9 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (0, 15, 10),
-	"blender": (2, 56, 5),
-	"api": 35899,
+	"version": (1, 0, 0),
+	"blender": (2, 58, 0),
+	"api": 37702,
 	"category": "Import-Export",
 	"location": "File > Import/Export; Properties > Scene/Armature",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -167,14 +167,16 @@ class logger:
 
 		if len(self.errors) or len(self.warnings):
 			message += " with {} errors and {} warnings:".format(len(self.errors),len(self.warnings))
-			print(message)
+			
+			# like it or not, Blender automatically prints operator reports to the console these days
+			'''print(message)
 			stdOutColour(STD_RED)
 			for msg in self.errors:
 				print("  " + msg)
 			stdOutColour(STD_YELLOW)
 			for msg in self.warnings:
 				print("  " + msg)
-			stdOutReset()
+			stdOutReset()'''
 			
 			for err in self.errors:
 				message += "\nERROR: " + err
@@ -211,10 +213,10 @@ def benchTotal():
 	return time.time() - benchStart
 
 def ValidateBlenderVersion(op):
-	if int(bpy.app.build_revision[:5]) > 35899:
+	if int(bpy.app.build_revision[:5]) >= bl_info['api']:
 		return True
 	else:
-		op.report('ERROR',"SMD Tools {} require Blender 2.57 RC1 or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bpy.app.version)) )
+		op.report('ERROR',"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(self.cur_entry['bpy']), PrintVer(bpy.app.version)) )
 		return False
 
 def getFileExt(flex=False):
@@ -333,6 +335,8 @@ def PrintVer(in_seq,sep="."):
 			if int(val) == 0 and not len(out):
 				continue
 			out = "{}{}{}".format(str(val),sep if sep else "",out) # NB last value!
+		if out.count(sep) == 1:
+			out += "0" # 1.0 instead of 1
 		return out.rstrip(sep)
 
 try:
@@ -1749,7 +1753,7 @@ def readQC( context, filepath, newscene, doAnim, connectBones, makeCamera, outer
 			origin.rotation_euler = vector([pi/2,0,pi]) + vector(getUpAxisMat(qc.upAxis).inverted().to_euler()) # works, but adding seems very wrong!
 			bpy.ops.object.select_all(action="DESELECT")
 			origin.select = True
-			bpy.ops.object.rotation_apply()
+			bpy.ops.object.transform_apply(rotation=True)
 
 			for i in range(3):
 				origin.location[i] = float(line[i+1])
@@ -1862,7 +1866,7 @@ def readSMD( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		smd.m.rotation_euler = smd.upAxisMat.to_euler()
 		smd.m.select = True
 		bpy.context.scene.update()
-		bpy.ops.object.rotation_apply()
+		bpy.ops.object.transform_apply(rotation=True)
 	'''
 	printTimeMessage(smd.startTime,smd.jobName,"import")
 
@@ -1983,6 +1987,8 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 		context.scene.objects.link(ob)
 		context.scene.objects.active = ob
 		ob.matrix_world *= getUpAxisMat(upAxis)
+		if smd_type == PHYS:
+			ob.show_wire = True;
 		bpy.context.scene.update()
 		
 		if len(smd.meshes):
@@ -2321,7 +2327,7 @@ def readDMX( context, filepath, upAxis, connectBones, newscene = False, smd_type
 	return 1
 
 class SmdImporter(bpy.types.Operator):
-	bl_idname = "import.smd"
+	bl_idname = "import_scene.smd"
 	bl_label = "Import SMD/VTA, DMX, QC"
 	bl_description = "Imports uncompiled Source Engine model data"
 	bl_options = {'UNDO'}
@@ -2371,7 +2377,7 @@ class SmdImporter(bpy.types.Operator):
 			smd.m.select = True
 			for area in context.screen.areas:
 				if area.type == 'VIEW_3D':
-					space = area.active_space
+					space = area.spaces.active
 					# FIXME: small meshes offset from their origins won't extend things far enough
 					xy = int(max(smd.m.dimensions[0],smd.m.dimensions[1]))
 					space.grid_lines = max(space.grid_lines, xy)
@@ -2767,17 +2773,18 @@ def writePolys(internal=False):
 						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( v.co * smd.m.matrix_world )
 						if weight:
 							weights.append([smd.boneNameToID[pose_bone.name], weight])
+							
+			total_weight = 0
+			if smd.amod:
+				for link in weights:
+					total_weight += link[1]
 
-			if not smd.amod or len(weights) == 0:
+			if not smd.amod or total_weight == 0:
 				if not ob_weight_str: weight_string = " 0"
 				# In Source, unlike in Blender, verts HAVE to be attached to bones. This means that if you have only one bone,
 				# all verts will be 100% attached to it. To transform only some verts you need a second bone that stays put.
 			else:
-				# Shares out unused weight between extant bones, like Blender does, otherwise Studiomdl puts it onto the root
-				total_weight = 0
-				for link in weights:
-					total_weight += link[1]
-				assert(total_weight)
+				# Shares out unused weight between extant bones, like Blender does, otherwise Studiomdl puts it onto the root				
 				for link in weights:
 					link[1] *= 1/total_weight # This also handles weights totalling more than 100%
 
@@ -2912,7 +2919,7 @@ def bakeObj(in_object):
 
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent
-		bpy.ops.object.location_apply()
+		bpy.ops.object.transform_apply(location=True)
 
 	# Indirection to support groups
 	def _ObjectCopy(obj):
@@ -3074,8 +3081,7 @@ def bakeObj(in_object):
 			# Apply object transforms to the data
 			if baked.type == 'MESH':
 				_ApplyVisualTransform(baked)				
-			bpy.ops.object.scale_apply()
-			bpy.ops.object.rotation_apply()
+			bpy.ops.object.transform_apply(scale=True,rotation=True)
 		
 		if smd.jobType == FLEX:
 			removeObject(obj)
@@ -3629,7 +3635,7 @@ class SMD_PT_Data(bpy.types.Panel):
 		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'BONES'
 
 class SmdExporter(bpy.types.Operator):
-	bl_idname = "export.smd"
+	bl_idname = "export_scene.smd"
 	bl_label = "Export SMD/VTA"
 	bl_description = "Export Studiomdl Data files and compile them with QC scripts"
 	bl_options = { 'UNDO' }
@@ -3654,7 +3660,7 @@ class SmdExporter(bpy.types.Operator):
 		props = self.properties
 
 		if props.exportMode == 'NONE':
-			self.report('ERROR',"Programmer error: bpy.ops.export.smd called without exportMode")
+			self.report('ERROR',"Programmer error: bpy.ops.{} called without exportMode".format(bl_idname))
 			return 'CANCELLED'
 
 		# Handle export root path
@@ -3951,7 +3957,7 @@ class SmdClean(bpy.types.Operator):
 		if active_obj:
 			bpy.ops.object.mode_set(mode=active_mode)
 
-		self.report('ERROR',"Deleted {} SMD properties".format(self.numPropsRemoved)) # INFO
+		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
 		return 'FINISHED'
 
 ########################
@@ -4048,7 +4054,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.cur_entry['bpy']) ))
 			return 'FINISHED'
 		elif self.result == 'LATEST':
-			self.report('ERROR',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_info['version']) )) # INFO
+			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_info['version']) ))
 			return 'FINISHED'
 
 		elif self.result == 'SUCCESS':
