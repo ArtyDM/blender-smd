@@ -1297,6 +1297,8 @@ def applyFrameDataPose(frameData):
 	smd.matAllPose.append(matAllPose)
 
 def getMeshMaterial(in_name):
+	if in_name == "": # buggered SMD
+		in_name = "Material"
 	md = smd.m.data
 	long_name = len(in_name) > 21
 	mat = None
