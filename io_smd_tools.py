@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 0, 0),
+	"version": (1, 1, 0),
 	"blender": (2, 58, 0),
 	"api": 37702,
 	"category": "Import-Export",
@@ -54,6 +54,7 @@ rx90n = rMat(math.radians(-90),4,'X')
 ry90n = rMat(math.radians(-90),4,'Y')
 rz90n = rMat(math.radians(-90),4,'Z')
 
+mat_BlenderToSMD = ry90n * rz90n * rx90n
 
 # SMD types
 REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
@@ -699,7 +700,7 @@ class bones_info:
 		mangledBoneName = smdName
 
 		# Remove "ValveBiped." prefix, a leading cause of bones name length going over Blender's limit.
-		ValveBipedCheck = mangledBoneName.split(".",1)
+		ValveBipedCheck = mangledBoneName.split("ValveBiped.",1)
 		if len(ValveBipedCheck) > 1:
 			mangledBoneName = ValveBipedCheck[1]
 
@@ -2507,7 +2508,7 @@ def writeBones(quiet=False):
 	for boneName in smd.sortedBones:
 		bone = smd.a.data.bones[boneName]
 		if not bone.use_deform:
-			print(" - Skipping non-deforming bone \"{}\"".format(bone.name))
+			print("- Skipping non-deforming bone \"{}\"".format(bone.name))
 			continue
 
 		parent = bone.parent
@@ -2538,46 +2539,6 @@ def writeBones(quiet=False):
 	if len(smd.a.data.bones) > 128:
 		log.warning("Source only supports 128 bones!")
 
-# NOTE: added this to keep writeFrames() a bit simpler, uses smd.sortedBones and smd.boneNameToID, replaces getBonesForSMD()
-def writeRestPose():
-	smd.file.write("time 0\n")
-	for boneName in smd.sortedBones:
-		bone = smd.a.data.bones[boneName]
-		if not bone.use_deform: continue
-
-		parent = bone.parent
-		while parent:
-			if parent.use_deform:
-				break
-			parent = parent.parent
-
-		if parent:
-			parentRotated = parent.matrix_local * ryz90
-			childRotated = bone.matrix_local * ryz90
-			rot = parentRotated.inverted() * childRotated
-			pos = rot.to_translation()
-
-			if bpy.context.scene.smd_up_axis == 'Y':
-				#pos = rx90n * pos
-				#rot = (rx90n * rot).to_euler()
-				pass
-		else:
-			#pos = (bone.matrix_local * ryz90).to_translation()
-			#rot = (bone.matrix_local * ryz90)
-			rot = bone.matrix_local * ryz90
-			if bpy.context.scene.smd_up_axis == 'Y':
-				rot = rx90n * rot
-			pos = rot.to_translation()
-
-		rot = rot.to_euler('XYZ')
-
-		pos_str = rot_str = ""
-		for i in range(3):
-			pos_str += " " + getSmdFloat(pos[i])
-			rot_str += " " + getSmdFloat(rot[i])
-		smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
-	smd.file.write("end\n")
-
 # skeleton block
 def writeFrames():
 	if smd.jobType == FLEX: # writeShapes() does its own skeleton block
@@ -2589,64 +2550,82 @@ def writeFrames():
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
 
-	if smd.jobType != ANIM:
-		writeRestPose()
-		return
-
 	scene = bpy.context.scene
 	prev_frame = scene.frame_current
-	#scene.frame_current = scene.frame_start
 
+	# remove any non-keyframed positions
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
+	bpy.ops.pose.select_all(action='SELECT')
+	bpy.ops.pose.transforms_clear()
+	
+	# If this isn't an animation, mute all pose constraints
+	if smd.jobType != ANIM:
+		for bone in smd.a.pose.bones:
+			for con in bone.constraints:
+				con.mute = True
 
-	#last_frame = 0
-	#for fcurve in smd.a.animation_data.action.fcurves:
-		# Get the length of the action
-	#	last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
-	start_frame, last_frame = smd.a.animation_data.action.frame_range
-	start_frame = int(start_frame)
-	last_frame = int(last_frame)
-	scene.frame_set(start_frame)
-
-	while scene.frame_current <= last_frame:
-		smd.file.write("time %i\n" % (scene.frame_current-start_frame))
-
-		for boneName in smd.sortedBones:
-			pbn = smd.a.pose.bones[boneName]
-			if not pbn.bone.use_deform: continue
-
-			parent = pbn.parent
+	# Get the working frame range
+	num_frames = 1
+	if smd.jobType == ANIM:
+		start_frame, last_frame = smd.a.animation_data.action.frame_range
+		num_frames = int(last_frame - start_frame) + 1 # add 1 due to the way range() counts
+		scene.frame_set(start_frame)		
+	
+	# Final bone positions are only available in pose mode
+	bpy.ops.object.mode_set(mode='POSE')
+	
+	# Start writing out the animation
+	for i in range(num_frames):
+		smd.file.write("time {}\n".format(i))
+		
+		for posebone in smd.a.pose.bones:
+			if not posebone.bone.use_deform: continue
+			
+			parent = posebone.parent			
+			# Skip over any non-deforming parents
 			while parent:
 				if parent.bone.use_deform:
 					break
 				parent = parent.parent
-
-			if parent:
-				parentRotated = parent.matrix * ryz90
-				childRotated = pbn.matrix * ryz90
-				rot = parentRotated.inverted() * childRotated
-				pos = rot.to_translation()
+			
+			# Get the bone's matrix from the current pose
+			PoseMatrix = posebone.matrix
+			if parent:				
+				PoseMatrix = parent.matrix.inverted() * PoseMatrix
 			else:
-				#pos = pbn.matrix.to_translation()
-				#rot = (pbn.matrix * ryz90)
-				rot = pbn.matrix * ryz90
-				if bpy.context.scene.smd_up_axis == 'Y':
-					rot = rx90n * rot
-				pos = rot.to_translation()
+				PoseMatrix = mat_BlenderToSMD * PoseMatrix
+			
+			# Get position
+			pos = PoseMatrix.to_translation()
+			
+			# Apply armature scale to position
+			scale = smd.a.matrix_world.to_scale()
+			for j in range(3):
+				pos[j] *= scale[j]
+			
+			# Get Rotation
+			rot = PoseMatrix.to_euler()
 
-			rot = rot.to_euler('XYZ')
-
+			# Construct the string
 			pos_str = rot_str = ""
-			for i in range(3):
-				pos_str += " " + getSmdFloat(pos[i])
-				rot_str += " " + getSmdFloat(rot[i])
-			smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
-
-		scene.frame_set(scene.frame_current + 1)
+			for j in range(3):
+				pos_str += " " + getSmdFloat(pos[j])
+				rot_str += " " + getSmdFloat(rot[j])
+			
+			# Write!
+			smd.file.write( str(smd.boneNameToID[posebone.name]) + pos_str + rot_str + "\n" )
+	
+		# All bones processed, advance the frame
+		scene.frame_set(scene.frame_current + 1)			
 
 	smd.file.write("end\n")
 	scene.frame_set(prev_frame)
+	
+	if smd.a.animation_data and smd.a.animation_data.action:
+		smd.a.animation_data.action.user_clear() # otherwise the UI shows 100s of users!
+		smd.a.animation_data.action.use_fake_user = True
+	bpy.ops.object.mode_set(mode='OBJECT')
 	return
 
 # triangles block
@@ -2685,9 +2664,7 @@ def writePolys(internal=False):
 					bpy.context.scene.objects.active = smd.amod.object
 					bpy.ops.object.mode_set(mode='POSE')
 					bpy.ops.pose.select_all()
-					bpy.ops.pose.loc_clear()
-					bpy.ops.pose.rot_clear()
-					bpy.ops.pose.scale_clear()
+					bpy.ops.pose.transforms_clear()
 					have_cleared_pose = True
 				bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -2945,7 +2922,7 @@ def bakeObj(in_object):
 				obj.data = obj.data.copy()
 				if not bi.get('baked'):
 					bi['baked'] = obj
-				bpy.context.scene.objects.link(obj)
+				bpy.context.scene.objects.link(obj)				
 				bpy.context.scene.objects.active = obj
 				bpy.ops.object.select_all(action="DESELECT")
 				obj.select = True
@@ -2962,7 +2939,7 @@ def bakeObj(in_object):
 				print("- Skipping muted shape \"{}\"".format(cur_shape.name))
 				continue
 
-			baked = obj.copy()
+			baked = obj.copy()			
 			if not bi.get('baked'):
 				bi['baked'] = baked
 			bpy.context.scene.objects.link(baked)
@@ -3081,9 +3058,12 @@ def bakeObj(in_object):
 					baked.data.transform(rx90n)
 			
 			# Apply object transforms to the data
+			bpy.ops.object.transform_apply(rotation=True)
 			if baked.type == 'MESH':
-				_ApplyVisualTransform(baked)				
-			bpy.ops.object.transform_apply(scale=True,rotation=True)
+				_ApplyVisualTransform(baked)
+				bpy.ops.object.transform_apply(scale=True)
+				bi['baked'].matrix_world *= rz90n # SMD X == Source Y (oh why oh why...)
+				bpy.ops.object.transform_apply(rotation=True) # yes, twice
 		
 		if smd.jobType == FLEX:
 			removeObject(obj)
@@ -3118,7 +3098,7 @@ def bakeObj(in_object):
 					smd.bakeInfo.append(bi) # save to manager
 					bi = dict(src=object)
 					if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
-
+					
 		# restore metaball state
 		for meta_state in metaballs:
 			for i in range(len(meta_state['states'])):
@@ -3274,7 +3254,18 @@ def compileQCs(path=None):
 		elif not os.path.exists(studiomdl_path):
 			log.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
 		else:
-			for qc in qc_paths:
+			for qc in qc_paths:			
+				# save any version of the file currently open in Blender
+				qc_mangled = qc.lower().replace('\\','/')
+				for candidate_area in bpy.context.screen.areas:
+					if candidate_area.type == 'TEXT_EDITOR' and candidate_area.spaces[0].text.filepath.lower().replace('\\','/') == qc_mangled:
+						oldType = bpy.context.area.type
+						bpy.context.area.type = 'TEXT_EDITOR'
+						bpy.context.area.spaces[0].text = candidate_area.spaces[0].text
+						bpy.ops.text.save()
+						bpy.context.area.type = oldType
+						break #what a farce!
+						
 				print( "Running studiomdl for \"{}\"...\n".format(getFilename(qc)) )
 				studiomdl = subprocess.Popen([studiomdl_path, "-nop4", qc])
 				studiomdl.communicate()
@@ -3396,12 +3387,12 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 				if embed_arm or ob.data.smd_action_selection == 'CURRENT':
 					text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context)
 					if count:
-						l.operator(SmdExporter.bl_idname, text=text, icon=icon).exportMode = 'SINGLE'
+						l.operator(SmdExporter.bl_idname, text=text, icon=icon).exportMode = 'SINGLE_ANIM'
 					else:
 						l.label(text=text, icon=icon)
 				if embed_arm or (len(bpy.data.actions) and ob.data.smd_action_selection == 'FILTERED'):
 					# filtered action list
-					l.operator(SmdExporter.bl_idname, text=SMD_MT_ExportChoice.getActionFilterText(self,context)[0], icon='ACTION').exportMode = 'ALL_ACTIONS'
+					l.operator(SmdExporter.bl_idname, text=SMD_MT_ExportChoice.getActionFilterText(self,context)[0], icon='ACTION').exportMode= 'SINGLE'
 
 			else: # invalid object
 				label = "Cannot export " + ob.name
@@ -3647,8 +3638,8 @@ class SmdExporter(bpy.types.Operator):
 	exportMode_enum = (
 		('NONE','No mode','The user will be prompted to choose a mode'),
 		('SINGLE','Active','Only the active object'),
+		('SINGLE_ANIM','Current action',"Exports the active Armature's current Action"),
 		('MULTI','Selection','All selected objects'),
-		('ALL_ACTIONS','All actions','Export all actions attached to the current Armature'),
 		('SCENE','Scene','Export the objects and animations selected in Scene Properties'),
 		#('FILE','Whole .blend file','Export absolutely everything, from all scenes'),
 		)
@@ -3664,6 +3655,14 @@ class SmdExporter(bpy.types.Operator):
 		if props.exportMode == 'NONE':
 			self.report('ERROR',"Programmer error: bpy.ops.{} called without exportMode".format(bl_idname))
 			return 'CANCELLED'
+		
+		prev_arm_mode = None
+		if props.exportMode == 'SINGLE_ANIM': # really hacky, hopefully this will stay a one-off!
+			ob = context.active_object
+			if ob.type == 'ARMATURE':
+				prev_arm_mode = ob.data.smd_action_selection
+				ob.data.smd_action_selection = 'CURRENT'
+			props.exportMode = 'SINGLE'
 
 		# Handle export root path
 		if len(props.filepath):
@@ -3732,7 +3731,7 @@ class SmdExporter(bpy.types.Operator):
 
 		# check export mode and perform appropriate jobs
 		self.countSMDs = 0
-		if props.exportMode in ['SINGLE','ALL_ACTIONS']:
+		if props.exportMode == 'SINGLE':
 			ob = context.active_object
 			group_name = None
 			if props.groupIndex != -1:
@@ -3824,6 +3823,9 @@ class SmdExporter(bpy.types.Operator):
 				pose_backups[object.name][1].use_fake_user = False
 				pose_backups[object.name][1].user_clear()
 				bpy.data.actions.remove(pose_backups[object.name][1]) # remove backup
+				
+		if prev_arm_mode:
+			prev_active_ob.data.smd_action_selection = prev_arm_mode
 
 		jobMessage = "exported"
 
@@ -3855,7 +3857,7 @@ class SmdExporter(bpy.types.Operator):
 			object.smd_subdir = "anims"
 		object.smd_subdir = object.smd_subdir.lstrip("/") # don't want //s here!
 
-		if props.exportMode != 'ALL_ACTIONS' and object.type == 'ARMATURE' and not object.animation_data:
+		if object.type == 'ARMATURE' and not object.animation_data:
 			return; # otherwise we create a folder but put nothing in it
 
 		# assemble filename
@@ -3881,7 +3883,7 @@ class SmdExporter(bpy.types.Operator):
 			prev_action = None
 			if ad.action: prev_action = ad.action
 
-			if self.properties.exportMode == 'ALL_ACTIONS':
+			if object.data.smd_action_selection == 'FILTERED':
 				for action in bpy.data.actions:
 					if action.users and (not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1):
 						ad.action = action
