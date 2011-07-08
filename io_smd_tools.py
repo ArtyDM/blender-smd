@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 0),
+	"version": (1, 0, 1),
 	"blender": (2, 58, 0),
 	"api": 37702,
 	"category": "Import-Export",
@@ -2498,6 +2498,46 @@ def writeBones(quiet=False):
 	if len(smd.a.data.bones) > 128:
 		log.warning("Source only supports 128 bones!")
 
+# NOTE: added this to keep writeFrames() a bit simpler, uses smd.sortedBones and smd.boneNameToID, replaces getBonesForSMD()
+def writeRestPose():
+	smd.file.write("time 0\n")
+	for boneName in smd.sortedBones:
+		bone = smd.a.data.bones[boneName]
+		if not bone.use_deform: continue
+
+		parent = bone.parent
+		while parent:
+			if parent.use_deform:
+				break
+			parent = parent.parent
+
+		if parent:
+			parentRotated = parent.matrix_local * ryz90
+			childRotated = bone.matrix_local * ryz90
+			rot = parentRotated.inverted() * childRotated
+			pos = rot.to_translation()
+
+			if bpy.context.scene.smd_up_axis == 'Y':
+				#pos = rx90n * pos
+				#rot = (rx90n * rot).to_euler()
+				pass
+		else:
+			#pos = (bone.matrix_local * ryz90).to_translation()
+			#rot = (bone.matrix_local * ryz90)
+			rot = bone.matrix_local * ryz90
+			if bpy.context.scene.smd_up_axis == 'Y':
+				rot = rx90n * rot
+			pos = rot.to_translation()
+
+		rot = rot.to_euler('XYZ')
+
+		pos_str = rot_str = ""
+		for i in range(3):
+			pos_str += " " + getSmdFloat(pos[i])
+			rot_str += " " + getSmdFloat(rot[i])
+		smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
+	smd.file.write("end\n")
+
 # skeleton block
 def writeFrames():
 	if smd.jobType == FLEX: # writeShapes() does its own skeleton block
@@ -2509,82 +2549,64 @@ def writeFrames():
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
 
+	if smd.jobType != ANIM:
+		writeRestPose()
+		return
+
 	scene = bpy.context.scene
 	prev_frame = scene.frame_current
+	#scene.frame_current = scene.frame_start
 
-	# remove any non-keyframed positions
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
-	bpy.ops.pose.select_all(action='SELECT')
-	bpy.ops.pose.transforms_clear()
 
-	# If this isn't an animation, mute all pose constraints
-	if smd.jobType != ANIM:
-		for bone in smd.a.pose.bones:
-			for con in bone.constraints:
-				con.mute = True
+	#last_frame = 0
+	#for fcurve in smd.a.animation_data.action.fcurves:
+		# Get the length of the action
+	#	last_frame = max(last_frame,fcurve.keyframe_points[-1].co[0]) # keyframe_points are always sorted by time
+	start_frame, last_frame = smd.a.animation_data.action.frame_range
+	start_frame = int(start_frame)
+	last_frame = int(last_frame)
+	scene.frame_set(start_frame)
 
-	# Get the working frame range
-	num_frames = 1
-	if smd.jobType == ANIM:
-		start_frame, last_frame = smd.a.animation_data.action.frame_range
-		num_frames = int(last_frame - start_frame) + 1 # add 1 due to the way range() counts
-		scene.frame_set(start_frame)
+	while scene.frame_current <= last_frame:
+		smd.file.write("time %i\n" % (scene.frame_current-start_frame))
 
-	# Final bone positions are only available in pose mode
-	bpy.ops.object.mode_set(mode='POSE')
+		for boneName in smd.sortedBones:
+			pbn = smd.a.pose.bones[boneName]
+			if not pbn.bone.use_deform: continue
 
-	# Start writing out the animation
-	for i in range(num_frames):
-		smd.file.write("time {}\n".format(i))
-
-		for posebone in smd.a.pose.bones:
-			if not posebone.bone.use_deform: continue
-	
-			parent = posebone.parent	
-			# Skip over any non-deforming parents
+			parent = pbn.parent
 			while parent:
 				if parent.bone.use_deform:
 					break
 				parent = parent.parent
-	
-			# Get the bone's Matrix from the current pose
-			PoseMatrix = posebone.matrix
-			if parent:		
-				PoseMatrix = parent.matrix.inverted() * PoseMatrix
+
+			if parent:
+				parentRotated = parent.matrix * ryz90
+				childRotated = pbn.matrix * ryz90
+				rot = parentRotated.inverted() * childRotated
+				pos = rot.to_translation()
 			else:
-				PoseMatrix = mat_BlenderToSMD * PoseMatrix
-	
-			# Get position
-			pos = PoseMatrix.to_translation()
-	
-			# Apply armature scale to position
-			scale = smd.a.matrix_world.to_scale()
-			for j in range(3):
-				pos[j] *= scale[j]
-		
-			# Get Rotation
-			rot = PoseMatrix.to_euler()
+				#pos = pbn.matrix.to_translation()
+				#rot = (pbn.matrix * ryz90)
+				rot = pbn.matrix * ryz90
+				if bpy.context.scene.smd_up_axis == 'Y':
+					rot = rx90n * rot
+				pos = rot.to_translation()
 
-			# Construct the string
+			rot = rot.to_euler('XYZ')
+
 			pos_str = rot_str = ""
-			for j in range(3):
-				pos_str += " " + getSmdFloat(pos[j])
-				rot_str += " " + getSmdFloat(rot[j])
-		
-			# Write!
-			smd.file.write( str(smd.boneNameToID[posebone.name]) + pos_str + rot_str + "\n" )
+			for i in range(3):
+				pos_str += " " + getSmdFloat(pos[i])
+				rot_str += " " + getSmdFloat(rot[i])
+			smd.file.write( str(smd.boneNameToID[boneName]) + pos_str + rot_str + "\n" )
 
-		# All bones processed, advance the frame
-		scene.frame_set(scene.frame_current + 1)	
+		scene.frame_set(scene.frame_current + 1)
 
 	smd.file.write("end\n")
 	scene.frame_set(prev_frame)
-
-	if smd.a.animation_data and smd.a.animation_data.action:
-		smd.a.animation_data.action.user_clear() # otherwise the UI shows 100s of users!
-		smd.a.animation_data.action.use_fake_user = True
-	bpy.ops.object.mode_set(mode='OBJECT')
 	return
 
 # triangles block
@@ -3017,12 +3039,9 @@ def bakeObj(in_object):
 					baked.data.transform(rx90n)
 		
 			# Apply object transforms to the data
-			bpy.ops.object.transform_apply(rotation=True)
 			if baked.type == 'MESH':
 				_ApplyVisualTransform(baked)
-				bpy.ops.object.transform_apply(scale=True)
-				bi['baked'].matrix_world *= rz90n # SMD X == Source Y (oh why oh why...)
-				bpy.ops.object.transform_apply(rotation=True) # yes, twice
+			bpy.ops.object.transform_apply(scale=True,rotation=True)
 	
 		if smd.jobType == FLEX:
 			removeObject(obj)
