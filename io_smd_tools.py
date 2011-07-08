@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 0, 1),
+	"version": (1, 0, 2),
 	"blender": (2, 58, 0),
 	"api": 37702,
 	"category": "Import-Export",
@@ -997,7 +997,7 @@ def readFrames():
 		assert bpy.context.scene.objects.active == smd.a
 		assert smd.a.mode == 'OBJECT'
 		for bone in smd.a.data.bones:
-			smd.matAllRest[bone.name] = bone.matrix_local.copy()
+			smd.matAllRest[bone.name] = bone.matrix_local.copy() * Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))
 
 		# Step 1: set smd.poseArm pose and store the armature-space matrices in smd.matAllPose for each frame
 		smd.matAllPose = []	
@@ -2518,22 +2518,22 @@ def writeRestPose():
 		if parent:
 			parentRotated = parent.matrix_local * ryz90
 			childRotated = bone.matrix_local * ryz90
-			rot = parentRotated.inverted() * childRotated
-			pos = rot.to_translation()
+			mat = parentRotated.inverted() * childRotated
 
 			if bpy.context.scene.smd_up_axis == 'Y':
-				#pos = rx90n * pos
-				#rot = (rx90n * rot).to_euler()
+				pos = rx90n * pos
+				mat = (rx90n * mat).to_euler()
 				pass
 		else:
-			#pos = (bone.matrix_local * ryz90).to_translation()
-			#rot = (bone.matrix_local * ryz90)
-			rot = bone.matrix_local * ryz90
+			mat = bone.matrix_local * ryz90
 			if bpy.context.scene.smd_up_axis == 'Y':
-				rot = rx90n * rot
-			pos = rot.to_translation()
+				mat = rx90n * mat
 
-		rot = rot.to_euler('XYZ')
+		if smd.a.scale.x != Vector([0,0,0]):
+			mat *= Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))
+		
+		pos = mat.to_translation()
+		rot = mat.to_euler('XYZ')
 
 		pos_str = rot_str = ""
 		for i in range(3):
