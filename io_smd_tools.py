@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 0, 2),
+	"version": (1, 0, 1),
 	"blender": (2, 58, 0),
 	"api": 37702,
 	"category": "Import-Export",
@@ -238,7 +238,6 @@ def getEngineBranchName():
 # rounds to 6 decimal places, converts between "1e-5" and "0.000001", outputs str
 def getSmdFloat(fval):
 	val = "{:.6f}".format(float(fval))
-	if val[0] != "-": val = " " + val
 	return val
 
 # joins up "quoted values" that would otherwise be delimited, removes comments
@@ -997,7 +996,7 @@ def readFrames():
 		assert bpy.context.scene.objects.active == smd.a
 		assert smd.a.mode == 'OBJECT'
 		for bone in smd.a.data.bones:
-			smd.matAllRest[bone.name] = bone.matrix_local.copy() * Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))
+			smd.matAllRest[bone.name] = bone.matrix_local.copy()
 
 		# Step 1: set smd.poseArm pose and store the armature-space matrices in smd.matAllPose for each frame
 		smd.matAllPose = []	
@@ -2519,20 +2518,16 @@ def writeRestPose():
 			parentRotated = parent.matrix_local * ryz90
 			childRotated = bone.matrix_local * ryz90
 			mat = parentRotated.inverted() * childRotated
-
-			if bpy.context.scene.smd_up_axis == 'Y':
-				pos = rx90n * pos
-				mat = (rx90n * mat).to_euler()
-				pass
 		else:
 			mat = bone.matrix_local * ryz90
 			if bpy.context.scene.smd_up_axis == 'Y':
 				mat = rx90n * mat
 
-		if smd.a.scale.x != Vector([0,0,0]):
-			mat *= Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))
 		
 		pos = mat.to_translation()
+		if smd.a.scale != Vector([1,1,1]):
+			pos *= Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))			
+				
 		rot = mat.to_euler('XYZ')
 
 		pos_str = rot_str = ""
@@ -2559,7 +2554,6 @@ def writeFrames():
 
 	scene = bpy.context.scene
 	prev_frame = scene.frame_current
-	#scene.frame_current = scene.frame_start
 
 	scene.objects.active = smd.a
 	bpy.ops.object.mode_set(mode='POSE')
@@ -2589,17 +2583,16 @@ def writeFrames():
 			if parent:
 				parentRotated = parent.matrix * ryz90
 				childRotated = pbn.matrix * ryz90
-				rot = parentRotated.inverted() * childRotated
-				pos = rot.to_translation()
+				mat = parentRotated.inverted() * childRotated
 			else:
-				#pos = pbn.matrix.to_translation()
-				#rot = (pbn.matrix * ryz90)
-				rot = pbn.matrix * ryz90
+				mat = pbn.matrix * ryz90
 				if bpy.context.scene.smd_up_axis == 'Y':
-					rot = rx90n * rot
-				pos = rot.to_translation()
+					mat = rx90n * mat				
 
-			rot = rot.to_euler('XYZ')
+			pos = mat.to_translation()
+			if smd.a.scale != Vector([1,1,1]):
+				pos *= Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))			
+			rot = mat.to_euler('XYZ')
 
 			pos_str = rot_str = ""
 			for i in range(3):
@@ -3043,7 +3036,8 @@ def bakeObj(in_object):
 			# Apply object transforms to the data
 			if baked.type == 'MESH':
 				_ApplyVisualTransform(baked)
-			bpy.ops.object.transform_apply(scale=True,rotation=True)
+				bpy.ops.object.transform_apply(scale=True)
+			bpy.ops.object.transform_apply(rotation=True)
 	
 		if smd.jobType == FLEX:
 			removeObject(obj)
@@ -4079,7 +4073,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 		for entry in self.rss_entries:
 			remote_ver = entry['version']
 			remote_bpy = entry['bpy']
-			stable_api = (2,56,5)
+			stable_api = (2,58,0)
 			for i in range(min( len(remote_bpy), len(bpy.app.version) )):
 				if int(remote_bpy[i]) > stable_api[i] and int(remote_bpy[i]) > bpy.app.version[i]:
 					remote_ver = None
