@@ -965,8 +965,10 @@ def readFrames():
 	if smd.jobType in [ANIM,ANIM_SOLO]:
 		if not a.animation_data:
 			a.animation_data_create()
-		a.animation_data.action = bpy.data.actions.new(smd.jobName)
-		a.animation_data.action.use_fake_user = True
+		act = a.animation_data.action = bpy.data.actions.new(smd.jobName)
+		if act.name != smd.jobName:
+			act['smd_name'] = smd.jobName
+		act.use_fake_user = True
 
 		# Get a list of bone names sorted so parents come before children.
 		# Include all bones in the current SMD.
@@ -1322,7 +1324,9 @@ def readPolys():
 	else:
 		meshName = smd.jobName
 
-	smd.m = bpy.data.objects.new(meshName,bpy.data.meshes.new(meshName))
+	smd.m = bpy.data.objects.new(meshName,bpy.data.meshes.new(meshName))	
+	if smd.m.name != smd.jobName:
+		smd.m['smd_name'] = smd.jobName
 	smd.m.data.show_double_sided = False
 	smd.m.parent = smd.a
 	bpy.context.scene.objects.link(smd.m)
@@ -2324,7 +2328,7 @@ class SmdImporter(bpy.types.Operator):
 		elif filepath_lc.endswith('.smd'):
 			self.countSMDs = readSMD(context, self.properties.filepath, self.properties.upAxis, append=self.properties.append)
 		elif filepath_lc.endswith ('.vta'):
-			self.countSMDs = readSMD(context, self.properties.filepath, False, self.properties.upAxis, smd_type=FLEX)
+			self.countSMDs = readSMD(context, self.properties.filepath, self.properties.upAxis, smd_type=FLEX)
 		elif filepath_lc.endswith('.dmx'):
 			self.countSMDs = readDMX(context, self.properties.filepath, self.properties.upAxis, append=self.properties.append)
 		else:
@@ -2973,8 +2977,6 @@ def bakeObj(in_object):
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
 					baked['src_name'] = obj_name
 					bi['shapes'].append(baked)
-				else:
-					baked.name = baked.data.name = "{} (baked)".format(obj.name)
 			
 				# Handle bone parents / armature modifiers, and warn of multiple associations
 				baked['bp'] = ""
@@ -3146,7 +3148,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		if not smd.jobType:
 			smd.jobType = ANIM
 		smd.a = object
-		smd.jobName = object.animation_data.action.name
+		smd.jobName = getObExportName(object.animation_data.action)
 		_workStartNotice()
 	else:
 		raise TypeError("PROGRAMMER ERROR: writeSMD() has object not in",exportable_types)
@@ -3605,7 +3607,7 @@ class SMD_PT_Data(bpy.types.Panel):
 			l.template_ID(anim_data, "action", new="action.new")
 
 		l.separator()
-		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'BONES'
+		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
 
 class SmdExporter(bpy.types.Operator):
 	'''Export Studiomdl Data files and compile them with QC scripts'''
@@ -3649,7 +3651,7 @@ class SmdExporter(bpy.types.Operator):
 		# Handle export root path
 		if len(props.directory):
 			# We've got a file path from the file selector (or direct invocation)
-			context.scene['smd_path'] = directory
+			context.scene['smd_path'] = props.directory
 		else:
 			# Get a path from the scene object
 			export_root = context.scene.get("smd_path")
@@ -3904,7 +3906,7 @@ class SmdClean(bpy.types.Operator):
 	bl_description = "Deletes SMD-related properties"
 	bl_options = {'REGISTER', 'UNDO'}
 
-	mode = EnumProperty(items=( ('OBJECT','Object','Active object'), ('BONES','Bones','Armature bones'), ('SCENE','Scene','Scene and all contents') ),default='SCENE')
+	mode = EnumProperty(items=( ('OBJECT','Object','Active object'), ('ARMATURE','Armature','Armature bones and actions'), ('SCENE','Scene','Scene and all contents') ),default='SCENE')
 
 	def execute(self,context):
 		self.numPropsRemoved = 0
@@ -3914,6 +3916,7 @@ class SmdClean(bpy.types.Operator):
 					if prop[0].startswith("smd_"):
 						del object[prop[0]]
 						self.numPropsRemoved += 1
+
 			if bones and object.type == 'ARMATURE':
 				# For some reason deleting custom properties from bones doesn't work well in Edit Mode
 				bpy.context.scene.objects.active = object
@@ -3922,6 +3925,15 @@ class SmdClean(bpy.types.Operator):
 				for bone in object.data.bones:
 					removeProps(bone)
 				bpy.ops.object.mode_set(mode=object_mode)
+			
+			if type(object) == bpy.types.Object and object.type == 'ARMATURE': # clean from actions too
+				if object.data.smd_action_selection == 'CURRENT':
+					if object.animation_data.action:
+						removeProps(object.animation_data.action)
+				else:
+					for action in bpy.data.actions:
+						if action.name.lower().contains( object.data.smd_action_filter.lower() ):
+							removeProps(action)
 
 		active_obj = bpy.context.active_object
 		active_mode = active_obj.mode if active_obj else None
@@ -3929,6 +3941,7 @@ class SmdClean(bpy.types.Operator):
 		if self.properties.mode == 'SCENE':
 			for object in context.scene.objects:
 				removeProps(object)
+					
 			for group in bpy.data.groups:
 				for g_ob in group.objects:
 					if context.scene in g_ob.users_scene:
@@ -3938,8 +3951,9 @@ class SmdClean(bpy.types.Operator):
 		elif self.properties.mode == 'OBJECT':
 			removeProps(active_obj)
 
-		elif self.properties.mode == 'BONES':
-			removeProps(active_obj,bones=True)
+		elif self.properties.mode == 'ARMATURE':
+			assert(active_obj.type == 'ARMATURE')
+			removeProps(active_obj,bones=True)			
 
 		bpy.context.scene.objects.active = active_obj
 		if active_obj:
