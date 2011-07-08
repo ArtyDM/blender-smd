@@ -1,4 +1,26 @@
 #labels Featured
+== SMD Tools 1.0.1 - July 8th, 2011 ==
+
+General:
+
+  * Removed pointless extended descriptions for axes and engine branches, and other minor UI tweaks
+
+Importer:
+
+  * Fixed importing DMX UV maps with Blender 2.58
+  * No longer tries to connect bones. This was a crap feature, as animations may want to translate at any time!
+  * Fixed bone names containing '.' losing earlier characters (that behaviour is intended for "ValveBiped." only)
+  * Support for broken SMDs with no material names
+
+Exporter:
+
+  * Fixed Armature scale not being applied to exported animations
+  * Fixed Armature action filter not applying during whole scene export
+  * If a QC is open in Blender, it will now be saved before being run (to open one, turn the file extension filter off)
+  * Fixed long object names being changed on export
+  * Added smd_name support to objects and actions
+  * Tweaked the way that numbers are written to increase SMD readability
+
 == SMD Tools 1.0 - June 24th, 2011 ==
 
 The SMD Tools are more or less feature complete (DMX export isn't viable right now) and have proven themselves stable so, after well over 50 releases, *welcome to 1.0!*
