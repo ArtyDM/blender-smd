@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.0.2 - July 9th, 2011 ==
+
+Exporter:
+
+  * Fixed rotated and scaled+translated armatures being exported incorrectly
+
 == SMD Tools 1.0.1 - July 8th, 2011 ==
 
 General:
