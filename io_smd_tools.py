@@ -21,11 +21,11 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 0, 1),
+	"version": (1, 0, 2),
 	"blender": (2, 58, 0),
 	"api": 37702,
 	"category": "Import-Export",
-	"location": "File > Import/Export; Properties > Scene/Armature",
+	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Source Engine. Supports SMD\VTA, DMX and QC."}
@@ -397,38 +397,6 @@ def sortBonesForExport():
 		if not bone.parent:
 			smd_id = addBonesToSortedList(smd_id,bone,smd.sortedBones)
 
-def getRotAsEuler(thing):
-	out = Vector()
-	mode = thing.rotation_mode
-	if len(mode) == 3: # matches XYZ and variants
-		# CRIKEY! But exec() is needed to turn the rotation_mode string into a property on the Vector
-		exec("out." + thing.rotation_mode.lower() + " = Vector(thing.rotation_euler) * ryz90")
-	elif mode == 'QUATERNION':
-		out = thing.rotation_Quaternionernion.to_euler()
-	elif mode == 'AXIS_ANGLE':
-		# Blender provides no conversion function!
-		x = thing.rotation_axis_angle[0]
-		y = thing.rotation_axis_angle[1]
-		z = thing.rotation_axis_angle[2]
-		ang = thing.rotation_axis_angle[3]
-		s = sin(ang)
-		c = cos(ang)
-		t = 1-c
-		if (x*y*t + z*s) > 0.998: # north pole singularity
-			out.x = 2 * atan2( x*sin(ang/2), cos(ang/2) )
-			out.y = pi/2
-			out.z = 0
-		elif (x*y*t + z*s) < -0.998: # south pole singularity
-			out.x = -2 * atan2( x*sin(ang/2), cos(ang/2) )
-			out.y = -pi/2
-			out.z = 0
-		else:
-			out.x = atan2(y * s- x * z * t , 1 - (y*y+ z*z ) * t)
-			out.y = asin(x * y * t + z * s)
-			out.z = atan2(x * s - y * z * t , 1 - (x*x + z*z) * t)
-	else:
-		log.error(thing.name,"uses an unknown rotation mode.")
-	return out
 
 axes = (('X','X',''),('Y','Y',''),('Z','Z',''))
 
@@ -2519,13 +2487,12 @@ def writeRestPose():
 			childRotated = bone.matrix_local * ryz90
 			mat = parentRotated.inverted() * childRotated
 		else:
-			mat = bone.matrix_local * ryz90
+			mat = smd.a.matrix_world * bone.matrix_local * ryz90
 			if bpy.context.scene.smd_up_axis == 'Y':
 				mat = rx90n * mat
 
-		
 		pos = mat.to_translation()
-		if smd.a.scale != Vector([1,1,1]):
+		if parent and smd.a.scale != Vector([1,1,1]):
 			pos *= Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))			
 				
 		rot = mat.to_euler('XYZ')
@@ -2585,13 +2552,15 @@ def writeFrames():
 				childRotated = pbn.matrix * ryz90
 				mat = parentRotated.inverted() * childRotated
 			else:
-				mat = pbn.matrix * ryz90
+				mat = smd.a.matrix_world * pbn.matrix * ryz90
 				if bpy.context.scene.smd_up_axis == 'Y':
-					mat = rx90n * mat				
+					mat = rx90n * mat
+				print(mat.to_translation())
 
 			pos = mat.to_translation()
-			if smd.a.scale != Vector([1,1,1]):
+			if parent and smd.a.scale != Vector([1,1,1]):
 				pos *= Matrix.Scale(smd.a.scale.x,4,Vector([1,0,0])) * Matrix.Scale(smd.a.scale.y,4,Vector([0,1,0])) * Matrix.Scale(smd.a.scale.z,4,Vector([0,0,1]))			
+			
 			rot = mat.to_euler('XYZ')
 
 			pos_str = rot_str = ""
@@ -2867,17 +2836,6 @@ def bakeObj(in_object):
 	for object in bpy.context.selected_objects:
 		object.select = False
 
-	def _ApplyVisualTransform(obj):
-		top_parent = cur_parent = obj
-		while(cur_parent):
-			if not cur_parent.parent:
-				top_parent = cur_parent
-			cur_parent = cur_parent.parent
-
-		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-		obj.location -= top_parent.location # undo location of topmost parent
-		bpy.ops.object.transform_apply(location=True)
-
 	# Indirection to support groups
 	def _ObjectCopy(obj):
 		solidify_fill_rim = False
@@ -3030,14 +2988,21 @@ def bakeObj(in_object):
 					for object in selection_backup:
 						object.select = True
 
+			# Apply object transforms to the baked data
+			top_parent = cur_parent = baked
+			while(cur_parent):
+				if not cur_parent.parent:
+					top_parent = cur_parent
+				cur_parent = cur_parent.parent
+
+			bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+			baked.location -= top_parent.location # undo location of topmost parent
+			bpy.context.scene.update() # another rare case where this actually does something
+
+			if baked.type == 'MESH': # don't apply to armatures (until/unless actions are baked too)
+				bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
 				if bpy.context.scene.smd_up_axis == 'Y':
 					baked.data.transform(rx90n)
-		
-			# Apply object transforms to the data
-			if baked.type == 'MESH':
-				_ApplyVisualTransform(baked)
-				bpy.ops.object.transform_apply(scale=True)
-			bpy.ops.object.transform_apply(rotation=True)
 	
 		if smd.jobType == FLEX:
 			removeObject(obj)
