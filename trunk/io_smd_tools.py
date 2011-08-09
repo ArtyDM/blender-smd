@@ -21,9 +21,9 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 0, 2),
-	"blender": (2, 58, 0),
-	"api": 37702,
+	"version": (1, 0, 3),
+	"blender": (2, 59, 0),
+	"api": 39164,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -211,7 +211,7 @@ def ValidateBlenderVersion(op):
 	if int(bpy.app.build_revision[:5]) >= bl_info['api']:
 		return True
 	else:
-		op.report('ERROR',"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(self.cur_entry['bpy']), PrintVer(bpy.app.version)) )
+		op.report('ERROR',"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bl_info['blender']), PrintVer(bpy.app.version)) )
 		return False
 
 def getFileExt(flex=False):
@@ -368,7 +368,7 @@ def getUpAxisMat(axis):
 		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
 
 def VecXMat(vec, mat):
-	return vec * mat.inverted()
+	return mat.inverted() * vec
 
 # Get a list of bone names sorted so parents come before children.
 # Also assign a unique SMD ID to every bone.
@@ -2326,100 +2326,6 @@ class SmdImporter(bpy.types.Operator):
 		bpy.context.window_manager.fileselect_add(self)
 		return 'RUNNING_MODAL'
 
-class Smd_OT_ImportTextures(bpy.types.Operator):
-	bl_idname = "smd.import_textures"
-	bl_label = "Import textures"
-	bl_description = "Browse to a directory to import textures from"
-
-	# Properties used by the file browser
-	directory = StringProperty(name="Directory:", description="Directory to search for texture image files", maxlen=1024, default="", subtype='DIR_PATH')
-	filter_folder = BoolProperty(name="Filter folders", description="", default=True, options={'HIDDEN'})
-	filter_image = BoolProperty(name="Filter images", description="", default=True, options={'HIDDEN'})
-
-	def findLoadedImage(self, filepath):
-		for image in bpy.data.images:
-			if image.type == 'IMAGE':
-				filepath2 = os.path.abspath(bpy.path.abspath(image.filepath))
-				if filepath == filepath2:
-					return image
-
-	def loadImage(self, filepath):
-		#print('loading %s' % filepath)
-		try:
-			image = bpy.data.images.load(filepath)
-			return image
-		except:
-			print('error loading %s' % filepath)
-
-	def tryImageName(self, dir, basename, ext):
-		filepath = os.path.join(dir,basename+ext)
-		#print('trying %s' % filepath)
-		image = self.findLoadedImage(filepath)
-		if image:
-			return image
-		if os.path.exists(filepath) and os.path.isfile(filepath):
-			return self.loadImage(filepath)
-
-	def materialUsesImage(self, material, image):
-		for tex_slot in material.texture_slots:
-			if tex_slot and tex_slot.texture and tex_slot.texture.type == 'IMAGE' and tex_slot.texture.image == image:
-				return True
-
-	def execute(self, context):
-		# Get an absolute pathname to look for image files in.
-		# self.directory is always absolute even when the .blend file is unsaved
-		dirpath = self.directory
-		print(dirpath)
-
-		for object in context.scene.objects:
-			for mat_slot in object.material_slots:
-				material = mat_slot.material
-				mat_name = material['smd_name'] if material.get('smd_name') else material.name
-				mat_basename, mat_ext = os.path.splitext(mat_name)
-				if len(mat_ext) != 4:
-					mat_ext = ''
-				tryExt = []
-				if mat_ext != '':
-					tryExt.append( mat_ext )
-				if mat_ext != '.tga':
-					tryExt.append( '.tga' )
-				if mat_ext != '.bmp':
-					tryExt.append( '.bmp' )
-				for ext in tryExt:
-					image = self.tryImageName(dirpath,mat_basename,ext)
-					if image:
-						break
-				if image and not self.materialUsesImage(material,image):
-					for tex_slot in material.texture_slots:
-						if not tex_slot:
-							texture = bpy.data.textures.new(mat_name,type='IMAGE')
-							texture.image = image
-							tex_slot = material.texture_slots.add()
-							tex_slot.texture = texture
-							tex_slot.texture_coords = 'UV'
-							#tex_slot.uv_layer = 'UVTex'
-							break
-
-		return 'FINISHED'
-
-	def invoke(self, context, event):
-		context.window_manager.add_fileselect(self)
-		return 'RUNNING_MODAL'
-
-class SMD_PT_material(bpy.types.Panel):
-	bl_label = "SMD Import"
-	bl_space_type = 'PROPERTIES'
-	bl_region_type = 'WINDOW'
-	bl_context = "material"
-
-	@classmethod
-	def poll(cls, context):
-		return context.material is not None
-
-	def draw(self, context):
-		layout = self.layout
-		layout.operator(Smd_OT_ImportTextures.bl_idname,text='Import textures',icon='TEXTURE')
-
 ########################
 #        Export        #
 ########################
@@ -2555,7 +2461,6 @@ def writeFrames():
 				mat = smd.a.matrix_world * pbn.matrix * ryz90
 				if bpy.context.scene.smd_up_axis == 'Y':
 					mat = rx90n * mat
-				print(mat.to_translation())
 
 			pos = mat.to_translation()
 			if parent and smd.a.scale != Vector([1,1,1]):
@@ -2916,6 +2821,7 @@ def bakeObj(in_object):
 
 
 				bpy.ops.object.convert(keep_original=True) # bake it!
+				
 
 				# did convert() make a new object?
 				if bpy.context.active_object == baked: # no
@@ -2923,6 +2829,9 @@ def bakeObj(in_object):
 				else: # yes
 					removeObject(baked)
 					baked = bi['baked'] = bpy.context.active_object
+				
+				if obj.matrix_world.is_negative:
+					bpy.ops.mesh.flip_normals()
 
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
