@@ -1,4 +1,31 @@
 #labels Featured
+== SMD Tools 1.1 - August 17th, 2011 ==
+
+General:
+
+  * Upgraded to Blender 2.59.
+  * This release changes the way that bones are imported and exported. Previously the difference between Blender's Y-up and Source's Z-up bones was accounted for, but this led to compatibility problems with other modelling software and was generally confusing. Bones are now imported exactly as they are arranged in the SMD/DMX file.
+  * Added a "legacy rotations" option to Armature Properties for users who run into trouble with the new bone code.
+  * Avoided future problems with the updater (1.0.1 and 10.1 would have been the same file).
+  * Fixed version enforcer error.
+
+Importer:
+
+  * Rewrote bone import. Much faster and much simpler!
+  * Worked around Blender hang when importing long bone names, for real this time.
+  * Added support for SMDs which don't define the position of every bone every frame.
+  * You can now choose whether you want quaternion or euler bone rotations (euler is default).
+  * Fixed DMX phys meshes being imported with flat shading (smooth is required for export).
+
+Exporter:
+
+  * Rewrote bone export, again faster and simpler.
+  * When the export of a group is disabled, its objects are no longer returned to the list of individual objects. To have the SMD Tools ignore a group altogether use the new controls in Properties > Object > Groups.
+  * Gave object/group names more space in UI.
+  * The list of Groups objects can now be expanded and collapsed.
+  * Fixed objects with negative scale having inverted normals.
+  * Removed some console debug spam.
+
 == SMD Tools 1.0.2 - July 9th, 2011 ==
 
 Exporter:
