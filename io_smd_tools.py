@@ -777,12 +777,13 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 				# Generate curves
 				curvesLoc = []
 				curvesRot = []
+				bone_string = "pose.bones[\"{}\"].".format(bone.name)
 				for i in range(3):
-					curve = action.fcurves.new(data_path='pose.bones["{}"].location'.format(bone.name),index=i)
+					curve = action.fcurves.new(data_path=bone_string + "location",index=i)
 					curve.group = group
 					curvesLoc.append(curve)
 				for i in range(3 if smd.rotMode == 'XYZ' else 4):
-					curve = action.fcurves.new(data_path='pose.bones["{}"].{}'.format(bone.name,"rotation_euler" if smd.rotMode == 'XYZ' else "rotation_quaternion"),index=i)
+					curve = action.fcurves.new(data_path=bone_string + "rotation_" + ("euler" if smd.rotMode == 'XYZ' else "quaternion"),index=i)
 					curve.group = group
 					curvesRot.append(curve)					
 				
@@ -792,10 +793,15 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 						continue
 					
 					# Transform
+					if smd.a.data.smd_legacy_rotation:
+						bone_mats[bone][f] *= mat_BlenderToSMD.inverted()
+					
 					if bone.parent:
-						bone.matrix = bone.parent.matrix * bone_mats[bone][f]
+						if smd.a.data.smd_legacy_rotation: parentMat = bone.parent.matrix * mat_BlenderToSMD
+						else: parentMat = bone.parent.matrix
+						bone.matrix = parentMat * bone_mats[bone][f]
 					else:
-						bone.matrix = bone_mats[bone][f]
+						bone.matrix = getUpAxisMat(smd.upAxis) * bone_mats[bone][f]
 						
 					# Key location					
 					if not dmx_key_sets or dmx_key_sets[bone][f]['p']:
@@ -2348,7 +2354,7 @@ def writeShapes(cur_shape = 0):
 			shapes_written.append(shape['shape_name'])
 
 	smd.file.write("end\n")
-	print("- Exported {} vertex animations ({} verts)".format(cur_shape,total_verts))
+	print("- Exported {} flex shapes ({} verts)".format(cur_shape,total_verts))
 	return
 
 # Creates a mesh with object transformations and modifiers applied
