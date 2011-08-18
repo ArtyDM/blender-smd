@@ -22,7 +22,7 @@ Exporter:
   * Rewrote bone export, again faster and simpler.
   * When the export of a group is disabled, its objects are no longer returned to the list of individual objects. To have the SMD Tools ignore a group altogether use the new controls in Properties > Object > Groups.
   * Gave object/group names more space in UI.
-  * The list of Groups objects can now be expanded and collapsed.
+  * The list of Group objects can now be expanded and collapsed.
   * Fixed objects with negative scale having inverted normals.
   * Removed some console debug spam.
 
