@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 0),
+	"version": (1, 1, 1),
 	"blender": (2, 59, 0),
 	"api": 39307,
 	"category": "Import-Export",
@@ -3160,14 +3160,6 @@ class SmdExporter(bpy.types.Operator):
 			self.report('ERROR',"Programmer error: bpy.ops.{} called without exportMode".format(SmdExporter.bl_idname))
 			return 'CANCELLED'
 
-		prev_arm_mode = None
-		if props.exportMode == 'SINGLE_ANIM': # really hacky, hopefully this will stay a one-off!
-			ob = context.active_object
-			if ob.type == 'ARMATURE':
-				prev_arm_mode = ob.data.smd_action_selection
-				ob.data.smd_action_selection = 'CURRENT'
-			props.exportMode = 'SINGLE'
-
 		# Handle export root path
 		if len(props.directory):
 			# We've got a file path from the file selector (or direct invocation)
@@ -3193,6 +3185,19 @@ class SmdExporter(bpy.types.Operator):
 
 		global log
 		log = logger()
+				
+		had_auto_keyframe = bpy.context.tool_settings.use_keyframe_insert_auto
+		had_auto_keyset = bpy.context.tool_settings.use_keyframe_insert_keyingset
+		bpy.context.tool_settings.use_keyframe_insert_auto = False
+		bpy.context.tool_settings.use_keyframe_insert_keyingset = False
+		
+		prev_arm_mode = None
+		if props.exportMode == 'SINGLE_ANIM': # really hacky, hopefully this will stay a one-off!
+			ob = context.active_object
+			if ob.type == 'ARMATURE':
+				prev_arm_mode = ob.data.smd_action_selection
+				ob.data.smd_action_selection = 'CURRENT'
+			props.exportMode = 'SINGLE'
 
 		print("\nSMD EXPORTER RUNNING")
 		prev_active_ob = context.active_object
@@ -3330,6 +3335,9 @@ class SmdExporter(bpy.types.Operator):
 		
 		if prev_arm_mode:
 			prev_active_ob.data.smd_action_selection = prev_arm_mode
+			
+		bpy.context.tool_settings.use_keyframe_insert_auto = had_auto_keyframe
+		bpy.context.tool_settings.use_keyframe_insert_keyingset = had_auto_keyset
 
 		jobMessage = "exported"
 
