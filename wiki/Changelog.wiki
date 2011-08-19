@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.1.1 - August 19th, 2011 ==
+
+Exporter:
+
+  * Now disables auto-keyframing before messing around with bones (prevents animation destruction!)
+
 == SMD Tools 1.1 - August 17th, 2011 ==
 
 General:
