@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 1),
+	"version": (1, 1, 2),
 	"blender": (2, 59, 0),
 	"api": 39307,
 	"category": "Import-Export",
@@ -680,10 +680,15 @@ def readFrames():
 		# store the matrix
 		values[0] = int(values[0])
 		try:
-			bone_mats[ smd.a.pose.bones[ smd.boneIDs[values[0]] ] ][-1] = mat
+			bone = smd.a.pose.bones[ smd.boneIDs[values[0]] ]
+			if not bone.parent:
+				mat = getUpAxisMat(smd.upAxis) * mat
+			bone_mats[bone][-1] = mat
 		except KeyError:
 			if not phantom_mats.get(values[0]):
 				phantom_mats[values[0]] = [None] * num_frames
+			if not smd.phantomParentIDs.get(values[0]):
+				mat = getUpAxisMat(smd.upAxis) * mat
 			phantom_mats[values[0]][-1] = mat
 		
 	# All frames read, apply phantom bones
@@ -1502,6 +1507,9 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		restData_poseBones = {}
 		for name, matrix in restData.items(): # name to pose bone
 			if name == "__DMXNULL__": continue
+			bone = smd.a.pose.bones[name]
+			if not bone.parent:
+				matrix = getUpAxisMat(upAxis) * matrix
 			restData_poseBones[smd.a.pose.bones[name]] = [matrix]
 		applyFrames(restData_poseBones,1,None)
 	
@@ -1513,8 +1521,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		if target:
 			target.matrix_local *= mat
 		elif smd.atch:
-			pos.rotate( Euler([pi/2,0,0]) )
-			smd.atch.matrix_local *= Matrix.Translation(pos) * rot.to_matrix().to_4x4() * ry90
+			smd.atch.matrix_local *= Matrix.Translation(pos) * rot.to_matrix().to_4x4()
 		elif bone:
 			restData[bone.name] = mat
 		elif ob:
@@ -1854,7 +1861,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				if not findArmature():
 					smd.append = False
 				ob = smd.a = createArmature(mdl_name)
-				ob.matrix_world *= getUpAxisMat(upAxis)
 				if not smd_manager.a: smd_manager.a = ob
 				bpy.context.scene.objects.active = smd.a
 				bpy.ops.object.mode_set(mode='EDIT')
@@ -2463,9 +2469,6 @@ def bakeObj(in_object):
 					removeObject(baked)
 					baked = bi['baked'] = bpy.context.active_object
 				
-				if obj.matrix_world.is_negative:
-					bpy.ops.mesh.flip_normals()
-
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
 					baked['src_name'] = obj_name
@@ -2503,6 +2506,8 @@ def bakeObj(in_object):
 				# work on the vertices
 				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.reveal()
+				if obj.matrix_world.is_negative:
+					bpy.ops.mesh.flip_normals()
 				bpy.ops.mesh.select_all(action='SELECT')
 		
 				if not smd.isDMX:
@@ -3058,7 +3063,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		global qc_path_last_update
 		qc_label_row = l.row()
 		r = l.row()
-		r.prop(scene,"smd_qc_path",text="")
+		r.prop(scene,"smd_qc_path",text="QC file path")
 		if scene.smd_qc_path != qc_path or not qc_paths or time.time() > qc_path_last_update + 2:
 			qc_paths = getQCs()
 			qc_path = scene.smd_qc_path
