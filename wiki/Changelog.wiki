@@ -1,5 +1,5 @@
 #labels Featured
-== SMD Tools 1.1.2 - September 4th, 2011 ==
+== SMD Tools 1.1.3 - September 4th, 2011 ==
 
 Exporter:
 
