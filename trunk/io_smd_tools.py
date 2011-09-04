@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 2),
+	"version": (1, 1, 3),
 	"blender": (2, 59, 0),
 	"api": 39307,
 	"category": "Import-Export",
@@ -2079,10 +2079,11 @@ def writeFrames():
 			# Get position
 			pos = PoseMatrix.to_translation()
 	
-			# Apply armature scale to position
-			scale = smd.a.matrix_world.to_scale()
-			for j in range(3):
-				pos[j] *= scale[j]
+			# Apply armature scale
+			if posebone.parent: # already applied to root bones
+				scale = smd.a.matrix_world.to_scale()
+				for j in range(3):
+					pos[j] *= scale[j]
 	
 			# Get Rotation
 			rot = PoseMatrix.to_euler()
