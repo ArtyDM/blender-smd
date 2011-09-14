@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 3),
+	"version": (1, 1, 4),
 	"blender": (2, 59, 0),
 	"api": 39307,
 	"category": "Import-Export",
@@ -583,7 +583,10 @@ def readNodes():
 def findArmature():
 	# Search the current scene for an existing armature - there can only be one skeleton in a Source model
 	if bpy.context.active_object and bpy.context.active_object.type == 'ARMATURE':
-		smd.a = bpy.context.active_object
+		try:
+			smd.a = bpy.context.active_object
+		except:
+			return bpy.context.active_object
 	else:
 		def isArmIn(list):
 			for ob in list:
@@ -3086,7 +3089,9 @@ class SMD_PT_Scene(bpy.types.Panel):
 			compile_row.enabled = False
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
-		l.operator(SmdToolsUpdate.bl_idname,icon='URL')
+		row = l.row(align=True)
+		row.operator("wm.url_open",text="Help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Exporting"
+		row.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')
 
 class SMD_PT_Data(bpy.types.Panel):
 	bl_label = "SMD Export"
