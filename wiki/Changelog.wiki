@@ -1,4 +1,14 @@
 #labels Featured
+== SMD Tools 1.1.5 - October 21st, 2011 ==
+
+General:
+
+  * Updated to Blender 2.60. Previous versions of Blender will no longer work.
+
+Exporter:
+
+  * Added QC compile support for the new Source MP/2009 engine branches.
+
 == SMD Tools 1.1.4 - September 14th, 2011 ==
 
 General:
