@@ -21,9 +21,9 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 4),
-	"blender": (2, 59, 0),
-	"api": 39307,
+	"version": (1, 1, 5),
+	"blender": (2, 60, 0),
+	"api": 41098,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -66,7 +66,8 @@ shape_types = ['MESH' , 'SURFACE']
 
 src_branches = (
 ('CUSTOM','Custom SDK',''),
-('orangebox','Source 2009',''),
+('orangebox','Source MP',''),
+('source2009','Source 2009',''),
 ('source2007','Source 2007',''),
 ('ep1','Source 2006',''),
 ('left 4 dead 2','Left 4 Dead 2',''),
@@ -180,9 +181,9 @@ class logger:
 				message += "\nERROR: " + err
 			for warn in self.warnings:
 				message += "\nWARNING: " + warn
-			caller.report('ERROR',message)
+			caller.report({'ERROR'},message)
 		else:
-			caller.report('INFO',message)
+			caller.report({'INFO'},message)
 			print(message)
 
 		if self.wantDMXDownloadPrompt:
@@ -214,7 +215,7 @@ def ValidateBlenderVersion(op):
 	if int(bpy.app.build_revision[:5]) >= bl_info['api']:
 		return True
 	else:
-		op.report('ERROR',"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bl_info['blender']), PrintVer(bpy.app.version)) )
+		op.report({'ERROR'},"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bl_info['blender']), PrintVer(bpy.app.version)) )
 		return False
 
 def getFileExt(flex=False):
@@ -1923,7 +1924,7 @@ class SmdImporter(bpy.types.Operator):
 	
 	def execute(self, context):
 		if not ValidateBlenderVersion(self):
-			return 'CANCELLED'
+			return {'CANCELLED'}
 
 		global log
 		log = logger()
@@ -1940,10 +1941,10 @@ class SmdImporter(bpy.types.Operator):
 			self.countSMDs = readDMX(context, self.properties.filepath, self.properties.upAxis, self.properties.rotMode, append=self.properties.append)
 		else:
 			if len(filepath_lc) == 0:
-				self.report('ERROR',"No file selected")
+				self.report({'ERROR'},"No file selected")
 			else:
-				self.report('ERROR',"Format of {} not recognised".format(getFilename(self.properties.filepath)))
-			return 'CANCELLED'
+				self.report({'ERROR'},"Format of {} not recognised".format(getFilename(self.properties.filepath)))
+			return {'CANCELLED'}
 
 		log.errorReport("imported","file",self,self.countSMDs)
 		if self.countSMDs and smd.m:
@@ -1957,14 +1958,14 @@ class SmdImporter(bpy.types.Operator):
 					space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
 		if bpy.context.area.type == 'VIEW_3D' and bpy.context.region:
 			bpy.ops.view3d.view_all()
-		return 'FINISHED'
+		return {'FINISHED'}
 
 	def invoke(self, context, event):
 		if not ValidateBlenderVersion(self):
-			return 'CANCELLED'
+			return {'CANCELLED'}
 		self.properties.upAxis = context.scene.smd_up_axis
 		bpy.context.window_manager.fileselect_add(self)
-		return 'RUNNING_MODAL'
+		return {'RUNNING_MODAL'}
 
 ########################
 #        Export        #
@@ -2718,7 +2719,7 @@ def compileQCs(path=None):
 				ncf_path = path
 
 	studiomdl_path = None
-	if branch in ['ep1','source2007','orangebox'] and sdk_path:
+	if branch in ['ep1','source2007','source2009', 'orangebox'] and sdk_path:
 		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
 	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2'] and ncf_path:
 		studiomdl_path = ncf_path + branch + "\\bin\\"
@@ -2911,7 +2912,7 @@ class SMD_OT_Compile(bpy.types.Operator):
 		if not self.properties.filepath:
 			self.properties.filepath = "QC"
 		log.errorReport("compiled","{} QC".format(getEngineBranchName()),self, num)
-		return 'FINISHED'
+		return {'FINISHED'}
 
 def getValidObs():
 	validObs = []
@@ -3163,13 +3164,13 @@ class SmdExporter(bpy.types.Operator):
 
 	def execute(self, context):
 		if not ValidateBlenderVersion(self):
-			return 'CANCELLED'
+			return {'CANCELLED'}
 
 		props = self.properties
 
 		if props.exportMode == 'NONE':
-			self.report('ERROR',"Programmer error: bpy.ops.{} called without exportMode".format(SmdExporter.bl_idname))
-			return 'CANCELLED'
+			self.report({'ERROR'},"Programmer error: bpy.ops.{} called without exportMode".format(SmdExporter.bl_idname))
+			return {'CANCELLED'}
 
 		# Handle export root path
 		if len(props.directory):
@@ -3183,11 +3184,11 @@ class SmdExporter(bpy.types.Operator):
 			if not export_root:
 				props.filename = "*** [Please choose a root folder for exports from this scene] ***"
 				context.window_manager.fileselect_add(self)
-				return 'RUNNING_MODAL'
+				return {'RUNNING_MODAL'}
 
 			if export_root.startswith("//") and not bpy.context.blend_data.filepath:
-				self.report('ERROR',"Relative scene output path, but .blend not saved")
-				return 'CANCELLED'
+				self.report({'ERROR'},"Relative scene output path, but .blend not saved")
+				return {'CANCELLED'}
 
 			if export_root[-1] not in ['\\','/']: # append trailing slash
 				export_root += getDirSep()		
@@ -3268,7 +3269,7 @@ class SmdExporter(bpy.types.Operator):
 				self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
 			else:
 				log.error("The group \"" + group_name + "\" has no active objects")
-				return 'CANCELLED'
+				return {'CANCELLED'}
 
 
 		elif props.exportMode == 'MULTI':
@@ -3361,7 +3362,7 @@ class SmdExporter(bpy.types.Operator):
 			print("\n")
 
 		log.errorReport(jobMessage,"file",self,self.countSMDs)
-		return 'FINISHED'
+		return {'FINISHED'}
 
 	# indirection to support batch exporting
 	def exportObject(self,context,object,flex=False,groupIndex=-1):
@@ -3430,10 +3431,10 @@ class SmdExporter(bpy.types.Operator):
 
 	def invoke(self, context, event):
 		if not ValidateBlenderVersion(self):
-			return 'CANCELLED'
+			return {'CANCELLED'}
 		if self.properties.exportMode == 'NONE':
 			bpy.ops.wm.call_menu(name="SMD_MT_ExportChoice")
-			return 'PASS_THROUGH'
+			return {'PASS_THROUGH'}
 		else: # a UI element has chosen a mode for us
 			return self.execute(context)
 
@@ -3496,8 +3497,8 @@ class SmdClean(bpy.types.Operator):
 		if active_obj:
 			bpy.ops.object.mode_set(mode=active_mode)
 
-		self.report('INFO',"Deleted {} SMD properties".format(self.numPropsRemoved))
-		return 'FINISHED'
+		self.report({'INFO'},"Deleted {} SMD properties".format(self.numPropsRemoved))
+		return {'FINISHED'}
 
 ########################
 #        Update        #
@@ -3575,39 +3576,39 @@ class SmdToolsUpdate(bpy.types.Operator):
 			self.io_err = str(err)
 	
 		if self.url_err:
-			self.report('ERROR',"Could not complete download: " + self.url_err)
+			self.report({'ERROR'},"Could not complete download: " + self.url_err)
 			print(self.url_err)
-			return 'CANCELLED'
+			return {'CANCELLED'}
 		elif self.result == 'FAIL_PARSE':
-			self.report('ERROR',"Version information was downloaded, but could not be parsed.")
+			self.report({'ERROR'},"Version information was downloaded, but could not be parsed.")
 			print(feed.read())
-			return 'CANCELLED'
+			return {'CANCELLED'}
 		elif self.result == 'FAIL_UNZIP':
-			self.report('ERROR',"Update was downloaded, but was corrupt")
-			return 'CANCELLED'
+			self.report({'ERROR'},"Update was downloaded, but was corrupt")
+			return {'CANCELLED'}
 		elif self.io_err:
-			self.report('ERROR',"Could not install update: " + self.io_err)
-			return 'CANCELLED'
+			self.report({'ERROR'},"Could not install update: " + self.io_err)
+			return {'CANCELLED'}
 
 		elif self.result == 'INCOMPATIBLE':
-			self.report('ERROR',"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.cur_entry['bpy']) ))
-			return 'FINISHED'
+			self.report({'ERROR'},"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.cur_entry['bpy']) ))
+			return {'FINISHED'}
 		elif self.result == 'LATEST':
-			self.report('INFO',"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_info['version']) ))
-			return 'FINISHED'
+			self.report({'INFO'},"The latest SMD Tools ({}) are already installed.".format( PrintVer(bl_info['version']) ))
+			return {'FINISHED'}
 
 		elif self.result == 'SUCCESS':
 			bpy.ops.script.reload()
-			self.report('INFO',"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
+			self.report({'INFO'},"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
 			bpy.ops.wm.call_menu(name="SMD_MT_Updated")
-			return 'FINISHED'
+			return {'FINISHED'}
 
 		else:
 			print("Unhandled error!")
 			print(self.result)
 			print(self.cur_entry)
 			assert(0) # unhandled error!
-			return 'CANCELLED'
+			return {'CANCELLED'}
 
 	def update(self):
 		cur_ver = bl_info['version']
@@ -3690,7 +3691,7 @@ def register():
 	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
 	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported.", subtype="FILE_PATH")
-	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles",default='orangebox')
+	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles",default='source2009')
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Studiomdl Path",description="Location of studiomdl.exe for a custom compile", subtype="FILE_PATH")
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
 	formats = (
