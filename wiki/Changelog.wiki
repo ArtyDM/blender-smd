@@ -1,4 +1,18 @@
 #labels Featured
+== SMD Tools 1.1.6 - January 30th, 2012 ==
+
+General:
+
+  * Fixed a couple of errors in the Clean SMD Data operator
+  
+Importer:
+
+  * Fixed QCs imported into a scene with an armature latching onto it instead of creating their own, often generating errors
+
+Exporter:
+
+  * Now prints the location of each output file to the console
+
 == SMD Tools 1.1.5 - October 21st, 2011 ==
 
 General:
