@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 5),
+	"version": (1, 1, 6),
 	"blender": (2, 60, 0),
 	"api": 41098,
 	"category": "Import-Export",
@@ -928,7 +928,7 @@ def readPolys():
 	smd.m.parent = smd.a
 	bpy.context.scene.objects.link(smd.m)
 	setLayer()
-	if smd.jobType == REF:
+	if smd.jobType == REF: # can only have flex on a ref mesh
 		try:
 			qc.ref_mesh = smd.m # for VTA import
 		except NameError:
@@ -1076,6 +1076,11 @@ def readShapes():
 			smd.m = qc.ref_mesh
 		except NameError:
 			smd.m = bpy.context.active_object # user selection
+			
+	if not smd.m:
+		log.error("Could not import shape keys: no mesh found")
+		return
+	
 	smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
 	co_map = {}
 	making_base_shape = True
@@ -1219,7 +1224,7 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 
 		# meshes
 		if line[0] in ["$body","$model"]:
-			loadSMD(2,"smd",REF,True) # create new armature no matter what
+			loadSMD(2,"smd",REF,append=False) # create new armature no matter what
 			continue
 		if line[0] == "$lod":
 			in_lod = True
@@ -1354,8 +1359,8 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 
 	if qc.origin:
 		qc.origin.parent = qc.a
-		if qc.dimensions:
-			size = min(qc.dimensions) / 15
+		if qc.ref_mesh:
+			size = min(qc.ref_mesh.dimensions) / 15
 			if qc.makeCamera:
 				qc.origin.data.draw_size = size
 			else:
@@ -2667,6 +2672,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		bakeObj(smd.a) # MUST be baked after the mesh		
 
 	smd.file = open(filepath, 'w')
+	print("-",filepath)
 	smd.file.write("version 1\n")
 
 	# these write empty blocks if no armature is found. Required!
@@ -3466,11 +3472,11 @@ class SmdClean(bpy.types.Operator):
 			
 			if type(object) == bpy.types.Object and object.type == 'ARMATURE': # clean from actions too
 				if object.data.smd_action_selection == 'CURRENT':
-					if object.animation_data.action:
+					if object.animation_data and object.animation_data.action:
 						removeProps(object.animation_data.action)
 				else:
 					for action in bpy.data.actions:
-						if action.name.lower().contains( object.data.smd_action_filter.lower() ):
+						if action.name.lower().find( object.data.smd_action_filter.lower() ) != -1:
 							removeProps(action)
 
 		active_obj = bpy.context.active_object
