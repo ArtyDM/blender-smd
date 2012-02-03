@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.1.6 - February 3rd, 2012 ==
+
+Exporter:
+
+  * Now falls back on face-assigned texture filenames if no material is found
+
 == SMD Tools 1.1.6 - January 30th, 2012 ==
 
 General:
