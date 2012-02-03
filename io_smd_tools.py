@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 6),
+	"version": (1, 1, 7),
 	"blender": (2, 60, 0),
 	"api": 41098,
 	"category": "Import-Export",
@@ -97,6 +97,7 @@ class smd_info:
 		self.upAxisMat = 1 # vec * 1 == vec
 		self.truncMaterialNames = []
 		self.rotMode = 'EULER' # for creating keyframes during import
+		self.materials_used = set() # printed to the console for users' benefit
 
 		# DMX stuff
 		self.attachments = []
@@ -959,7 +960,7 @@ def readPolys():
 
 	smd.smdNameToMatName = {}
 	for mat in bpy.data.materials:
-		smd_name = mat['smd_name'] if mat.get('smd_name') else mat.name
+		smd_name = getObExportName(mat)
 		smd.smdNameToMatName[smd_name] = mat.name
 
 	# *************************************************************************************************
@@ -2180,22 +2181,24 @@ def writePolys(internal=False):
 
 	bad_face_mats = 0
 	for face in md.faces:
-		if smd.m.material_slots:
+		mat_name = None
+		if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > face.material_index:
 			mat = smd.m.material_slots[face.material_index].material
+			if mat:
+				mat_name = getObExportName(mat)
+		if not mat_name and active_uv_tex:
 			image = active_uv_tex.data[face_index].image
-			if bpy.context.scene.smd_use_image_names and image:
+			if image:
 				mat_name = getFilename(image.filepath) # not using data name as it can be truncated and custom props can't be used here
-			else:
-				if mat:
-					mat_name = mat['smd_name'] if mat.get('smd_name') else mat.name
-				else:
-					mat_name = "Material"
-					bad_face_mats += 1
-			smd.file.write(mat_name + "\n")
+		if mat_name:
+			smd.materials_used.add(mat_name)
 		else:
-			smd.file.write(smd.jobName + "\n")
+			mat_name = "no_material"
+			bad_face_mats += 1
+		
+		smd.file.write(mat_name + "\n")
+			
 		for i in range(3):
-
 			# Vertex locations, normal directions
 			loc = norms = ""
 			v = md.vertices[face.vertices[i]]
@@ -2207,7 +2210,7 @@ def writePolys(internal=False):
 			# UVs
 			if not len(md.uv_textures):
 				unBake()
-				raise Exception("PROGRAMMER ERROR: Mesh was not unwrapped")
+				raise Exception("Internal error: mesh was not unwrapped")
 
 			uv = ""
 			for j in range(2):
@@ -2274,7 +2277,7 @@ def writePolys(internal=False):
 		face_index += 1
 
 	if bad_face_mats:
-		log.warning("{} faces on {} assigned to empty material slots".format(bad_face_mats,smd.jobName))
+		log.warning("{} faces on {} did not have a texture{} assigned".format(bad_face_mats,smd.jobName,"" if bpy.context.scene.smd_use_image_names else " or material"))
 	print("- Exported",face_index,"polys")
 	return
 
@@ -2683,6 +2686,9 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	if smd.m:
 		if smd.jobType in [REF,PHYS]:
 			writePolys()
+			print("- Exported {} materials".format(len(smd.materials_used)))
+			for mat in smd.materials_used:
+				print("   " + mat)
 		elif smd.jobType == FLEX:
 			writeShapes()
 
@@ -3064,7 +3070,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		scene_config_row.label(text=" Scene Exports ({} file{})".format(num_to_export,"" if num_to_export == 1 else "s"),icon='SCENE_DATA')
 	
 		r = l.row()
-		r.prop(scene,"smd_use_image_names",text="Use image filenames")
+		r.prop(scene,"smd_use_image_names",text="Ignore materials")
 		r.prop(scene,"smd_layer_filter",text="Visible layer(s) only")
 		l.row()
 	
@@ -3704,8 +3710,8 @@ def register():
 	('SMD', "SMD", "Studiomdl Data" ),
 	('DMX', "DMX", "Data Model Exchange" )
 	)
-	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD',description="todo")
-	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Images Override Materials",description="Causes face preview images to override materials during export",default=False)
+	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD',description="Currently unused")
+	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Ignore Materials",description="Only export face-assigned image filenames",default=False)
 	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Only consider objects in active viewport layers for export",default=False)
 
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
