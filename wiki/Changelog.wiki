@@ -4,6 +4,7 @@
 Exporter:
 
   * Now falls back on face-assigned texture filenames if no material is found
+  * Now writes out the names of all materials written to an SMD
 
 == SMD Tools 1.1.6 - January 30th, 2012 ==
 
