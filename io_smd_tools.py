@@ -22,8 +22,8 @@ bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
 	"version": (1, 2, 0),
-	"blender": (2, 60, 2),
-	"api": 44470,
+	"blender": (2, 62, 1),
+	"api": 44635,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -860,7 +860,7 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 	if scn.frame_current == 1: # Blender starts on 1, Source starts on 0
 		scn.frame_set(0)
 	else:
-	scn.frame_set(scn.frame_current)
+		scn.frame_set(scn.frame_current)
 	ops.object.mode_set(mode='OBJECT')
 	
 	print( "- Imported {} frames of animation".format(num_frames) )
@@ -3530,9 +3530,7 @@ class SmdToolsUpdate(bpy.types.Operator):
 			return {'CANCELLED'}
 			
 		self.cur_entry = \
-		self.result = \
-		self.url_err = \
-		self.io_err = None
+		self.result = None
 		self.rss_entries = []
 
 		def startElem(name,attrs):
@@ -3570,38 +3568,31 @@ class SmdToolsUpdate(bpy.types.Operator):
 
 		try:
 			# parse RSS
+			raise zipfile.BadZipfile
 			feed = urllib.request.urlopen("https://code.google.com/feeds/p/blender-smd/downloads/basic")
 			parser = xml.parsers.expat.ParserCreate()
 			parser.StartElementHandler = startElem
 			parser.EndElementHandler = endElem
 
 			parser.Parse(feed.read())
-		except urllib.error.URLError as err:
-			self.url_err = str(err)
-		except xml.parsers.expat.ExpatError as err:
-			print(err)
-			self.result = 'FAIL_PARSE'
-		except zipfile.BadZipfile:
-			self.result == 'FAIL_UNZIP'
-		except IOError as err:
-			self.io_err = str(err)
-	
-		if self.url_err:
-			self.report({'ERROR'},"Could not complete download: " + self.url_err)
+			
+		except urllib.error.URLError as err:		
+			self.report({'ERROR'},"Could not complete download: " + str(err))
 			print(self.url_err)
 			return {'CANCELLED'}
-		elif self.result == 'FAIL_PARSE':
+		except xml.parsers.expat.ExpatError as err:
+			print(err)
 			self.report({'ERROR'},"Version information was downloaded, but could not be parsed.")
 			print(feed.read())
 			return {'CANCELLED'}
-		elif self.result == 'FAIL_UNZIP':
+		except zipfile.BadZipfile:
 			self.report({'ERROR'},"Update was downloaded, but was corrupt")
 			return {'CANCELLED'}
-		elif self.io_err:
-			self.report({'ERROR'},"Could not install update: " + self.io_err)
+		except IOError as err:
+			self.report({'ERROR'},"Could not install update: " + str(err))
 			return {'CANCELLED'}
-
-		elif self.result == 'INCOMPATIBLE':
+	
+		if self.result == 'INCOMPATIBLE':
 			self.report({'ERROR'},"The latest SMD Tools require Blender {}. Please upgrade.".format( PrintVer(self.cur_entry['bpy']) ))
 			return {'FINISHED'}
 		elif self.result == 'LATEST':
