@@ -21,16 +21,16 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 1, 7),
-	"blender": (2, 60, 0),
-	"api": 41098,
+	"version": (1, 2, 0),
+	"blender": (2, 60, 2),
+	"api": 44470,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Source Engine. Supports SMD\VTA, DMX and QC."}
 
-import math, os, time, bpy, random, mathutils, re, ctypes, urllib.request, struct, subprocess, io
+import math, os, time, bpy, random, mathutils, re, struct, subprocess, io
 from bpy import ops
 from bpy.props import *
 from struct import unpack,calcsize
@@ -342,6 +342,7 @@ def PrintVer(in_seq,sep="."):
 		return out.rstrip(sep)
 
 try:
+	import ctypes
 	kernel32 = ctypes.windll.kernel32
 	STD_RED = 0x04
 	STD_YELLOW = 0x02|0x04
@@ -354,7 +355,7 @@ try:
 		stdOutColour(colour)
 		print(*string)
 		stdOutReset()
-except AttributeError:
+except:
 	STD_RED = STD_YELLOW = STD_WHITE = None
 	def stdOutColour(colour):
 		pass
@@ -657,6 +658,7 @@ def readFrames():
 	for line in smd.file:
 		if line == "end\n":
 			break
+			
 		values = line.split()
 
 		if values[0] == "time": # frame number is a dummy value, all frames are equally spaced
@@ -854,10 +856,11 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 		if smd.rotMode == 'XYZ': bone.rotation_euler.zero()
 		else: bone.rotation_quaternion.identity()
 	scn = bpy.context.scene
+	
 	if scn.frame_current == 1: # Blender starts on 1, Source starts on 0
 		scn.frame_set(0)
 	else:
-		scn.frame_set(scn.frame_current)
+	scn.frame_set(scn.frame_current)
 	ops.object.mode_set(mode='OBJECT')
 	
 	print( "- Imported {} frames of animation".format(num_frames) )
@@ -1034,18 +1037,20 @@ def readPolys():
 		md.vertices.foreach_set("normal",norms) # Blender currently ignores this data!
 		md.faces.foreach_set("material_index", mats)
 		md.uv_textures[0].data.foreach_set("uv",uvs)
-
+        
 		# Apply vertex groups
 		for i in range(len(md.vertices)):
 			for link in weights[i]:
 				link[0].add( [i], link[1], 'REPLACE' )
-
+        
 		# Build faces
 		# TODO: figure out if it's possible to foreach_set() this data. Note the reversal of indices required.
 		i = 0
 		for f in md.faces:
 			i += 3
 			f.vertices = [i-3,i-2,i-1]
+			
+		md.update()
 
 		# Remove doubles...is there an easier way?
 		bpy.context.scene.objects.active = smd.m
@@ -1053,10 +1058,7 @@ def readPolys():
 		ops.mesh.remove_doubles()
 		ops.mesh.faces_shade_smooth()
 		ops.object.mode_set(mode='OBJECT')
-
 		if smd.jobType == PHYS:
-			# Phys meshes must have smoothed normals if they are to compile properly,
-			# so now doing this instead
 			smd.m.show_wire = True
 
 		if smd_manager.upAxis == 'Y':
@@ -1621,9 +1623,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 							cur_face_len += 1
 						cur_face_len = 0
 						continue
-					if cur_face_len == 4: #got a quad already, this is an n-gon
-						faces.extend([ faces[-4], faces[-1] ])
-						cur_face_len = 2
 					faces.append(val)
 					cur_face_len += 1
 
@@ -2147,7 +2146,7 @@ def writePolys(internal=False):
 					smd.amod = bi['arm_mod']
 				else:
 					smd.amod = None
-				if len(smd.m.data.faces) == 0:
+				if len(smd.m.data.polygons) == 0:
 					log.error("Object {} has no faces, cannot export".format(smd.jobName))
 					continue
 
@@ -2174,20 +2173,18 @@ def writePolys(internal=False):
 	# bone parent?
 	ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m['bp']]) if smd.m.get('bp') else None
 
-	for uvtex in md.uv_textures:
-		if uvtex.active_render:
-			active_uv_tex = uvtex
-			break
-
+	uv_loop = md.uv_loop_layers.active.data
+	uv_tex = md.uv_textures.active.data
+	
 	bad_face_mats = 0
-	for face in md.faces:
+	for poly in md.polygons:
 		mat_name = None
-		if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > face.material_index:
-			mat = smd.m.material_slots[face.material_index].material
+		if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > poly.material_index:
+			mat = smd.m.material_slots[poly.material_index].material
 			if mat:
 				mat_name = getObExportName(mat)
-		if not mat_name and active_uv_tex:
-			image = active_uv_tex.data[face_index].image
+		if not mat_name and uv_tex:
+			image = uv_tex[face_index].image
 			if image:
 				mat_name = getFilename(image.filepath) # not using data name as it can be truncated and custom props can't be used here
 		if mat_name:
@@ -2197,24 +2194,20 @@ def writePolys(internal=False):
 			bad_face_mats += 1
 		
 		smd.file.write(mat_name + "\n")
-			
-		for i in range(3):
+		
+		for i in range(len(poly.vertices)):
 			# Vertex locations, normal directions
 			loc = norms = ""
-			v = md.vertices[face.vertices[i]]
-			norm = v.normal if face.use_smooth else face.normal
+			v = md.vertices[poly.vertices[i]]
+			norm = v.normal if poly.use_smooth else poly.normal
 			for j in range(3):
 				loc += " " + getSmdFloat(v.co[j])
 				norms += " " + getSmdFloat(norm[j])
 
 			# UVs
-			if not len(md.uv_textures):
-				unBake()
-				raise Exception("Internal error: mesh was not unwrapped")
-
 			uv = ""
 			for j in range(2):
-				uv += " " + getSmdFloat(active_uv_tex.data[face_index].uv[i][j])
+				uv += " " + getSmdFloat(uv_loop[poly.loop_start + i].uv[j])
 
 			# Weightmaps
 			weights = []
@@ -2315,8 +2308,8 @@ def writeShapes(cur_shape = 0):
 		start_time = time.time()
 		num_verts = 0
 		num_bad_verts = 0
-		for face in smd.m.data.faces:
-			for vert in face.vertices:
+		for poly in smd.m.data.polygons:
+			for vert in poly.vertices:
 				shape_vert = shape.data.vertices[vert]
 				mesh_vert = smd.m.data.vertices[vert]
 				if cur_shape != 0:
@@ -3522,14 +3515,20 @@ class SMD_MT_Updated(bpy.types.Menu):
 	def draw(self,context):
 		self.layout.operator("wm.url_open",text="View changes?",icon='TEXT').url = "http://code.google.com/p/blender-smd/wiki/Changelog"
 
-import xml.parsers.expat, zipfile
 class SmdToolsUpdate(bpy.types.Operator):
 	bl_idname = "script.update_smd"
 	bl_label = "Check for SMD Tools updates"
 	bl_description = "Connects to https://code.google.com/p/blender-smd/"
 
-	def execute(self,context):
+	def execute(self,context):	
 		print("SMD Tools update...")
+		
+		try:
+			import urllib.request, xml.parsers.expat, zipfile
+		except:
+			self.report({'ERROR'},"Could not load required Python libraries")
+			return {'CANCELLED'}
+			
 		self.cur_entry = \
 		self.result = \
 		self.url_err = \
