@@ -2530,13 +2530,19 @@ def bakeObj(in_object):
 					elif solidify_fill_rim:
 						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
 
-				bpy.ops.object.mode_set(mode='OBJECT')
-		
 				# project a UV map
 				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
-					bpy.ops.object.select_all(action="DESELECT")
-					baked.select = True
-					bpy.ops.uv.smart_project()
+					if len(baked.data.vertices) < 2000:
+						bpy.ops.object.mode_set(mode='OBJECT')
+						bpy.ops.object.select_all(action='DESELECT')
+						baked.select = True
+						bpy.ops.uv.smart_project()
+					else:
+						bpy.ops.object.mode_set(mode='EDIT')
+						bpy.ops.mesh.select_all(action='SELECT')
+						bpy.ops.uv.unwrap()
+						
+					bpy.ops.object.mode_set(mode='OBJECT')
 
 					for object in selection_backup:
 						object.select = True
@@ -3072,8 +3078,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		global qc_paths
 		global qc_path_last_update
 		qc_label_row = l.row()
-		r = l.row()
-		r.prop(scene,"smd_qc_path",text="QC file path")
+		qc_path_row = l.row()
 		if scene.smd_qc_path != qc_path or not qc_paths or time.time() > qc_path_last_update + 2:
 			qc_paths = getQCs()
 			qc_path = scene.smd_qc_path
@@ -3085,14 +3090,22 @@ class SMD_PT_Scene(bpy.types.Panel):
 			for path in qc_paths:
 				c.operator(SMD_OT_Compile.bl_idname,text=getFilename(path)).filepath = path
 
-		qc_label_row.label(text=" QC Compiles ({} file{})".format(len(qc_paths),"" if len(qc_paths) == 1 else "s"),icon='FILE_SCRIPT')
+		try:
+			vproj = getFilename(os.getenv('vproject'))
+		except:
+			vproj = "no game"
+		qc_label_row.label(text=" QC Compiles ({}; {} file{})".format(vproj, len(qc_paths),"" if len(qc_paths) == 1 else "s"),icon='FILE_SCRIPT')
+		error_row = l.row()
 		compile_row = l.row()
 		compile_row.prop(scene,"smd_qc_compile")
 		compile_row.operator(SMD_OT_Compile.bl_idname,text="Compile all now",icon='SCRIPT')
+		
 		if not have_qcs:
 			if scene.smd_qc_path:
-				qc_label_row.label(text=" Invalid path",icon='ERROR')
+				qc_path_row.alert = True
 			compile_row.enabled = False
+		qc_path_row.prop(scene,"smd_qc_path",text="QC file path") # can't add this until the above test completes!
+		
 		l.separator()
 		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
 		row = l.row(align=True)
