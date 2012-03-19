@@ -30,7 +30,7 @@ bl_info = {
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Source Engine. Supports SMD\VTA, DMX and QC."}
 
-import math, os, time, bpy, random, mathutils, re, struct, subprocess, io
+import math, os, time, bpy, bmesh, random, mathutils, re, struct, subprocess, io
 from bpy import ops
 from bpy.props import *
 from struct import unpack,calcsize
@@ -966,9 +966,12 @@ def readPolys():
 		smd_name = getObExportName(mat)
 		smd.smdNameToMatName[smd_name] = mat.name
 
+	bm = bmesh.new()
+	bm.from_mesh(md)
+	
 	# *************************************************************************************************
 	# There are two loops in this function: one for polygons which continues until the "end" keyword
-	# and one for the vertices on each polygon that loops three times. We're entering the poly one now.
+	# and one for the vertices on each polygon that loops three times. We're entering the poly one now.	
 	countPolys = 0
 	badWeights = 0
 	for line in smd.file:
@@ -983,15 +986,20 @@ def readPolys():
 		# ***************************************************************
 		# Enter the vertex loop. This will run three times for each poly.
 		vertexCount = 0
+		faceVerts = []
 		for line in smd.file:
 			values = line.split()
 			vertexCount+= 1
+			co = []
+			#norm = []
 
 			# Read co-ordinates and normals
 			for i in range(1,4): # 0 is deprecated bone weight value
-				cos.append( float(values[i]) )
-				norms.append( float(values[i+3]) ) # Blender currenty ignores this data!
-
+				co.append( float(values[i]) )
+				#norm.append( float(values[i+3]) ) # Blender currenty ignores this data!
+			
+			faceVerts.append( bm.verts.new(co) )
+			
 			# Can't do these in the above for loop since there's only two
 			uvs.append( float(values[7]) )
 			uvs.append( float(values[8]) )
@@ -1014,12 +1022,14 @@ def readPolys():
 
 			# Three verts? It's time for a new poly
 			if vertexCount == 3:
+				bm.faces.new(faceVerts)
 				uvs.extend([0,1]) # Dunno what this 4th UV is for, but Blender needs it
 				break
 
 		# Back in polyland now, with three verts processed.
 		countPolys+= 1
 
+	# Warn about truncated material names
 	length = len(smd.truncMaterialNames)
 	if length > 0:
 		log.warning('%d material name%s truncated to 21 characters' % (length,'s were' if length > 1 else ' was'))
@@ -1027,37 +1037,34 @@ def readPolys():
 		for smdName in smd.truncMaterialNames:
 			print('  ',smdName)
 
+	bm.to_mesh(md)
+	bm.free()
+	md.update()
+	
 	if countPolys:
-		# All polys processed. Add new elements to the mesh:
-		md.vertices.add(countPolys*3)
-		md.faces.add(countPolys)
-
-		# Fast add!
-		md.vertices.foreach_set("co",cos)
-		md.vertices.foreach_set("normal",norms) # Blender currently ignores this data!
+		# Set face materials and UVs
+		# FIXME: disabled due to BMesh API bug
+		'''
 		md.faces.foreach_set("material_index", mats)
 		md.uv_textures[0].data.foreach_set("uv",uvs)
+		'''
         
 		# Apply vertex groups
 		for i in range(len(md.vertices)):
 			for link in weights[i]:
 				link[0].add( [i], link[1], 'REPLACE' )
         
-		# Build faces
-		# TODO: figure out if it's possible to foreach_set() this data. Note the reversal of indices required.
-		i = 0
-		for f in md.faces:
-			i += 3
-			f.vertices = [i-3,i-2,i-1]
-			
-		md.update()
-
-		# Remove doubles...is there an easier way?
+		# Remove doubles and smooth...is there an easier way?		
+		bpy.ops.object.select_all(action="DESELECT")
+		smd.m.select = True
 		bpy.context.scene.objects.active = smd.m
+		ops.object.shade_smooth()		
 		ops.object.mode_set(mode='EDIT')
+		bpy.ops.mesh.select_all(action='SELECT')
 		ops.mesh.remove_doubles()
-		ops.mesh.faces_shade_smooth()
+		bpy.ops.mesh.select_all(action='DESELECT')
 		ops.object.mode_set(mode='OBJECT')
+						
 		if smd.jobType == PHYS:
 			smd.m.show_wire = True
 
@@ -1071,6 +1078,7 @@ def readPolys():
 
 # vertexanimation block
 def readShapes():
+	return # FIXME: broken due to BMesh API bug
 	if smd.jobType is not FLEX:
 		return
 
@@ -1292,12 +1300,13 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 			continue
 
 		# naming shapes
-		if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
+		# FIXME: broken due to BMesh API bug
+		'''if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
 			for i in range(1,len(line)):
 				if line[i] == "frame":
 					qc.ref_mesh.data.shape_keys.key_blocks[int(line[i+1])-1].name = line[1] # subtract 1 because frame 0 isn't a real shape key
 					break
-			continue
+			continue'''
 
 		# physics mesh
 		if line[0] in ["$collisionmodel","$collisionjoints"]:
@@ -1450,7 +1459,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		arm_hide = target_arm.hide
 	benchReset()
 	ob = bone = restData = smd.atch = smd.a = None
-
+	
 	print( "\nDMX IMPORTER: now working on",getFilename(filepath) )
 
 	try:
@@ -1546,7 +1555,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		if not smd.jobType: smd.jobType = REF
 		lastob = smd.m
 		ob = bone = smd.atch = None
-
+		
 		if bpy.context.active_object:
 			bpy.ops.object.mode_set(mode='OBJECT')
 		name = get_name()
@@ -1575,6 +1584,9 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			amod = ob.modifiers.new(name="Armature",type='ARMATURE')
 			amod.object = smd.a
 			amod.use_bone_envelopes = False
+		
+		bm = bmesh.new()
+		bm.from_mesh(ob.data)
 
 		while( smd.file.readable() ):
 			block_name = get_string(4)
@@ -1584,12 +1596,8 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 
 			elif block_name == "VERT":
 				num_verts = get_int()
-				ob.data.vertices.add(num_verts)
-				verts = []
 				for vert in range(num_verts):
-					verts.extend( get_vec(3) )
-
-				ob.data.vertices.foreach_set("co",verts)
+					bm.verts.new( get_vec(3) )
 				#bench("VERT")
 
 			elif block_name == "NORM":
@@ -1612,38 +1620,29 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				if len(mat_info) == 2:
 					mat['smd_dir'] = mat_info[0] + "/"
 
+				cur_faces = len(ob.data.faces)
+				new_faces = 0
+				
 				face_array_len = get_int()
-				faces = []
-				cur_face_len = 0
+				faceVerts = []
 				for i in range( face_array_len ):
 					val = get_int()
 					if val == -1: # delimiter
-						while cur_face_len < 4:
-							faces.append(0)
-							cur_face_len += 1
-						cur_face_len = 0
-						continue
-					faces.append(val)
-					cur_face_len += 1
-
-				cur_faces = len(ob.data.faces)
-				new_faces = int(len(faces) / 4)
-
-				import array
+						new_faces += 1
+						bm.faces.new(faceVerts)
+						faceVerts = []
+					else:
+						faceVerts.append(bm.verts[val])
+				
+				# FIXME: disabled due to BMesh API bug
+				'''import array
 				from array import array
-
+				
 				all_inds = array('f', [0] * cur_faces)
 				ob.data.faces.foreach_get("material_index",all_inds)
 				all_inds += array('f', [mat_ind] * new_faces)
-
-				all_faces = array('f', [0] * cur_faces * 4)
-				ob.data.faces.foreach_get("vertices_raw",all_faces)
-				all_faces += array('f',faces)
-
-				ob.data.faces.add(new_faces)
-				ob.data.faces.foreach_set("vertices_raw",all_faces)
 				ob.data.faces.foreach_set("material_index",all_inds)
-
+				'''
 				#bench("FACE")
 
 			elif block_name == "TEXC":
@@ -1667,7 +1666,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				num_weighted_bones = get_int()
 				full_weights = {}
 
-				for vert in range(len(ob.data.vertices)):
+				for vert in range(len(bm.verts)):
 					for link in range(num_weighted_bones):
 						weight = get_float()
 						bone_id = get_int()
@@ -1692,6 +1691,9 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			else:
 				if smd.file.peek():
 					smd.file.seek(-4,1)
+				
+				bm.to_mesh(ob.data)
+				
 				bpy.ops.object.mode_set(mode='OBJECT')
 				bpy.context.scene.objects.active = ob
 				if smd.jobType == PHYS:
@@ -1704,6 +1706,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.select_all(action='SELECT')
 				bpy.ops.mesh.remove_doubles()
+				bpy.ops.mesh.select_all(action='DESELECT')
 				bpy.ops.object.mode_set(mode='OBJECT')
 				return
 
@@ -1897,7 +1900,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			readDMXAnim()
 
 		else:
-			print("unrecognised MODL block at {}".format(smd.file.tell()))
+			print( "unrecognised MODL block at {}: \"{}\"".format( smd.file.tell(), block_name ))
 			break
 
 	if smd.a and smd.jobType == REF:
@@ -1920,10 +1923,10 @@ class SmdImporter(bpy.types.Operator):
 	filter_glob = StringProperty(default="*.smd;*.vta;*.dmx;*.qc;*.qci", options={'HIDDEN'})
 
 	# Custom properties
-	append = BoolProperty(name="Extend any existing model", description="Whether imports will latch onto an existing armature or create their own.", default=True)
+	append = BoolProperty(name="Extend any existing model", description="Whether imports will latch onto an existing armature or create their own", default=True)
 	doAnim = BoolProperty(name="Import animations (slow/bulky)", default=True)
-	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up'. Ignored for QCs.")
-	makeCamera = BoolProperty(name="Make camera at $origin",description="For use in viewmodel editing. If not set, an empty will be created instead.",default=False)
+	upAxis = EnumProperty(name="Up axis",items=axes,default='Z',description="Which axis represents 'up' (ignored for QCs)")
+	makeCamera = BoolProperty(name="Make camera at $origin",description="For use in viewmodel editing; if not set, an empty will be created instead",default=False)
 	rotModes = ( ('XYZ', "Euler XYZ", ''), ('QUATERNION', "Quaternion", "") )
 	rotMode = EnumProperty(name="Rotation mode",items=rotModes,default='XYZ',description="Keyframes will be inserted in this rotation mode")
 	
@@ -3705,7 +3708,7 @@ def register():
 
 	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
-	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported.", subtype="FILE_PATH")
+	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported", subtype="FILE_PATH")
 	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles",default='source2009')
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Studiomdl Path",description="Location of studiomdl.exe for a custom compile", subtype="FILE_PATH")
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
@@ -3721,13 +3724,13 @@ def register():
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 
-	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs.")
+	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs")
 	arm_modes = (
 	('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
 	('FILTERED',"Action Filter","All actions that match the armature's filter term")
 	)
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
-	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports.",default=False)
+	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports",default=False)
 
 	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD",default=True)
 	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
