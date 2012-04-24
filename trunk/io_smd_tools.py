@@ -22,8 +22,8 @@ bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
 	"version": (1, 2, 0),
-	"blender": (2, 62, 1),
-	"api": 44635,
+	"blender": (2, 62, 3),
+	"api": 45264,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -946,10 +946,6 @@ def readPolys():
 	modifier = smd.m.modifiers.new(type="ARMATURE",name="Armature")
 	modifier.object = smd.a
 
-	# All SMD models are textured
-	smd.m.data.uv_textures.new()
-	mat = None
-
 	# Initialisation
 	md = smd.m.data
 	lastWindowUpdate = time.time()
@@ -962,6 +958,7 @@ def readPolys():
 	mats = []
 
 	smd.smdNameToMatName = {}
+	mat = None
 	for mat in bpy.data.materials:
 		smd_name = getObExportName(mat)
 		smd.smdNameToMatName[smd_name] = mat.name
@@ -994,17 +991,17 @@ def readPolys():
 			#norm = []
 
 			# Read co-ordinates and normals
-			for i in range(1,4): # 0 is deprecated bone weight value
+			for i in range(1,4): # 0 is the deprecated bone weight value
 				co.append( float(values[i]) )
 				#norm.append( float(values[i+3]) ) # Blender currenty ignores this data!
 			
 			faceVerts.append( bm.verts.new(co) )
 			
 			# Can't do these in the above for loop since there's only two
-			uvs.append( float(values[7]) )
-			uvs.append( float(values[8]) )
+			uvs.append( ( float(values[7]), float(values[8]) ) )
+			#uvs.append( float(values[8]) )
 
-			# Read weightmap data, this is a bit more involved
+			# Read weightmap data
 			weights.append( [] ) # Blank array, needed in case there's only one weightlink
 			if len(values) > 10 and values[9] != "0": # got weight links?
 				for i in range(10, 10 + (int(values[9]) * 2), 2): # The range between the first and last weightlinks (each of which is *two* values)
@@ -1023,7 +1020,6 @@ def readPolys():
 			# Three verts? It's time for a new poly
 			if vertexCount == 3:
 				bm.faces.new(faceVerts)
-				uvs.extend([0,1]) # Dunno what this 4th UV is for, but Blender needs it
 				break
 
 		# Back in polyland now, with three verts processed.
@@ -1041,14 +1037,14 @@ def readPolys():
 	bm.free()
 	md.update()
 	
-	if countPolys:
-		# Set face materials and UVs
-		# FIXME: disabled due to BMesh API bug
-		'''
-		md.faces.foreach_set("material_index", mats)
-		md.uv_textures[0].data.foreach_set("uv",uvs)
-		'''
-        
+	if countPolys:	
+		md.polygons.foreach_set("material_index", mats)
+		
+		md.uv_textures.new()
+		uv_loop_data = md.uv_layers[0].data
+		for i in range(len(uv_loop_data)):
+			uv_loop_data[i].uv = uvs[md.loops[i].vertex_index]
+		
 		# Apply vertex groups
 		for i in range(len(md.vertices)):
 			for link in weights[i]:
@@ -1078,7 +1074,6 @@ def readPolys():
 
 # vertexanimation block
 def readShapes():
-	return # FIXME: broken due to BMesh API bug
 	if smd.jobType is not FLEX:
 		return
 
@@ -1093,9 +1088,15 @@ def readShapes():
 		return
 	
 	smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
+	
 	co_map = {}
+	mesh_cos = []
+	for vert in smd.m.data.vertices:
+		mesh_cos.append(vert.co)
+	
 	making_base_shape = True
 	bad_vta_verts = num_shapes = 0
+	md = smd.m.data
 
 	for line in smd.file:
 		line = line.rstrip("\n")
@@ -1104,37 +1105,31 @@ def readShapes():
 		values = line.split()
 
 		if values[0] == "time":
-			if making_base_shape and num_shapes > 0:
+			if len(co_map):
 				making_base_shape = False
+				if bad_vta_verts > 0:
+					log.warning(bad_vta_verts,"VTA vertices were not matched to a mesh vertex!")
 
 			if making_base_shape:
 				smd.m.shape_key_add("Basis")
 			else:
 				smd.m.shape_key_add("Unnamed")
+				num_shapes += 1
 
-			num_shapes += 1
 			continue # to the first vertex of the new shape
 
 		cur_id = int(values[0])
-		cur_cos = Vector([ float(values[1]), float(values[2]), float(values[3]) ])
+		vta_co = Vector([ float(values[1]), float(values[2]), float(values[3]) ])
 
 		if making_base_shape: # create VTA vert ID -> mesh vert ID dictionary
-			# Blender faces share verts; SMD faces don't. To simulate a SMD-like list of vertices, we need to
-			# perform a bit of mathematical kung-fu:
-			mesh_vert_id = smd.m.data.faces[floor(cur_id/3)].vertices[cur_id % 3] # FIXME: breaks if a face has any unique verts
-
-			if cur_cos == smd.m.data.vertices[mesh_vert_id].co:
-				co_map[cur_id] = mesh_vert_id # create the new dict entry
-		else:
 			try:
-				smd.m.data.shape_keys.key_blocks[-1].data[ co_map[cur_id] ].co = cur_cos # write to the shapekey
-			except KeyError:
+				co_map[cur_id] = mesh_cos.index(vta_co)
+			except ValueError:
 				bad_vta_verts += 1
+		else: # write to the shapekey
+			md.shape_keys.key_blocks[-1].data[ co_map[cur_id] ].co = vta_co
 
-
-	if bad_vta_verts > 0:
-		log.warning(bad_vta_verts,"VTA vertices were not matched to a mesh vertex!")
-	print("- Imported",num_shapes-1,"flex shapes") # -1 because the first shape is the reference position
+	print("- Imported",num_shapes,"flex shapes")
 
 # Parses a QC file
 def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc = False):
@@ -1559,6 +1554,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		if bpy.context.active_object:
 			bpy.ops.object.mode_set(mode='OBJECT')
 		name = get_name()
+		print("Importing DMX mesh \"{}\"".format(name))
 		ob = smd.m = bpy.data.objects.new(name=name, object_data=bpy.data.meshes.new(name=name))
 		ob.matrix_world *= getUpAxisMat(upAxis)
 		context.scene.objects.link(ob)
@@ -1566,7 +1562,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		if smd_type == PHYS:
 			ob.show_wire = True;
 		bpy.context.scene.update()
-
+		
 		if len(smd.meshes):
 			group = bpy.data.groups.get(smd.jobName)
 			if not group: group = bpy.data.groups.new(smd.jobName)
@@ -1610,56 +1606,37 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 
 			elif block_name == "FACE":
 				mat_info = get_name().replace("\\","/").rsplit("/",1)
-				if len(mat_info) == 2:
-					mat_name = mat_info[1]
-				else:
-					mat_name = mat_info[0]
-
+				mat_name = mat_info[-1]
 				mat, mat_ind = getMeshMaterial(mat_name)
 		
 				if len(mat_info) == 2:
 					mat['smd_dir'] = mat_info[0] + "/"
-
-				cur_faces = len(ob.data.faces)
-				new_faces = 0
 				
-				face_array_len = get_int()
+				face_array_len = get_int()				
 				faceVerts = []
 				for i in range( face_array_len ):
 					val = get_int()
 					if val == -1: # delimiter
-						new_faces += 1
 						bm.faces.new(faceVerts)
+						bm.faces[-1].material_index = mat_ind
 						faceVerts = []
 					else:
 						faceVerts.append(bm.verts[val])
 				
-				# FIXME: disabled due to BMesh API bug
-				'''import array
-				from array import array
-				
-				all_inds = array('f', [0] * cur_faces)
-				ob.data.faces.foreach_get("material_index",all_inds)
-				all_inds += array('f', [mat_ind] * new_faces)
-				ob.data.faces.foreach_set("material_index",all_inds)
-				'''
 				#bench("FACE")
 
 			elif block_name == "TEXC":
-				ob.data.uv_textures.new()
+				bm.to_mesh(ob.data)
 
 				uvs = []
-				for i in range(num_verts):
-					uvs.append( get_vec(2) )
-
-				for i in range (len(ob.data.uv_textures[0].data)):
-					uv_face = ob.data.uv_textures[0].data[i]
-					me_face = ob.data.faces[i]
-
-					for j in range(len(me_face.vertices)):
-						for k in range(2):
-							uv_face.uv[j][k] = uvs[ me_face.vertices[j] ][k]
-
+				for vert in ob.data.vertices:
+					uvs.append(get_vec(2))
+				
+				ob.data.uv_textures.new()
+				uv_loop_data = ob.data.uv_layers[0].data
+				for i in range(len(uv_loop_data)):
+					uv_loop_data[i].uv = uvs[ob.data.loops[i].vertex_index]
+					
 				#bench("TEXC")
 
 			elif block_name == "WMAP":
@@ -1691,8 +1668,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			else:
 				if smd.file.peek():
 					smd.file.seek(-4,1)
-				
-				bm.to_mesh(ob.data)
 				
 				bpy.ops.object.mode_set(mode='OBJECT')
 				bpy.context.scene.objects.active = ob
@@ -1732,10 +1707,12 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 
 	def readDMXAnim():
 		smd.jobType = ANIM
+		smd.a.hide = False
 		ops.object.mode_set(mode='OBJECT')
 		dmxApplyRestPose()
 		smd.a = target_arm
-		smd.a.hide = False
+		
+		print("Importing DMX animation \"{}\"".format(smd.jobName))
 	
 		fps = get_float()
 		length = get_float()
@@ -2176,7 +2153,7 @@ def writePolys(internal=False):
 	# bone parent?
 	ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m['bp']]) if smd.m.get('bp') else None
 
-	uv_loop = md.uv_loop_layers.active.data
+	uv_loop = md.uv_layers.active.data
 	uv_tex = md.uv_textures.active.data
 	
 	bad_face_mats = 0
@@ -2468,15 +2445,7 @@ def bakeObj(in_object):
 					edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
 					edgesplit.use_edge_angle = False
 
-
-				bpy.ops.object.convert(keep_original=True) # bake it!
-
-				# did convert() make a new object?
-				if bpy.context.active_object == baked: # no
-					baked.data = baked.data.copy()
-				else: # yes
-					removeObject(baked)
-					baked = bi['baked'] = bpy.context.active_object
+				baked.data = baked.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
