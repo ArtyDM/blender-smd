@@ -1,4 +1,26 @@
 #labels Featured
+== SMD Tools 1.2 - April 28th, 2012 ==
+
+General:
+
+  * Upgraded to Blender 2.63 and the new BMesh system. Previous versions of Blender are no longer supported.
+  * Added compatibility with debug builds of Blender, which don't have the full array of Python features
+
+Importer:
+
+  * DMX faces with more than four edges are no longer split up (BMesh)
+  * Fixed importing DMX animations onto a hidden Armature
+  * Rewrote shape key import to work with disconnected faces, and in future with DMX
+
+Exporter:
+
+  * The exporter now uses the UV map which is active in 3D View (had been using the one active for rendering)
+  * Now displays the active vproject for QC compiles
+  * Replaced "invalid path" error message with an alert highlight over the QC path box
+  * No longer tries to Smart Project UV-less meshes of over 2000 vertices (too slow)
+  * Verts of imported meshes no longer start out selected
+  * Improved the way modifiers are applied
+
 == SMD Tools 1.1.7 - February 3rd, 2012 ==
 
 Exporter:
