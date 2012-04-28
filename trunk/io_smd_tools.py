@@ -22,8 +22,8 @@ bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
 	"version": (1, 2, 0),
-	"blender": (2, 62, 3),
-	"api": 45264,
+	"blender": (2, 63, 0),
+	"api": 45996,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties, Armature properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -999,7 +999,6 @@ def readPolys():
 			
 			# Can't do these in the above for loop since there's only two
 			uvs.append( ( float(values[7]), float(values[8]) ) )
-			#uvs.append( float(values[8]) )
 
 			# Read weightmap data
 			weights.append( [] ) # Blank array, needed in case there's only one weightlink
@@ -1041,9 +1040,9 @@ def readPolys():
 		md.polygons.foreach_set("material_index", mats)
 		
 		md.uv_textures.new()
-		uv_loop_data = md.uv_layers[0].data
-		for i in range(len(uv_loop_data)):
-			uv_loop_data[i].uv = uvs[md.loops[i].vertex_index]
+		uv_data = md.uv_layers[0].data
+		for i in range(len(uv_data)):
+			uv_data[i].uv = uvs[md.loops[i].vertex_index]
 		
 		# Apply vertex groups
 		for i in range(len(md.vertices)):
@@ -1084,7 +1083,7 @@ def readShapes():
 			smd.m = bpy.context.active_object # user selection
 			
 	if not smd.m:
-		log.error("Could not import shape keys: no mesh found")
+		log.error("Could not import shape keys: no target mesh found") # FIXME: this could actually be supported
 		return
 	
 	smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
@@ -1127,7 +1126,10 @@ def readShapes():
 			except ValueError:
 				bad_vta_verts += 1
 		else: # write to the shapekey
-			md.shape_keys.key_blocks[-1].data[ co_map[cur_id] ].co = vta_co
+			try:
+				md.shape_keys.key_blocks[-1].data[ co_map[cur_id] ].co = vta_co
+			except KeyError:
+				pass
 
 	print("- Imported",num_shapes,"flex shapes")
 
@@ -1633,9 +1635,9 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					uvs.append(get_vec(2))
 				
 				ob.data.uv_textures.new()
-				uv_loop_data = ob.data.uv_layers[0].data
-				for i in range(len(uv_loop_data)):
-					uv_loop_data[i].uv = uvs[ob.data.loops[i].vertex_index]
+				uv_data = ob.data.uv_layers[0].data
+				for i in range(len(uv_data)):
+					uv_data[i].uv = uvs[ob.data.loops[i].vertex_index]
 					
 				#bench("TEXC")
 
