@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.2.1 - April 29th, 2012 ==
+
+Exporter:
+
+  * Fixed error when exporting a UV mapped mesh
+
 == SMD Tools 1.2 - April 28th, 2012 ==
 
 General:
