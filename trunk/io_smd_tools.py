@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 0),
+	"version": (1, 2, 1),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2522,6 +2522,7 @@ def bakeObj(in_object):
 						object.select = True
 
 			# Apply object transforms to the baked data
+			bpy.ops.object.mode_set(mode='OBJECT')
 			top_parent = cur_parent = baked
 			while(cur_parent):
 				if not cur_parent.parent:
