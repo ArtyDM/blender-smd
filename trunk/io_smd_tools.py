@@ -2379,7 +2379,7 @@ def bakeObj(in_object):
 			shape_keys = None
 
 		if smd.jobType == FLEX:
-			if baked.type not in shape_types:
+			if obj.type not in shape_types:
 				raise TypeError( "Shapes found on unsupported object type (\"{}\", {})".format(obj.name,obj.type) )				
 			num_out = len(shape_keys)
 			bi['shapes'] = []
