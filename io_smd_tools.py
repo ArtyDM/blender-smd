@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 1),
+	"version": (1, 2, 2),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2342,8 +2342,8 @@ def writeShapes(cur_shape = 0):
 					if shape_candidate['shape_name'] == shape['shape_name']:
 						last_verts = _writeVerts(shape_candidate,vert_offset)
 						total_verts += last_verts
-				for face in bi['baked'].data.faces:
-					for vert in face.vertices:
+				for poly in bi['shapes'][0].data.polygons:
+					for vert in poly.vertices:
 						vert_offset += 1 # len(verts) doesn't give doubles
 			shapes_written.append(shape['shape_name'])
 
@@ -2373,34 +2373,81 @@ def bakeObj(in_object):
 	def _ObjectCopy(obj):
 		solidify_fill_rim = False
 
-		selection_backup = bpy.context.selected_objects
-
 		if obj.type in shape_types and obj.data.shape_keys:
 			shape_keys = obj.data.shape_keys.key_blocks
 		else:
 			shape_keys = None
 
 		if smd.jobType == FLEX:
+			if baked.type not in shape_types:
+				raise TypeError( "Shapes found on unsupported object type (\"{}\", {})".format(obj.name,obj.type) )				
 			num_out = len(shape_keys)
 			bi['shapes'] = []
-	
-			if num_out:
-				# create an intermediate object without shapes
-				obj_name = obj.name
-				obj = obj.copy()
-				obj.data = obj.data.copy()
-				if not bi.get('baked'):
-					bi['baked'] = obj
-				bpy.context.scene.objects.link(obj)		
-				bpy.context.scene.objects.active = obj
-				bpy.ops.object.select_all(action="DESELECT")
-				obj.select = True
-		
-				for shape in obj.data.shape_keys.key_blocks:
-					bpy.ops.object.shape_key_remove('EXEC_SCREEN')
 		else:
 			num_out = 1
+		
+		# Create a temporary copy of the object to mess about with
+		obj_name = obj.name
+		obj = obj.copy()
+		obj.data = obj.data.copy()
+		bpy.context.scene.objects.link(obj)
+		bpy.context.scene.objects.active = obj
+		bpy.ops.object.select_all(action="DESELECT")
+		obj.select = True
+		
+		if obj.type == 'MESH':
+			# work on the vertices
+			bpy.ops.object.mode_set(mode='EDIT')
+			bpy.ops.mesh.reveal()
+			if obj.matrix_world.is_negative:
+				bpy.ops.mesh.flip_normals()
+			
+			if not smd.isDMX:
+				bpy.ops.mesh.select_all(action='SELECT')
+				bpy.ops.mesh.quads_convert_to_tris()
+	
+			# handle which sides of a curve should have polys
+			if obj.type == 'CURVE':
+				if obj.data.smd_faces == 'RIGHT':
+					bpy.ops.mesh.duplicate()
+					bpy.ops.mesh.flip_normals()
+				if not obj.data.smd_faces == 'BOTH':
+					bpy.ops.mesh.select_inverse()
+					bpy.ops.mesh.delete()
+				elif solidify_fill_rim:
+					log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
 
+			# project a UV map
+			if len(obj.data.uv_textures) == 0 and smd.jobType != FLEX:
+				if len(obj.data.vertices) < 2000:
+					bpy.ops.object.mode_set(mode='OBJECT')
+					bpy.ops.object.select_all(action='DESELECT')
+					obj.select = True
+					bpy.ops.uv.smart_project()
+				else:
+					bpy.ops.object.mode_set(mode='EDIT')
+					bpy.ops.mesh.select_all(action='SELECT')
+					bpy.ops.uv.unwrap()
+
+		bpy.ops.object.mode_set(mode='OBJECT')
+		
+		# Apply object transforms
+		top_parent = cur_parent = obj
+		while(cur_parent):
+			if not cur_parent.parent:
+				top_parent = cur_parent
+			cur_parent = cur_parent.parent
+
+		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+		obj.location -= top_parent.location # undo location of topmost parent
+		bpy.context.scene.update() # another rare case where this actually does something			
+		
+		if obj.type == 'MESH': # don't apply transforms to armatures (until/unless actions are baked too)
+			bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
+			obj.data.transform(getUpAxisMat(bpy.context.scene.smd_up_axis).inverted())
+		
+		# Apply modifiers; need to do this per shape key
+		bpy.ops.object.mode_set(mode='OBJECT')
 		for i in range(num_out):
 			if shape_keys:
 				cur_shape = shape_keys[i]
@@ -2408,34 +2455,16 @@ def bakeObj(in_object):
 				print("- Skipping muted shape \"{}\"".format(cur_shape.name))
 				continue
 
-			baked = obj.copy()	
+			baked = obj.copy()
 			if not bi.get('baked'):
 				bi['baked'] = baked
 			bpy.context.scene.objects.link(baked)
 			bpy.context.scene.objects.active = baked
-			bpy.ops.object.select_all(action="DESELECT")
-			baked.select = True
 
 			if shape_keys:
-				baked.data = obj.data.copy()
-		
-				# transfer desired shape to copy
-				if baked.type == 'MESH':			
-					import array
-					cos = array.array('f', [0] * len(baked.data.vertices) * 3 )
-					cur_shape.data.foreach_get("co",cos)
-					baked.data.vertices.foreach_set("co",cos)
-				elif baked.type == 'SURFACE':
-					# assuming shape keys only modify spline locations here...
-					for i in range( len(baked.data.splines) ):
-						for j in range( len(baked.data.splines[i].points) ):
-							baked.data.splines[i].points[j].co[:3] = cur_shape.data[(i*2)+j].co # what is the 4th value?
-				else:
-					raise TypeError( "Shapes found on unsupported object type (\"{}\", {})".format(obj.name,obj.type) )
+				baked.active_shape_key_index = i
 	
-			if obj.type == 'ARMATURE':
-				baked.data = baked.data.copy()
-			elif obj.type in mesh_compatible:
+			if obj.type in mesh_compatible:
 				has_edge_split = False
 				for mod in obj.modifiers:
 					if mod.type == 'EDGE_SPLIT':
@@ -2451,9 +2480,9 @@ def bakeObj(in_object):
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					baked['src_name'] = obj_name
+					baked['src_name'] = obj.name
 					bi['shapes'].append(baked)
-			
+					
 				# Handle bone parents / armature modifiers, and warn of multiple associations
 				baked['bp'] = ""
 				envelope_described = False
@@ -2482,63 +2511,8 @@ def bakeObj(in_object):
 						else:
 							smd.a = mod.object
 							bi['arm_mod'] = mod
-		
-				# work on the vertices
-				bpy.ops.object.mode_set(mode='EDIT')
-				bpy.ops.mesh.reveal()
-				if obj.matrix_world.is_negative:
-					bpy.ops.mesh.flip_normals()
-				bpy.ops.mesh.select_all(action='SELECT')
-		
-				if not smd.isDMX:
-					bpy.ops.mesh.quads_convert_to_tris()
-		
-				# handle which sides of a curve should have polys
-				if obj.type == 'CURVE':
-					if obj.data.smd_faces == 'RIGHT':
-						bpy.ops.mesh.duplicate()
-						bpy.ops.mesh.flip_normals()
-					if not obj.data.smd_faces == 'BOTH':
-						bpy.ops.mesh.select_inverse()
-						bpy.ops.mesh.delete()
-					elif solidify_fill_rim:
-						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
-
-				# project a UV map
-				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
-					if len(baked.data.vertices) < 2000:
-						bpy.ops.object.mode_set(mode='OBJECT')
-						bpy.ops.object.select_all(action='DESELECT')
-						baked.select = True
-						bpy.ops.uv.smart_project()
-					else:
-						bpy.ops.object.mode_set(mode='EDIT')
-						bpy.ops.mesh.select_all(action='SELECT')
-						bpy.ops.uv.unwrap()
-						
-					bpy.ops.object.mode_set(mode='OBJECT')
-
-					for object in selection_backup:
-						object.select = True
-
-			# Apply object transforms to the baked data
-			bpy.ops.object.mode_set(mode='OBJECT')
-			top_parent = cur_parent = baked
-			while(cur_parent):
-				if not cur_parent.parent:
-					top_parent = cur_parent
-				cur_parent = cur_parent.parent
-
-			bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-			baked.location -= top_parent.location # undo location of topmost parent
-			bpy.context.scene.update() # another rare case where this actually does something
-
-			if baked.type == 'MESH': # don't apply to armatures (until/unless actions are baked too)
-				bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
-				baked.data.transform(getUpAxisMat(bpy.context.scene.smd_up_axis).inverted())
-	
-		if smd.jobType == FLEX:
-			removeObject(obj)
+				
+		removeObject(obj)
 		return baked
 		# END _ObjectCopy()
 
