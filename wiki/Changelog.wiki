@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.2.2 - May 4th, 2012 ==
+
+Exporter:
+
+  * Fixed and greatly optimised shape key export
+
 == SMD Tools 1.2.1 - April 29th, 2012 ==
 
 Exporter:
