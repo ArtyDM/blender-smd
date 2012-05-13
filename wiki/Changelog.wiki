@@ -1,4 +1,11 @@
 #labels Featured
+== SMD Tools 1.2.3 - May 13th, 2012 ==
+
+General:
+
+  * Fixed updater (a debug test had been left in)
+  * Fixed Scene Properties display when an Armature action filter is in use
+
 == SMD Tools 1.2.2 - May 4th, 2012 ==
 
 Exporter:
