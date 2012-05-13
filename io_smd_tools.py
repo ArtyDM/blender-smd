@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 2),
+	"version": (1, 2, 3),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2772,9 +2772,9 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 				for action in bpy.data.actions:
 					if action.name.lower().find(ob.smd_action_filter.lower()) != -1:
 						cached_action_count += 1
-			return "\"" + ob.smd_action_filter + "\" actions (" + str(cached_action_count) + ")"
+			return "\"{}\" actions ({})".format(ob.smd_action_filter,cached_action_count), cached_action_count
 		else:
-			return "All actions (" + str(len(bpy.data.actions)) + ")", len(bpy.data.actions)
+			return "All actions ({})".format(len(bpy.data.actions)), len(bpy.data.actions)
 
 	def draw(self, context):
 		# This function is also embedded in property panels on scenes and armatures
@@ -3530,7 +3530,6 @@ class SmdToolsUpdate(bpy.types.Operator):
 
 		try:
 			# parse RSS
-			raise zipfile.BadZipfile
 			feed = urllib.request.urlopen("https://code.google.com/feeds/p/blender-smd/downloads/basic")
 			parser = xml.parsers.expat.ParserCreate()
 			parser.StartElementHandler = startElem
