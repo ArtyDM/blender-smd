@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 3),
+	"version": (1, 2, 4),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2452,7 +2452,7 @@ def bakeObj(in_object):
 			if shape_keys:
 				cur_shape = shape_keys[i]
 			if smd.jobType == FLEX and cur_shape.mute:
-				print("- Skipping muted shape \"{}\"".format(cur_shape.name))
+				log.warning("Skipping muted shape \"{}\"".format(cur_shape.name))
 				continue
 
 			baked = obj.copy()
@@ -2463,6 +2463,7 @@ def bakeObj(in_object):
 
 			if shape_keys:
 				baked.active_shape_key_index = i
+				baked.show_only_shape_key = True
 	
 			if obj.type in mesh_compatible:
 				has_edge_split = False
@@ -2480,7 +2481,7 @@ def bakeObj(in_object):
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					baked['src_name'] = obj.name
+					baked['src_name'] = obj_name
 					bi['shapes'].append(baked)
 					
 				# Handle bone parents / armature modifiers, and warn of multiple associations
