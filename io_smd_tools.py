@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 4),
+	"version": (1, 2, 3),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -3478,20 +3478,24 @@ class SMD_MT_Updated(bpy.types.Menu):
 	def draw(self,context):
 		self.layout.operator("wm.url_open",text="View changes?",icon='TEXT').url = "http://code.google.com/p/blender-smd/wiki/Changelog"
 
+updater_supported = True
+try:
+	import urllib.request, urllib.error, xml.parsers.expat, zipfile
+except:
+	updater_supported = False
+
 class SmdToolsUpdate(bpy.types.Operator):
 	bl_idname = "script.update_smd"
 	bl_label = "Check for SMD Tools updates"
 	bl_description = "Connects to https://code.google.com/p/blender-smd/"
+	
+	@classmethod
+	def poll(self,context):
+		return updater_supported
 
 	def execute(self,context):	
 		print("SMD Tools update...")
-		
-		try:
-			import urllib.request, xml.parsers.expat, zipfile
-		except:
-			self.report({'ERROR'},"Could not load required Python libraries")
-			return {'CANCELLED'}
-			
+					
 		self.cur_entry = \
 		self.result = None
 		self.rss_entries = []
