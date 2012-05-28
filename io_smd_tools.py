@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 3),
+	"version": (1, 2, 4),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
