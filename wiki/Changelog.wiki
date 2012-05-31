@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.2.5 - May 31st, 2012 ==
+
+Exporter:
+
+  * Fixed a bug when exporting objects with Armature modifiers. The error was handled incorrectly by Blender, leading to intermittent crashes.
+
 == SMD Tools 1.2.4 - May 28th, 2012 ==
 
 Exporter:
