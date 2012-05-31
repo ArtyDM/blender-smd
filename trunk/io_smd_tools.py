@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 4),
+	"version": (1, 2, 5),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2195,7 +2195,7 @@ def writePolys(internal=False):
 			weights = []
 			if ob_weight_str:
 				weight_string = ob_weight_str
-			elif smd.amod:		
+			elif smd.amod:
 				am_vertex_group_weight = 0
 
 				if smd.amod.use_vertex_groups:
@@ -2387,7 +2387,7 @@ def bakeObj(in_object):
 			num_out = 1
 		
 		# Create a temporary copy of the object to mess about with
-		obj_name = obj.name
+		obj_in = obj
 		obj = obj.copy()
 		obj.data = obj.data.copy()
 		bpy.context.scene.objects.link(obj)
@@ -2481,34 +2481,34 @@ def bakeObj(in_object):
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					baked['src_name'] = obj_name
+					baked['src_name'] = obj_in.name
 					bi['shapes'].append(baked)
 					
 				# Handle bone parents / armature modifiers, and warn of multiple associations
 				baked['bp'] = ""
 				envelope_described = False
-				if obj.parent_bone and obj.parent_type == 'BONE':
-					baked['bp'] = obj.parent_bone
-					smd.a = obj.parent
-				for con in obj.constraints:
+				if obj_in.parent_bone and obj_in.parent_type == 'BONE':
+					baked['bp'] = obj_in.parent_bone
+					smd.a = obj_in.parent
+				for con in obj_in.constraints:
 					if con.mute:
 						continue
 					if con.type in ['CHILD_OF','COPY_TRANSFORMS'] and con.target.type == 'ARMATURE' and con.subtarget:
 						if baked['bp']:
 							if not envelope_described:
 								print(" - Enveloped to bone \"{}\"".format(baked['bp']))
-							log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj.name))
+							log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj_in.name))
 						else:
 							baked['bp'] = con.subtarget
 							smd.a = con.target
-				for mod in obj.modifiers:
+				for mod in obj_in.modifiers:
 					if mod.type == 'ARMATURE':
 						if (smd.a and mod.object != smd.a) or baked['bp']:
 							if not envelope_described:
 								msg = " - Enveloped to {} \"{}\""
 								if baked['bp']: print( msg.format("bone",baked['bp']) )
 								else: print( msg.format("armature",smd.a.name) )
-							log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
+							log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj_in.name))
 						else:
 							smd.a = mod.object
 							bi['arm_mod'] = mod
