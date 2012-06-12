@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 5),
+	"version": (1, 2, 6),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -211,6 +211,13 @@ def bench(label):
 def benchTotal():
 	global benchStart
 	return time.time() - benchStart
+	
+def smdBreak(line):
+	line = line.rstrip('\n')
+	return line == "end" or line == ""
+	
+def smdContinue(line):
+	return line.startswith("//")
 
 def ValidateBlenderVersion(op):
 	if int(bpy.app.build_revision[:5]) >= bl_info['api']:
@@ -497,8 +504,10 @@ def validateBones(target):
 	missing = 0
 	validated = 0
 	for line in smd.file:
-		if line == "end\n":
+		if smdBreak(line):
 			break
+		if smdContinue(line):
+			continue
 	
 		values = parseQuoteBlockedLine(line,lower=False)
 		values[0] = int(values[0])
@@ -549,9 +558,11 @@ def readNodes():
 	bpy.ops.object.mode_set(mode='EDIT',toggle=False)
 
 	# Read bone definitions from disc
-	for line in smd.file:
-		if line == "end\n":
+	for line in smd.file:		
+		if smdBreak(line):
 			break
+		if smdContinue(line):
+			continue
 
 		values = parseQuoteBlockedLine(line,lower=False)
 	
@@ -630,8 +641,8 @@ def createArmature(armature_name):
 def readFrames():
 	# We only care about the pose data in some SMD types
 	if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
-		for line in smd.file:
-			if line == "end\n":
+		for line in smd.file:			
+			if smdBreak(line):
 				return
 
 	a = smd.a
@@ -656,8 +667,10 @@ def readFrames():
 		bone_mats[bone] = []
 	
 	for line in smd.file:
-		if line == "end\n":
+		if smdBreak(line):
 			break
+		if smdContinue(line):
+			continue
 			
 		values = line.split()
 
@@ -667,9 +680,11 @@ def readFrames():
 					bpy.ops.pose.armature_apply()
 				if smd.jobType == REF:
 					log.warning("Found animation in reference mesh \"{}\", ignoring!".format(smd.jobName))
-					for line in smd.file: # skip to end of block
-						if line == "end\n":
+					for line in smd.file: # skip to end of block						
+						if smdBreak(line):
 							break
+						if smdContinue(line):
+							continue
 			num_frames += 1
 			
 			# this way bones which are immobile some of the time are supported
@@ -884,7 +899,7 @@ def getMeshMaterial(in_name):
 			md.materials.append(mat)
 			mat_ind = len(md.materials) - 1
 	else: # material does not exist
-		print("- New material: %s" % in_name)
+		print("- New material: {}".format(in_name))
 		mat = bpy.data.materials.new(in_name)
 		md.materials.append(mat)
 		# Give it a random colour
@@ -974,8 +989,12 @@ def readPolys():
 	for line in smd.file:
 		line = line.rstrip("\n")
 
-		if line == "end" or "":
+		if smdBreak(line):
+			print("break",line)
 			break
+		if smdContinue(line):
+			print("continue",line)
+			continue
 
 		mat, mat_ind = getMeshMaterial(line)
 		mats.append(mat_ind)
@@ -985,7 +1004,10 @@ def readPolys():
 		vertexCount = 0
 		faceVerts = []
 		for line in smd.file:
+			if smdContinue(line):
+				continue
 			values = line.split()
+
 			vertexCount+= 1
 			co = []
 			#norm = []
@@ -1069,7 +1091,7 @@ def readPolys():
 
 		if badWeights:
 			log.warning("{} vertices weighted to invalid bones on {}".format(badWeights,smd.jobName))
-		print("- Imported %i polys" % countPolys)
+		print("- Imported {} polys".format(countPolys))
 
 # vertexanimation block
 def readShapes():
@@ -1099,8 +1121,12 @@ def readShapes():
 
 	for line in smd.file:
 		line = line.rstrip("\n")
-		if line == "end" or "":
+		
+		if smdBreak(line):
 			break
+		if smdContinue(line):
+			continue
+			
 		values = line.split()
 
 		if values[0] == "time":
@@ -1297,13 +1323,12 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 			continue
 
 		# naming shapes
-		# FIXME: broken due to BMesh API bug
-		'''if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
+		if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
 			for i in range(1,len(line)):
 				if line[i] == "frame":
 					qc.ref_mesh.data.shape_keys.key_blocks[int(line[i+1])-1].name = line[1] # subtract 1 because frame 0 isn't a real shape key
 					break
-			continue'''
+			continue
 
 		# physics mesh
 		if line[0] in ["$collisionmodel","$collisionjoints"]:
