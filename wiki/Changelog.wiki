@@ -1,4 +1,11 @@
 #labels Featured
+== SMD Tools 1.2.6 - June 12th, 2012 ==
+
+Importer:
+
+  * No longer chokes on SMD comments
+  * Re-enabled QC flex name import
+
 == SMD Tools 1.2.5 - May 31st, 2012 ==
 
 Exporter:
