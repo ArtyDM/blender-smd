@@ -934,6 +934,61 @@ def setLayer():
 			if child.type == 'EMPTY':
 				child.layers[smd.layer] = True
 
+# Remove doubles without removing entire faces
+def removeDoublesPreserveFaces():
+	for poly in smd.m.data.polygons:
+		poly.select = True
+	
+	def getVertCos(poly):
+		cos = []
+		for vert_index in poly.vertices:
+			cos.append(poly.id_data.vertices[vert_index].co)
+		return cos
+		
+	def getEpsilonNormal(normal):
+		norm_rounded = [0,0,0]
+		for i in range(0,3):
+			norm_rounded[i] = abs(round(normal[i],4))
+		return tuple(norm_rounded)
+	
+	# First pass: make a hashed list of unsigned normals
+	norm_dict = {}
+	for poly in smd.m.data.polygons:
+		norm_t = getEpsilonNormal(poly.normal)
+		if norm_dict.get(norm_t):
+			norm_dict[norm_t].append(poly.index)
+		else:
+			norm_dict[norm_t] = [poly.index]
+	
+	# Second pass: for each selected poly, check each poly with a matching normal vector
+	# and determine if it shares the same verts. If they do, deselect the second poly to avoid
+	# its destruction during Remove Doubles.
+	# FIXME: the 'back' polys will not be connected to each other
+	for poly in smd.m.data.polygons:
+		if not poly.select: continue
+		norm_tuple = getEpsilonNormal(poly.normal)			
+		poly_verts = getVertCos(poly)
+		
+		for candidate_index in norm_dict[norm_tuple]:
+			if candidate_index == poly.index: continue
+			candidate_poly = smd.m.data.polygons[candidate_index]
+			if not candidate_poly.select: continue
+			candidate_poly_verts = getVertCos(candidate_poly)
+			different = False
+			for poly_vert in poly_verts:
+				if poly_vert not in candidate_poly_verts:
+					different = True
+					break
+			candidate_poly.select = different
+	
+	# Now remove those doubles!
+	ops.object.mode_set(mode='EDIT')
+	ops.mesh.remove_doubles(mergedist=0)
+	bpy.ops.mesh.select_all(action='INVERT')
+	ops.mesh.remove_doubles(mergedist=0)
+	bpy.ops.mesh.select_all(action='DESELECT')
+	ops.object.mode_set(mode='OBJECT')
+
 # triangles block
 def readPolys():
 	if smd.jobType not in [ REF, REF_ADD, PHYS ]:
@@ -1085,54 +1140,7 @@ def readPolys():
 		for poly in smd.m.data.polygons:
 			poly.select = True		
 		
-		# Remove doubles without removing entire faces
-		def getVertCos(poly):
-			cos = []
-			for vert_index in poly.vertices:
-				cos.append(poly.id_data.vertices[vert_index].co)
-			return cos
-			
-		def getEpsilonNormal(normal):
-			norm_rounded = [0,0,0]
-			for i in range(0,3):
-				norm_rounded[i] = abs(round(normal[i],4))
-			return tuple(norm_rounded)
-		
-		# First pass: make a hashed list of unsigned normals
-		norm_dict = {}
-		for poly in smd.m.data.polygons:
-			norm_t = getEpsilonNormal(poly.normal)
-			if norm_dict.get(norm_t):
-				norm_dict[norm_t].append(poly.index)
-			else:
-				norm_dict[norm_t] = [poly.index]
-		
-		# Second pass: for each selected poly, check each poly with a matching normal vector
-		# and determine if it shares the same verts. If they do, deselect the second poly to avoid
-		# its destruction during Remove Doubles.
-		# FIXME: the overlapping polys will not be connected to each other
-		for poly in smd.m.data.polygons:
-			if not poly.select: continue
-			norm_tuple = getEpsilonNormal(poly.normal)			
-			poly_verts = getVertCos(poly)
-			
-			for candidate_index in norm_dict[norm_tuple]:
-				if candidate_index == poly.index: continue
-				candidate_poly = smd.m.data.polygons[candidate_index]
-				if not candidate_poly.select: continue
-				candidate_poly_verts = getVertCos(candidate_poly)
-				different = False
-				for poly_vert in poly_verts:
-					if poly_vert not in candidate_poly_verts:
-						different = True
-						break
-				candidate_poly.select = different
-		
-		# Now remove those doubles!
-		ops.object.mode_set(mode='EDIT')
-		ops.mesh.remove_doubles(mergedist=0)
-		bpy.ops.mesh.select_all(action='DESELECT')
-		ops.object.mode_set(mode='OBJECT')
+		removeDoublesPreserveFaces()
 						
 		if smd.jobType == PHYS:
 			smd.m.show_wire = True
@@ -1755,11 +1763,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				ob.select = True
 				bpy.ops.object.shade_smooth()
 				
-				bpy.ops.object.mode_set(mode='EDIT')
-				bpy.ops.mesh.select_all(action='SELECT')
-				bpy.ops.mesh.remove_doubles() # FIXME: preserve faces
-				bpy.ops.mesh.select_all(action='DESELECT')
-				bpy.ops.object.mode_set(mode='OBJECT')
+				removeDoublesPreserveFaces()
 				
 				bpy.ops.object.transform_apply(rotation=True)
 				return
