@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 6),
+	"version": (1, 2, 7),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -1076,8 +1076,45 @@ def readPolys():
 		smd.m.select = True
 		bpy.context.scene.objects.active = smd.m
 		ops.object.shade_smooth()		
+		
+		def getVertCos(poly):
+			cos = []
+			for vert_index in poly.vertices:
+				cos.append(poly.id_data.vertices[vert_index].co)
+			return cos
+			
+		def getEpsilonNormal(normal):
+			norm_rounded = [0,0,0]
+			for i in range(1,3):
+				norm_rounded[i] = round(normal[i],2)
+			return tuple(normal)
+		
+		norms = {}
+		for poly in smd.m.data.polygons:
+			norm_t = getEpsilonNormal(poly.normal)
+			if not norms.get(norm_t): norms[norm_t] = []
+			norms[norm_t].append(poly.index)
+			
+		for poly in smd.m.data.polygons:
+			poly.select = True
+			
+		for poly in smd.m.data.polygons:
+			if not poly.select: continue
+			norm_tuple = getEpsilonNormal(-poly.normal)
+			
+			if norms.get(norm_tuple):
+				poly_verts = getVertCos(poly)
+				for candidate_index in norms[norm_tuple]:
+					candidate_poly = smd.m.data.polygons[candidate_index]
+					candidate_poly_verts = getVertCos(candidate_poly)
+					differs = False
+					for poly_vert in poly_verts:
+						if poly_vert in candidate_poly_verts:
+							differs = True
+							break
+					poly.select = not differs
+			
 		ops.object.mode_set(mode='EDIT')
-		bpy.ops.mesh.select_all(action='SELECT')
 		ops.mesh.remove_doubles()
 		bpy.ops.mesh.select_all(action='DESELECT')
 		ops.object.mode_set(mode='OBJECT')
@@ -2198,7 +2235,8 @@ def writePolys(internal=False):
 			smd.materials_used.add(mat_name)
 		else:
 			mat_name = "no_material"
-			bad_face_mats += 1
+			if smd.m.draw_type == 'TEXTURED':
+				bad_face_mats += 1
 		
 		smd.file.write(mat_name + "\n")
 		
