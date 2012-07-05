@@ -51,6 +51,8 @@ rz90n = Matrix.Rotation(radians(-90),4,'Z')
 
 mat_BlenderToSMD = ry90 * rz90 # for legacy support only
 
+actlib = 'ActLib' in dir(bpy.types) # one day...
+
 # SMD types
 REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
 REF_ADD = 0x2 # $bodygroup, $lod->replacemodel
@@ -655,8 +657,10 @@ def readFrames():
 	if smd.jobType in [ANIM,ANIM_SOLO]:
 		if not a.animation_data:
 			a.animation_data_create()
+		
+		if actlib: a.animation_data.action_library.add()
 		act = a.animation_data.action = bpy.data.actions.new(smd.jobName)
-		a.animation_data.action.use_fake_user = True
+		if not actlib: a.animation_data.action.use_fake_user = True
 
 	num_frames = 0
 	ops.object.mode_set(mode='POSE')	
@@ -760,9 +764,7 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 		for i in range(3):
 			dimensions.append(maxs[i] - mins[i])
     
-		length = (dimensions[0] + dimensions[1] + dimensions[2]) / 600 # very small indeed, but a custom bone is used for display
-		if length < 0.001: # Blender silently deletes bones whose length is <= 0.000001
-			length = 0.001 # could be only a single bone (static prop for example)
+		length = max(0.001, (dimensions[0] + dimensions[1] + dimensions[2]) / 600) # very small indeed, but a custom bone is used for display
 	
 		# Apply spheres
 		ops.object.mode_set(mode='EDIT')
@@ -774,8 +776,11 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 	
 	if smd.jobType in [ANIM,ANIM_SOLO]:
 		# Create an animation
-		bpy.context.scene.frame_start = 0
-		bpy.context.scene.frame_end = num_frames - 1		
+		if actlib:
+			bpy.context.scene.use_preview_range = bpy.context.scene.use_preview_range_action_lock = True
+		else:
+			bpy.context.scene.frame_start = 0
+			bpy.context.scene.frame_end = num_frames - 1		
 		
 		for bone in smd.a.pose.bones:
 			bone.rotation_mode = smd.rotMode
@@ -1071,12 +1076,16 @@ def readPolys():
 			for link in weights[i]:
 				link[0].add( [i], link[1], 'REPLACE' )
         
-		# Remove doubles and smooth...is there an easier way?		
 		bpy.ops.object.select_all(action="DESELECT")
 		smd.m.select = True
 		bpy.context.scene.objects.active = smd.m
-		ops.object.shade_smooth()		
 		
+		ops.object.shade_smooth()
+		
+		for poly in smd.m.data.polygons:
+			poly.select = True		
+		
+		# Remove doubles without removing entire faces
 		def getVertCos(poly):
 			cos = []
 			for vert_index in poly.vertices:
@@ -1085,37 +1094,43 @@ def readPolys():
 			
 		def getEpsilonNormal(normal):
 			norm_rounded = [0,0,0]
-			for i in range(1,3):
-				norm_rounded[i] = round(normal[i],2)
-			return tuple(normal)
+			for i in range(0,3):
+				norm_rounded[i] = abs(round(normal[i],4))
+			return tuple(norm_rounded)
 		
-		norms = {}
+		# First pass: make a hashed list of unsigned normals
+		norm_dict = {}
 		for poly in smd.m.data.polygons:
 			norm_t = getEpsilonNormal(poly.normal)
-			if not norms.get(norm_t): norms[norm_t] = []
-			norms[norm_t].append(poly.index)
-			
-		for poly in smd.m.data.polygons:
-			poly.select = True
-			
+			if norm_dict.get(norm_t):
+				norm_dict[norm_t].append(poly.index)
+			else:
+				norm_dict[norm_t] = [poly.index]
+		
+		# Second pass: for each selected poly, check each poly with a matching normal vector
+		# and determine if it shares the same verts. If they do, deselect the second poly to avoid
+		# its destruction during Remove Doubles.
+		# FIXME: the overlapping polys will not be connected to each other
 		for poly in smd.m.data.polygons:
 			if not poly.select: continue
-			norm_tuple = getEpsilonNormal(-poly.normal)
+			norm_tuple = getEpsilonNormal(poly.normal)			
+			poly_verts = getVertCos(poly)
 			
-			if norms.get(norm_tuple):
-				poly_verts = getVertCos(poly)
-				for candidate_index in norms[norm_tuple]:
-					candidate_poly = smd.m.data.polygons[candidate_index]
-					candidate_poly_verts = getVertCos(candidate_poly)
-					differs = False
-					for poly_vert in poly_verts:
-						if poly_vert in candidate_poly_verts:
-							differs = True
-							break
-					poly.select = not differs
-			
+			for candidate_index in norm_dict[norm_tuple]:
+				if candidate_index == poly.index: continue
+				candidate_poly = smd.m.data.polygons[candidate_index]
+				if not candidate_poly.select: continue
+				candidate_poly_verts = getVertCos(candidate_poly)
+				different = False
+				for poly_vert in poly_verts:
+					if poly_vert not in candidate_poly_verts:
+						different = True
+						break
+				candidate_poly.select = different
+		
+		# Now remove those doubles!
 		ops.object.mode_set(mode='EDIT')
-		ops.mesh.remove_doubles()
+		ops.mesh.remove_doubles(mergedist=0)
 		bpy.ops.mesh.select_all(action='DESELECT')
 		ops.object.mode_set(mode='OBJECT')
 						
@@ -1494,8 +1509,6 @@ def readSMD( context, filepath, upAxis, rotMode, newscene = False, smd_type = No
 		if line == "vertexanimation\n": readShapes()
 
 	file.close()
-	bpy.ops.object.select_all(action='DESELECT')
-	smd.a.select = True
 	'''
 	if smd.m and smd.upAxisMat and smd.upAxisMat != 1:
 		smd.m.rotation_euler = smd.upAxisMat.to_euler()
@@ -1744,9 +1757,11 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				
 				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.select_all(action='SELECT')
-				bpy.ops.mesh.remove_doubles()
+				bpy.ops.mesh.remove_doubles() # FIXME: preserve faces
 				bpy.ops.mesh.select_all(action='DESELECT')
 				bpy.ops.object.mode_set(mode='OBJECT')
+				
+				bpy.ops.object.transform_apply(rotation=True)
 				return
 
 	def readDMXAtch():
@@ -1772,6 +1787,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 	def readDMXAnim():
 		smd.jobType = ANIM
 		smd.a.hide = False
+		bpy.context.scene.objects.active = smd.a
 		ops.object.mode_set(mode='OBJECT')
 		dmxApplyRestPose()
 		smd.a = target_arm
@@ -1848,8 +1864,10 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		
 		if not smd.a.animation_data:
 			smd.a.animation_data_create()
+		if actlib: smd.a.animation_data.action_library.add()
 		act = smd.a.animation_data.action = bpy.data.actions.new(smd.jobName)
-		smd.a.animation_data.action.use_fake_user = True
+		if not actlib: smd.a.animation_data.action.use_fake_user = True
+		
 		applyFrames(bone_mats,total_frames,act,dmx_keysets)
 	
 	def validateDMXSkeleton():
@@ -1977,6 +1995,8 @@ class SmdImporter(bpy.types.Operator):
 
 		global log
 		log = logger()
+		
+		pre_obs = set(bpy.context.scene.objects)
 
 		filepath_lc = self.properties.filepath.lower()
 		if filepath_lc.endswith('.qc') or filepath_lc.endswith('.qci'):
@@ -1996,17 +2016,23 @@ class SmdImporter(bpy.types.Operator):
 			return {'CANCELLED'}
 
 		log.errorReport("imported","file",self,self.countSMDs)
-		if self.countSMDs and smd.m:
-			smd.m.select = True
+		if self.countSMDs:
+			bpy.ops.object.select_all(action='DESELECT')
+			new_obs = set(bpy.context.scene.objects).difference(pre_obs)
+			xy = xyz = 0
+			for ob in new_obs:
+				ob.select = True
+				# FIXME: assumes meshes are centered around their origins
+				xy = max(xy, int(max(ob.dimensions[0],ob.dimensions[1])) )
+				xyz = max(xyz, max(xy,int(ob.dimensions[2])))
+			if smd_manager.a: bpy.context.scene.objects.active = smd_manager.a
 			for area in context.screen.areas:
 				if area.type == 'VIEW_3D':
 					space = area.spaces.active
-					# FIXME: small meshes offset from their origins won't extend things far enough
-					xy = int(max(smd.m.dimensions[0],smd.m.dimensions[1]))
-					space.grid_lines = max(space.grid_lines, xy)
-					space.clip_end = max(space.clip_end, max(xy,int(smd.m.dimensions[2])))
+					space.grid_lines = max(space.grid_lines, (xy * 1.2) / space.grid_scale )
+					space.clip_end = max( space.clip_end, xyz ) * 2
 		if bpy.context.area.type == 'VIEW_3D' and bpy.context.region:
-			bpy.ops.view3d.view_all()
+			bpy.ops.view3d.view_selected()
 		return {'FINISHED'}
 
 	def invoke(self, context, event):
