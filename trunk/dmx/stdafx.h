@@ -28,14 +28,14 @@ static HANDLE StdOut = GetStdHandle(STD_OUTPUT_HANDLE);
 static HANDLE StdErr = GetStdHandle(STD_ERROR_HANDLE);
 static DWORD written;
 
-static int modl_v = 1;
+static int modl_v = 2;
 void DecodeKV2(ifstream* file);
 
-#define Output(buf, bytes) WriteFile(StdOut,buf,bytes,&written,0);
+#define Output(buf, bytes) WriteFile(StdOut,buf,bytes,&written,0)
 #define OutputInt(buf) Output(&buf,sizeof(int))
 #define OutputFloat(buf) Output(&buf,sizeof(float))
 #define OutputBool(b) Output(b ? "\1" : "\0",1)
-#define OutputStr(buf) WriteFile(StdOut,buf,strlen(buf),&written,0);
+#define OutputStr(buf) WriteFile(StdOut,buf,strlen(buf),&written,0)
 
 #define Error(buf) WriteFile(StdErr,buf,strlen(buf),&written,0);
 void FatalErr(const char* msg);

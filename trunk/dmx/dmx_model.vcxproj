@@ -90,7 +90,8 @@
       <IgnoreSpecificDefaultLibraries>libcmt</IgnoreSpecificDefaultLibraries>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(TargetPath)" "C:\blender-svn\install\win32-mingw"</Command>
+      <Command>copy "$(TargetPath)" "C:\blender-2.63a-release-windows64"
+copy "$(TargetPath)" "C:\blender-git\trunk\vc10\bin\Release\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -113,7 +114,8 @@
       </IgnoreSpecificDefaultLibraries>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(TargetPath)" "C:\blender-svn\install\win32-mingw"</Command>
+      <Command>copy "$(TargetPath)" "C:\blender-2.63a-release-windows64"
+copy "$(TargetPath)" "C:\blender-git\trunk\vc10\bin\Release\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='AS Release|Win32'">
@@ -138,8 +140,8 @@
       <AdditionalDependencies>dmxloader.lib;mathlib.lib;tier0.lib;tier1.lib;tier2.lib;interfaces.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(TargetPath)" "C:\blender-2.57-RC2-r36007-windows32"
-copy "$(TargetPath)" "C:\blender-svn\install\win32-mingw"</Command>
+      <Command>copy "$(TargetPath)" "C:\blender-2.63a-release-windows64"
+copy "$(TargetPath)" "C:\blender-git\trunk\vc10\bin\Release\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='AS Debug|Win32'">
@@ -163,9 +165,8 @@ copy "$(TargetPath)" "C:\blender-svn\install\win32-mingw"</Command>
       <AdditionalDependencies>dmxloader.lib;mathlib.lib;tier0.lib;tier1.lib;tier2.lib;interfaces.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(TargetPath)" "C:\blender-2.57-windows64"
-;copy "$(TargetPath)" "C:\blender-svn\install\win32-mingw"
-</Command>
+      <Command>copy "$(TargetPath)" "C:\blender-2.63a-release-windows64"
+copy "$(TargetPath)" "C:\blender-git\trunk\vc10\bin\Release\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

@@ -121,8 +121,6 @@ void WriteBone(CDmxElement* DmeJoint,bool ListOnly = false)
 	if (!ListOnly)
 		WriteTransform(DmeJoint->GetValue<CDmxElement*>("transform"));
 
-	//assert( strcmp(DmeJoint->GetName(),"prp_sleeve_L") != 0);
-
 	const CUtlVector<CDmxElement*>* children = &DmeJoint->GetArray<CDmxElement*>("children");
 	int NumChildren = children->Count();
 	CUtlVector<int> ToRemove;
@@ -190,18 +188,10 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 			OutputStr("VERT");
 			const CUtlVector<Vector>* pos		= &DmeVertexData->GetArray<Vector>("positions");
 			const CUtlVector<int>* PosIndices	= &DmeVertexData->GetArray<int>("positionsIndices");
-			int verts							= PosIndices->Count();
+			int verts							= pos->Count();
 
 			OutputInt(verts);
-			for ( int i = 0; i < verts; i++)
-				Output(&pos->Element( PosIndices->Element(i) ),sizeof(Vector));
-
-			OutputStr("NORM");
-			const CUtlVector<Vector>* norms		= &DmeVertexData->GetArray<Vector>("normals");
-			const CUtlVector<int>* normIndices	= &DmeVertexData->GetArray<int>("normalsIndices");
-			for ( int i = 0; i < verts; i++)
-				Output(&norms->Element( normIndices->Element(i) ),sizeof(Vector));
-
+			Output(pos->Base(),sizeof(Vector) * pos->Count());
 	
 			const CUtlVector<CDmxElement*>* FaceSets = &DmeMesh->GetArray<CDmxElement*>("faceSets");
 			for( int i=0; i < FaceSets->Count(); i++)
@@ -217,16 +207,39 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 				const CUtlVector<int>* faces = &CurSet->GetArray<int>("faces");
 				int FacesSize = faces->Count();
 				OutputInt(FacesSize);
-				Output(faces->Base(),sizeof(int) * FacesSize);
+				for( int x=0; x < FacesSize; x++)
+				{
+					if (faces->Element(x) == -1)
+						Output(&faces->Element(x),sizeof(int));
+					else
+						Output(&PosIndices->Element(faces->Element(x)),sizeof(int));
+				}
+			}
+
+			OutputStr("NORM");
+			const CUtlVector<Vector>* norms		= &DmeVertexData->GetArray<Vector>("normals");
+			const CUtlVector<int>* normIndices	= &DmeVertexData->GetArray<int>("normalsIndices");
+
+			for( int i=0; i < FaceSets->Count(); i++)
+			{
+				const CUtlVector<int>* faces = &FaceSets->Element(i)->GetArray<int>("faces");
+
+				for (int x=0; x < faces->Count(); x++)
+					if (faces->Element(x) != -1)
+						Output(&norms->Element( normIndices->Element(faces->Element(x)) ),sizeof(Vector));
 			}
 
 			OutputStr("TEXC");
 			const CUtlVector<Vector2D>* uvs		= &DmeVertexData->GetArray<Vector2D>("textureCoordinates");
 			const CUtlVector<int>* uvIndices	= &DmeVertexData->GetArray<int>("textureCoordinatesIndices");
 
-			for ( int i = 0; i < verts; i++)
+			for( int i=0; i < FaceSets->Count(); i++)
 			{
-				Output(&uvs->Element( uvIndices->Element(i) ),sizeof(Vector2D));
+				const CUtlVector<int>* faces = &FaceSets->Element(i)->GetArray<int>("faces");
+
+				for (int x=0; x < faces->Count(); x++)
+					if (faces->Element(x) != -1)
+						Output(&uvs->Element( uvIndices->Element(faces->Element(x)) ),sizeof(Vector2D));
 			}
 						
 			int NumWeightedBones = DmeVertexData->GetValue<int>("jointCount");
@@ -239,13 +252,36 @@ void WriteMesh(CDmxElement* DmeMesh, int version)
 				
 				for ( int i=0; i < verts; i++)
 				{
-					int cur = PosIndices->Element(i) * NumWeightedBones;
+					int cur = i * NumWeightedBones;
 					
 					for ( int j=0; j < NumWeightedBones; j++)
 					{
 						OutputFloat(weights->Element(cur));
 						OutputInt(wtIndices->Element(cur));
 						cur++;
+					}
+				}
+			}
+
+			const CUtlVector<CDmxElement*>* deltas = &DmeMesh->GetArray<CDmxElement*>("deltaStates");
+			if (deltas)
+			{
+				for (int i = 0; i < deltas->Count(); i++)
+				{
+					OutputStr("FLEX");
+					CDmxElement* curDelta = deltas->Element(i);
+					WriteName(curDelta);
+
+					const CUtlVector<Vector>* DeltaPos = &curDelta->GetArray<Vector>("positions");
+					const CUtlVector<int>* DeltaPosIndices = &curDelta->GetArray<int>("positionsIndices");
+
+					int numVerts = DeltaPos->Count();
+					OutputInt(numVerts);
+
+					for (int j = 0; j < numVerts; j++)
+					{
+						OutputInt(DeltaPosIndices->Element(j));
+						Output(&DeltaPos->Element(j),sizeof(Vector));
 					}
 				}
 			}
