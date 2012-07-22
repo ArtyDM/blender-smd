@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 2, 7),
+	"version": (1, 3, 0),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -51,8 +51,6 @@ rz90n = Matrix.Rotation(radians(-90),4,'Z')
 
 mat_BlenderToSMD = ry90 * rz90 # for legacy support only
 
-actlib = 'ActLib' in dir(bpy.types) # one day...
-
 # SMD types
 REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
 REF_ADD = 0x2 # $bodygroup, $lod->replacemodel
@@ -75,7 +73,8 @@ src_branches = (
 ('left 4 dead 2','Left 4 Dead 2',''),
 ('left 4 dead','Left 4 Dead',''),
 ('alien swarm','Alien Swarm',''),
-('portal 2','Portal 2','')
+('portal 2','Portal 2',''),
+('SourceFilmmaker', 'Source Filmmaker', '')
 )
 
 # I hate Python's var redefinition habits
@@ -222,11 +221,14 @@ def smdContinue(line):
 	return line.startswith("//")
 
 def ValidateBlenderVersion(op):
-	if int(bpy.app.build_revision[:5]) >= bl_info['api']:
+	try:		
+		if int(bpy.app.build_revision[:5]) >= bl_info['api']:
+			return True
+		else:
+			op.report({'ERROR'},"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bl_info['blender']), PrintVer(bpy.app.version)) )
+			return False
+	except ValueError:
 		return True
-	else:
-		op.report({'ERROR'},"SMD Tools {} require Blender {} or later, but this is {}".format(PrintVer(bl_info['version']), PrintVer(bl_info['blender']), PrintVer(bpy.app.version)) )
-		return False
 
 def getFileExt(flex=False):
 	if flex and bpy.context.scene.smd_format == 'SMD':
@@ -649,18 +651,8 @@ def readFrames():
 
 	a = smd.a
 	bones = a.data.bones
-	scn = bpy.context.scene
 	bpy.context.scene.objects.active = smd.a
 	ops.object.mode_set(mode='POSE')
-
-	act = None
-	if smd.jobType in [ANIM,ANIM_SOLO]:
-		if not a.animation_data:
-			a.animation_data_create()
-		
-		if actlib: a.animation_data.action_library.add()
-		act = a.animation_data.action = bpy.data.actions.new(smd.jobName)
-		if not actlib: a.animation_data.action.use_fake_user = True
 
 	num_frames = 0
 	ops.object.mode_set(mode='POSE')	
@@ -733,15 +725,15 @@ def readFrames():
 					bone_mats[bone][frame] = phantom_mats[cur_parent][phantom_frame] * bone_mats[bone][frame]					
 					cur_parent = smd.phantomParentIDs.get(cur_parent)
 					
-	applyFrames(bone_mats,num_frames,act)
+	applyFrames(bone_mats,num_frames)
 
-def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is called during DMX import too
-	if smd.jobType in [REF,ANIM_SOLO]:	
+def applyFrames(bone_mats,num_frames, dmx_key_sets = None, fps = None): # this is called during DMX import too
+	if smd.jobType in [REF,ANIM_SOLO]:
 		# Apply the reference pose
 		for bone in smd.a.pose.bones:
 			bone.matrix = bone_mats[bone][0]
 		bpy.ops.pose.armature_apply()
-	
+		
 		# Get sphere bone mesh
 		bone_vis = bpy.data.objects.get("smd_bone_vis")
 		if not bone_vis:
@@ -750,8 +742,8 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 			bone_vis.data.name = bone_vis.name = "smd_bone_vis"
 			bone_vis.use_fake_user = True
 			bpy.context.scene.objects.unlink(bone_vis) # don't want the user deleting this
-			bpy.context.scene.objects.active = smd.a    
-	
+			bpy.context.scene.objects.active = smd.a
+			
 		# Calculate armature dimensions...Blender should be doing this!
 		maxs = [0,0,0]
 		mins = [0,0,0]
@@ -771,12 +763,30 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 		for bone in smd.a.data.edit_bones:
 			bone.tail = bone.head + (bone.tail - bone.head).normalized() * length # Resize loose bone tails based on armature size
 			smd.a.pose.bones[bone.name].custom_shape = bone_vis # apply bone shape
-    
+			
+	else:
+		if not smd.a.animation_data:
+			smd.a.animation_data_create()
+		
+		action = bpy.data.actions.new(smd.jobName)
+		
+		if 'ActLib' in dir(bpy.types):
+			smd.a.animation_data.action_library.add()
+		else:
+			action.use_fake_user = True
+			
+		smd.a.animation_data.action = action
+		
+		if 'fps' in dir(action):
+			action.fps = fps if fps else 30
+			bpy.context.scene.render.fps = 60
+			bpy.context.scene.render.fps_base = 1
+	
 		ops.object.mode_set(mode='POSE')
 	
 	if smd.jobType in [ANIM,ANIM_SOLO]:
 		# Create an animation
-		if actlib:
+		if 'ActLib' in dir(bpy.types):
 			bpy.context.scene.use_preview_range = bpy.context.scene.use_preview_range_action_lock = True
 		else:
 			bpy.context.scene.frame_start = 0
@@ -857,18 +867,20 @@ def applyFrames(bone_mats,num_frames,action, dmx_key_sets = None): # this is cal
 				ApplyRecursive(child)
 		
 		# Start keying
-		for bone in smd.a.pose.bones:
+		for bone in smd.a.pose.bones:			
 			if not bone.parent:					
 				ApplyRecursive(bone)
-		
+				
 		# Smooth keyframe handles
+		for bone in smd.a.data.bones:
+			bone.select = True		
 		oldType = bpy.context.area.type
 		bpy.context.area.type = 'GRAPH_EDITOR'
-		try:
-			bpy.ops.graph.handle_type(type='AUTO')
-		except RuntimeError: # no frames?
-			pass
+		smd.a.select = True
+		bpy.ops.graph.handle_type(type='AUTO')
 		bpy.context.area.type = oldType # in Blender 2.59 this leaves context.region blank, making some future ops calls (e.g. view3d.view_all) fail!
+		for bone in smd.a.data.bones:
+			bone.select = False
 
 	# clear any unkeyed poses
 	for bone in smd.a.pose.bones:
@@ -961,9 +973,8 @@ def removeDoublesPreserveFaces():
 			norm_dict[norm_t] = [poly.index]
 	
 	# Second pass: for each selected poly, check each poly with a matching normal vector
-	# and determine if it shares the same verts. If they do, deselect the second poly to avoid
-	# its destruction during Remove Doubles.
-	# FIXME: the 'back' polys will not be connected to each other
+	# and determine if it shares the same verts. If it does, deselect it to avoid
+	# destruction during Remove Doubles.
 	for poly in smd.m.data.polygons:
 		if not poly.select: continue
 		norm_tuple = getEpsilonNormal(poly.normal)			
@@ -984,7 +995,7 @@ def removeDoublesPreserveFaces():
 	# Now remove those doubles!
 	ops.object.mode_set(mode='EDIT')
 	ops.mesh.remove_doubles(mergedist=0)
-	bpy.ops.mesh.select_all(action='INVERT')
+	bpy.ops.mesh.select_all(action='INVERT') # FIXME: the 'back' polys will not be connected to the main mesh
 	ops.mesh.remove_doubles(mergedist=0)
 	bpy.ops.mesh.select_all(action='DESELECT')
 	ops.object.mode_set(mode='OBJECT')
@@ -1681,14 +1692,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					bm.verts.new( get_vec(3) )
 				#bench("VERT")
 
-			elif block_name == "NORM":
-				smd.file.seek(num_verts * floatsize * 3, io.SEEK_CUR)
-				#for i in range(num_verts):
-				#	norms.append( get_vec(3) )
-				#now = time.time()
-				#norm_time = last - now
-				#last = now
-
 			elif block_name == "FACE":
 				mat_info = get_name().replace("\\","/").rsplit("/",1)
 				mat_name = mat_info[-1]
@@ -1702,25 +1705,65 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				for i in range( face_array_len ):
 					val = get_int()
 					if val == -1: # delimiter
-						bm.faces.new(faceVerts)
-						bm.faces[-1].material_index = mat_ind
+						try:
+							bm.faces.new(faceVerts)
+							bm.faces[-1].material_index = mat_ind
+						except ValueError: # can't have an overlapping face
+							pass
 						faceVerts = []
 					else:
 						faceVerts.append(bm.verts[val])
 				
 				#bench("FACE")
 
-			elif block_name == "TEXC":
+			elif block_name == "NORM":
 				bm.to_mesh(ob.data)
-
-				uvs = []
-				for vert in ob.data.vertices:
-					uvs.append(get_vec(2))
 				
+				dmx_norms = []
+				for face in bm.faces:
+					for vert in face.verts:
+						dmx_norms.append(get_vec(3))
+						
+				#
+				# FIXME: below is the current state of sharp edge generation. It's slow and gets the wrong edges.
+				#
+				#print("- Rebuilding sharp edges...")
+				#ob.data.update()
+				#ob.data.show_edge_sharp = True
+				#edgesplit = ob.modifiers.new(name="DMX Edge Split",type='EDGE_SPLIT')
+				#edgesplit.use_edge_angle = False
+				#
+				#offset = 0
+				#dot_epsilon = 0.99
+				#for poly in ob.data.polygons:
+				#	for i in range(len(poly.vertices)):
+				#		vert1_index = i
+				#		vert2_index = vert1_index+1
+				#		if vert2_index == len(poly.vertices): vert2_index = 0
+				#		
+				#		vert1 = ob.data.vertices[ poly.vertices[vert1_index] ]
+				#		vert2 = ob.data.vertices[ poly.vertices[vert2_index] ]
+				#		
+				#		if vert1.normal.dot(dmx_norms[vert1_index + offset]) < dot_epsilon and vert2.normal.dot(dmx_norms[vert2_index + offset]) < dot_epsilon:
+				#			edge_index = -1
+				#			try: edge_index = ob.data.edge_keys.index( (poly.vertices[vert1_index], poly.vertices[vert2_index]) )
+				#			except ValueError: continue
+				#			
+				#			edge = ob.data.edges[edge_index]
+				#			if edge.use_edge_sharp:
+				#				continue
+				#			edge_dir = (vert1.co - vert2.co)
+				#			if abs(vert1.normal.cross(dmx_norms[vert1_index + offset]).dot(edge_dir)) > dot_epsilon:
+				#				edge.use_edge_sharp = True
+				#	offset += len(poly.vertices)
+                #
+				#bench("NORM")
+
+			elif block_name == "TEXC":
 				ob.data.uv_textures.new()
 				uv_data = ob.data.uv_layers[0].data
 				for i in range(len(uv_data)):
-					uv_data[i].uv = uvs[ob.data.loops[i].vertex_index]
+					uv_data[i].uv = get_vec(2)
 					
 				#bench("TEXC")
 
@@ -1749,6 +1792,18 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					ob.vertex_groups[vg_name].add( verts, 1, 'REPLACE')
 
 				#bench("WMAP")
+			
+			elif block_name == "FLEX":
+				if not ob.data.shape_keys:
+					ob.shape_key_add("Basis")
+					ob.show_only_shape_key = True
+				
+				ob.shape_key_add(get_name())
+				num_verts = get_int()
+				
+				for i in range(num_verts):
+					vert = ob.data.shape_keys.key_blocks[-1].data[get_int()]
+					vert.co += get_vec(3)
 
 			else:
 				if smd.file.peek():
@@ -1762,8 +1817,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				bpy.ops.object.select_all(action="DESELECT")
 				ob.select = True
 				bpy.ops.object.shade_smooth()
-				
-				removeDoublesPreserveFaces()
 				
 				bpy.ops.object.transform_apply(rotation=True)
 				return
@@ -1865,14 +1918,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 						bone_mats[bone][i] = None
 					continue
 
-		
-		if not smd.a.animation_data:
-			smd.a.animation_data_create()
-		if actlib: smd.a.animation_data.action_library.add()
-		act = smd.a.animation_data.action = bpy.data.actions.new(smd.jobName)
-		if not actlib: smd.a.animation_data.action.use_fake_user = True
-		
-		applyFrames(bone_mats,total_frames,act,dmx_keysets)
+		applyFrames(bone_mats,total_frames,dmx_keysets,fps)
 	
 	def validateDMXSkeleton():
 		smd.a = target_arm
@@ -1905,8 +1951,9 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 
 		if block_name == "MODL":
 			modl_ver = get_int()
-			if modl_ver != 1:
-				log.error("dmx-model version is {}, expected 1".format(modl_ver))
+			expected_ver = 2
+			if modl_ver != expected_ver:
+				log.error("dmx-model version is {}, expected {}".format(modl_ver,expected_ver))
 				return 0
 			g_trans = Matrix.Rotation(0,4,"Z")
 			mdl_name = get_string( get_int() )
@@ -2034,7 +2081,7 @@ class SmdImporter(bpy.types.Operator):
 				if area.type == 'VIEW_3D':
 					space = area.spaces.active
 					space.grid_lines = max(space.grid_lines, (xy * 1.2) / space.grid_scale )
-					space.clip_end = max( space.clip_end, xyz ) * 2
+					space.clip_end = max( space.clip_end, xyz * 2 )
 		if bpy.context.area.type == 'VIEW_3D' and bpy.context.region:
 			bpy.ops.view3d.view_selected()
 		return {'FINISHED'}
@@ -2485,44 +2532,14 @@ def bakeObj(in_object):
 		obj.data = obj.data.copy()
 		bpy.context.scene.objects.link(obj)
 		bpy.context.scene.objects.active = obj
+		bpy.ops.object.mode_set(mode='OBJECT')
 		bpy.ops.object.select_all(action="DESELECT")
-		obj.select = True
-		
-		if obj.type == 'MESH':
-			# work on the vertices
+		obj.select = True	
+
+		if obj.type == "MESH":		
 			bpy.ops.object.mode_set(mode='EDIT')
 			bpy.ops.mesh.reveal()
-			if obj.matrix_world.is_negative:
-				bpy.ops.mesh.flip_normals()
-			
-			if not smd.isDMX:
-				bpy.ops.mesh.select_all(action='SELECT')
-				bpy.ops.mesh.quads_convert_to_tris()
-	
-			# handle which sides of a curve should have polys
-			if obj.type == 'CURVE':
-				if obj.data.smd_faces == 'RIGHT':
-					bpy.ops.mesh.duplicate()
-					bpy.ops.mesh.flip_normals()
-				if not obj.data.smd_faces == 'BOTH':
-					bpy.ops.mesh.select_inverse()
-					bpy.ops.mesh.delete()
-				elif solidify_fill_rim:
-					log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
-
-			# project a UV map
-			if len(obj.data.uv_textures) == 0 and smd.jobType != FLEX:
-				if len(obj.data.vertices) < 2000:
-					bpy.ops.object.mode_set(mode='OBJECT')
-					bpy.ops.object.select_all(action='DESELECT')
-					obj.select = True
-					bpy.ops.uv.smart_project()
-				else:
-					bpy.ops.object.mode_set(mode='EDIT')
-					bpy.ops.mesh.select_all(action='SELECT')
-					bpy.ops.uv.unwrap()
-
-		bpy.ops.object.mode_set(mode='OBJECT')
+			bpy.ops.object.mode_set(mode='OBJECT')
 		
 		# Apply object transforms
 		top_parent = cur_parent = obj
@@ -2536,11 +2553,12 @@ def bakeObj(in_object):
 		bpy.context.scene.update() # another rare case where this actually does something			
 		
 		if obj.type == 'MESH': # don't apply transforms to armatures (until/unless actions are baked too)
+			obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
 			bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
-			obj.data.transform(getUpAxisMat(bpy.context.scene.smd_up_axis).inverted())
 		
 		# Apply modifiers; need to do this per shape key
 		bpy.ops.object.mode_set(mode='OBJECT')
+		baked = bi['baked'] = obj
 		for i in range(num_out):
 			if shape_keys:
 				cur_shape = shape_keys[i]
@@ -2548,15 +2566,9 @@ def bakeObj(in_object):
 				log.warning("Skipping muted shape \"{}\"".format(cur_shape.name))
 				continue
 
-			baked = obj.copy()
-			if not bi.get('baked'):
-				bi['baked'] = baked
-			bpy.context.scene.objects.link(baked)
-			bpy.context.scene.objects.active = baked
-
 			if shape_keys:
-				baked.active_shape_key_index = i
-				baked.show_only_shape_key = True
+				obj.active_shape_key_index = i
+				obj.show_only_shape_key = True
 	
 			if obj.type in mesh_compatible:
 				has_edge_split = False
@@ -2567,10 +2579,13 @@ def bakeObj(in_object):
 						solidify_fill_rim = mod.use_rim
 
 				if not has_edge_split and obj.type == 'MESH':
-					edgesplit = baked.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
+					edgesplit = obj.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
 					edgesplit.use_edge_angle = False
-
-				baked.data = baked.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
+				
+				baked = bi['baked'] = bpy.data.objects.new(obj.name,obj.to_mesh(bpy.context.scene, True, 'PREVIEW') ) # bake it!
+				bpy.context.scene.objects.link(baked)
+				bpy.context.scene.objects.active = baked
+				baked.select = True
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
@@ -2605,8 +2620,45 @@ def bakeObj(in_object):
 						else:
 							smd.a = mod.object
 							bi['arm_mod'] = mod
+		
+				# handle which sides of a curve should have polys
+				if obj.type == 'CURVE':
+					bpy.ops.object.mode_set(mode='EDIT')
+					if obj.data.smd_faces == 'RIGHT':
+						bpy.ops.mesh.duplicate()
+						bpy.ops.mesh.flip_normals()
+					if not obj.data.smd_faces == 'BOTH':
+						bpy.ops.mesh.select_all(action='INVERT')
+						bpy.ops.mesh.delete()
+					elif solidify_fill_rim:
+						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
+					bpy.ops.object.mode_set(mode='OBJECT')
+					
+				# work on the baked vertices
+				if obj.matrix_world.is_negative:
+					bpy.ops.mesh.flip_normals()
 				
-		removeObject(obj)
+				if not smd.isDMX:
+					bpy.ops.object.mode_set(mode='EDIT')
+					bpy.ops.mesh.select_all(action='SELECT')
+					bpy.ops.mesh.quads_convert_to_tris()
+					bpy.ops.object.mode_set(mode='OBJECT')
+
+				# project a UV map
+				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
+					if len(baked.data.vertices) < 2000:
+						bpy.ops.object.mode_set(mode='OBJECT')
+						bpy.ops.object.select_all(action='DESELECT')
+						baked.select = True
+						bpy.ops.uv.smart_project()
+					else:
+						bpy.ops.object.mode_set(mode='EDIT')
+						bpy.ops.mesh.select_all(action='SELECT')
+						bpy.ops.uv.unwrap()
+		
+		bpy.ops.object.mode_set(mode='OBJECT')
+		if obj_in.type in mesh_compatible:
+			removeObject(obj)
 		return baked
 		# END _ObjectCopy()
 
@@ -2775,7 +2827,7 @@ def compileQCs(path=None):
 	studiomdl_path = None
 	if branch in ['ep1','source2007','source2009', 'orangebox'] and sdk_path:
 		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2'] and ncf_path:
+	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2', 'SourceFilmmaker'] and ncf_path:
 		studiomdl_path = ncf_path + branch + "\\bin\\"
 	elif branch == 'CUSTOM':
 		studiomdl_path = scene.smd_studiomdl_custom_path = bpy.path.abspath(scene.smd_studiomdl_custom_path)
@@ -2800,7 +2852,7 @@ def compileQCs(path=None):
 				# save any version of the file currently open in Blender
 				qc_mangled = qc.lower().replace('\\','/')
 				for candidate_area in bpy.context.screen.areas:
-					if candidate_area.type == 'TEXT_EDITOR' and candidate_area.spaces[0].text.filepath.lower().replace('\\','/') == qc_mangled:
+					if candidate_area.type == 'TEXT_EDITOR' and candidate_area.spaces[0].text and candidate_area.spaces[0].text.filepath.lower().replace('\\','/') == qc_mangled:
 						oldType = bpy.context.area.type
 						bpy.context.area.type = 'TEXT_EDITOR'
 						bpy.context.area.spaces[0].text = candidate_area.spaces[0].text
@@ -3421,8 +3473,12 @@ class SmdExporter(bpy.types.Operator):
 			num_good_compiles = compileQCs()
 			jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
 			print("\n")
-
+			
 		log.errorReport(jobMessage,"file",self,self.countSMDs)
+			
+		bpy.ops.ed.undo_push(message="SMD Export")
+		bpy.ops.ed.undo()
+
 		return {'FINISHED'}
 
 	# indirection to support batch exporting
