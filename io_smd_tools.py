@@ -1862,7 +1862,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		a = smd.a
 		bones = a.data.bones
 		scn = bpy.context.scene
-		prevFrame = scn.frame_current
 		scn.objects.active = smd.a
 		
 
@@ -2157,7 +2156,6 @@ def writeFrames():
 		return
 
 	scene = bpy.context.scene
-	prev_frame = scene.frame_current
 
 	# remove any non-keyframed positions
 	scene.objects.active = smd.a
@@ -2231,7 +2229,6 @@ def writeFrames():
 		scene.frame_set(scene.frame_current + 1)	
 
 	smd.file.write("end\n")
-	scene.frame_set(prev_frame)
 
 	if smd.a.animation_data and smd.a.animation_data.action:
 		smd.a.animation_data.action.user_clear() # otherwise the UI shows 100s of users!
@@ -2246,25 +2243,24 @@ def writePolys(internal=False):
 
 	if not internal:
 		smd.file.write("triangles\n")
-		prev_frame = bpy.context.scene.frame_current
 		have_cleared_pose = False
 
 		if not bpy.context.scene.smd_use_image_names:
 			materials = []
-			for bi in smd.bakeInfo:
-				if bi['baked'].type == 'MESH':
-					for mat_slot in bi['baked'].material_slots:
+			for baked in smd.bakeInfo:
+				if baked.type == 'MESH':
+					for mat_slot in baked.material_slots:
 						mat = mat_slot.material
 						if mat and mat.get('smd_name') and mat not in materials:
 							smd.file.write( "// Blender material \"{}\" has smd_name \"{}\"\n".format(mat.name,mat['smd_name']) )
 							materials.append(mat)
 
-		for bi in smd.bakeInfo:
-			if bi['baked'].type == 'MESH':
+		for baked in smd.bakeInfo:
+			if baked.type == 'MESH':
 				# write out each object in turn. Joining them would destroy unique armature modifier settings
-				smd.m = bi['baked']
-				if bi.get('arm_mod') and bi.get('arm_mod').object:
-					smd.amod = bi['arm_mod']
+				smd.m = baked
+				if baked.get('arm_mod') and baked.get('arm_mod').object:
+					smd.amod = baked['arm_mod']
 				else:
 					smd.amod = None
 				if len(smd.m.data.polygons) == 0:
@@ -2284,7 +2280,6 @@ def writePolys(internal=False):
 				writePolys(internal=True)
 
 		smd.file.write("end\n")
-		bpy.context.scene.frame_set(prev_frame)
 		return
 
 	# internal mode:
@@ -2401,46 +2396,38 @@ def writeShapes(cur_shape = 0):
 	num_verts = 0
 
 	def _writeTime(time, shape = None):
-		if shape:
-			src_name = ""
-			for bi in smd.bakeInfo:
-				for shape_candidate in bi['shapes']:
-					if shape_candidate['shape_name'] == shape['shape_name']:
-						src_name += shape_candidate['src_name'] + ", "
-			src_name = src_name[:-2]
-		smd.file.write( "time {}{}\n".format(time, " # {} ({})".format(shape['shape_name'],src_name) if shape else "") )
+		smd.file.write( "time {}{}\n".format(time, " # {}".format(shape['shape_name']) if shape else "") )
 
 	# VTAs are always separate files. The nodes block is handled by the normal function, but skeleton is done here to afford a nice little hack
 	smd.file.write("skeleton\n")
-	_writeTime(0) # shared basis
-	num_shapes = 1
-	shapes_written = []
-	for bi in smd.bakeInfo:
-		cur_shapes = len(bi['shapes']) - 1 # don't include basis shapes
-		for i in range(cur_shapes):
-			shape = bi['shapes'][i+1] # i+1 to skip basis
-			if shape['shape_name'] in shapes_written: continue
-			_writeTime(num_shapes + i, shape )
-			shapes_written.append(shape['shape_name'])
-		num_shapes += cur_shapes
+	for i in range(len(smd.bakeInfo)):
+		shape = smd.bakeInfo[i]
+		_writeTime(i, shape if i != 0 else None)
 	smd.file.write("end\n")
 
 	smd.file.write("vertexanimation\n")
-	def _writeVerts(shape, smd_vert_id = 0):
+	
+	cur_shape = 0
+	vert_offset = 0
+	total_verts = 0
+	smd.m = smd.bakeInfo[0]
+	
+	for i in range(len(smd.bakeInfo)):
+		_writeTime(i)
+		shape = smd.bakeInfo[i]
 		start_time = time.time()
-		num_verts = 0
 		num_bad_verts = 0
+		smd_vert_id = 0
 		for poly in smd.m.data.polygons:
 			for vert in poly.vertices:
 				shape_vert = shape.data.vertices[vert]
 				mesh_vert = smd.m.data.vertices[vert]
 				if cur_shape != 0:
 					diff_vec = shape_vert.co - mesh_vert.co
-					bad_vert = False
 					for ordinate in diff_vec:
 						if not bad_vert and ordinate > 8:
 							num_bad_verts += 1
-							bad_vert = True
+							break
 
 				if cur_shape == 0 or (shape_vert.co != mesh_vert.co or shape_vert.normal != mesh_vert.normal):
 					cos = norms = ""
@@ -2448,55 +2435,22 @@ def writeShapes(cur_shape = 0):
 						cos += " " + getSmdFloat(shape_vert.co[i])
 						norms += " " + getSmdFloat(shape_vert.normal[i])
 					smd.file.write(str(smd_vert_id) + cos + norms + "\n")
-					num_verts += 1
+					total_verts += 1
 			
 				smd_vert_id +=1
 		if num_bad_verts:
-			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape['shape_name'],num_bad_verts))
-		return num_verts
-
-	cur_shape = 0
-	vert_offset = 0
-	total_verts = 0
-
-	# Basis
-	_writeTime(0)
-	for bi in smd.bakeInfo:
-		smd.m = bi['shapes'][0]
-		total_verts += _writeVerts(bi['shapes'][0], total_verts) # write out every vert in the group
-	cur_shape += 1
-
-	# Everything else
-	shapes_written = []
-	for bi in smd.bakeInfo:
-		smd.shapes = bi['shapes']
-		smd.m = bi['shapes'][0]
-		for shape in smd.shapes:
-			if shape == bi['shapes'][0] or shape['shape_name'] in shapes_written:
-				continue # don't write basis shapes, don't re-write shared shapes
-			_writeTime(cur_shape,shape)
-			cur_shape += 1
-			vert_offset = 0
-			for bi in smd.bakeInfo:
-				for shape_candidate in bi['shapes']:
-					if shape_candidate['shape_name'] == shape['shape_name']:
-						last_verts = _writeVerts(shape_candidate,vert_offset)
-						total_verts += last_verts
-				for poly in bi['shapes'][0].data.polygons:
-					for vert in poly.vertices:
-						vert_offset += 1 # len(verts) doesn't give doubles
-			shapes_written.append(shape['shape_name'])
-
+			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape['shape_name'],num_bad_verts))		
+	
 	smd.file.write("end\n")
 	print("- Exported {} flex shapes ({} verts)".format(cur_shape,total_verts))
 	return
 
 # Creates a mesh with object transformations and modifiers applied
 def bakeObj(in_object):
-	bi = {}
-	bi['src'] = in_object
+	bakes = []
 	for object in bpy.context.selected_objects:
 		object.select = False
+	bpy.context.scene.objects.active = in_object
 
 	def _ApplyVisualTransform(obj):
 		top_parent = cur_parent = obj
@@ -2507,68 +2461,86 @@ def bakeObj(in_object):
 
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent
-		bpy.ops.object.transform_apply(location=True)
+		bpy.ops.object.transform_apply(location=True)	
 
-	# Indirection to support groups
-	def _ObjectCopy(obj):
+	if in_object.type == 'ARMATURE':
+		_ApplyVisualTransform(in_object)
+		smd.a = in_object
+	elif in_object.type in mesh_compatible:
+		# hide all metaballs that we don't want
+		for object in bpy.context.scene.objects:
+			if (smd.g or object != in_object) and object.type == 'META' and (not object.smd_export or not (smd.g and smd.g in object.users_group)):
+				for element in object.data.elements:
+					element.hide = True
+		bpy.context.scene.update() # actually found a use for this!!
+
+		# get a list of objects we want to bake
+		if not smd.g:
+			bakes = [in_object]
+		else:
+			have_baked_metaballs = False
+			validObs = getValidObs()
+			flex_obs = []
+			for object in smd.g.objects:
+				if object.smd_export and object in validObs and not (object.type == 'META' and have_baked_metaballs):
+					bakes.append(object)
+					if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
+					
+			if smd.jobType == FLEX: # we can merge everything because we only care about the verts
+				for ob in bpy.context.scene.objects:
+					ob.select = ob in bakes
+				bpy.context.scene.objects.active = bakes[0]
+				bpy.ops.object.join()
+				bakes = [bpy.context.scene.objects.active]
+		
+	# bake the list of objects!
+	for i in range(len(bakes)):
+		obj = bakes[i]
 		solidify_fill_rim = False
 
 		if obj.type in shape_types and obj.data.shape_keys:
 			shape_keys = obj.data.shape_keys.key_blocks
 		else:
-			shape_keys = None
+			shape_keys = []
 
 		if smd.jobType == FLEX:
 			if obj.type not in shape_types:
 				raise TypeError( "Shapes found on unsupported object type (\"{}\", {})".format(obj.name,obj.type) )				
 			num_out = len(shape_keys)
-			bi['shapes'] = []
 		else:
 			num_out = 1
 		
-		# Create a temporary copy of the object to mess about with
-		obj_in = obj
-		obj = obj.copy()
-		obj.data = obj.data.copy()
-		bpy.context.scene.objects.link(obj)
-		bpy.context.scene.objects.active = obj
 		bpy.ops.object.mode_set(mode='OBJECT')
 		bpy.ops.object.select_all(action="DESELECT")
-		obj.select = True	
+		obj.select = True
+		bpy.context.scene.objects.active = obj
 
-		if obj.type == "MESH":		
-			bpy.ops.object.mode_set(mode='EDIT')
-			bpy.ops.mesh.reveal()
-			bpy.ops.object.mode_set(mode='OBJECT')
+		if smd.jobType != FLEX: # we've already messed about with this object during ref export
+			if obj.type == "MESH":
+				bpy.ops.object.mode_set(mode='EDIT')			
+				bpy.ops.mesh.reveal()
+				bpy.ops.mesh.select_all(action="SELECT")
+				if obj.matrix_world.is_negative:
+					bpy.ops.mesh.flip_normals()
+				bpy.ops.mesh.quads_convert_to_tris()
+				bpy.ops.object.mode_set(mode='OBJECT')
 		
-		# Apply object transforms
-		top_parent = cur_parent = obj
-		while(cur_parent):
-			if not cur_parent.parent:
-				top_parent = cur_parent
-			cur_parent = cur_parent.parent
-
-		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-		obj.location -= top_parent.location # undo location of topmost parent
-		bpy.context.scene.update() # another rare case where this actually does something			
-		
-		if obj.type == 'MESH': # don't apply transforms to armatures (until/unless actions are baked too)
-			obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
-			bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
+			_ApplyVisualTransform(obj)		
+			
+			if obj.type != 'ARMATURE': # don't apply transforms to armatures until/unless actions are baked too
+				obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
+				bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
 		
 		# Apply modifiers; need to do this per shape key
 		bpy.ops.object.mode_set(mode='OBJECT')
-		baked = bi['baked'] = obj
-		for i in range(num_out):
+		for x in range(num_out):
 			if shape_keys:
-				cur_shape = shape_keys[i]
-			if smd.jobType == FLEX and cur_shape.mute:
-				log.warning("Skipping muted shape \"{}\"".format(cur_shape.name))
-				continue
-
-			if shape_keys:
-				obj.active_shape_key_index = i
+				cur_shape = shape_keys[x]
+				obj.active_shape_key_index = x
 				obj.show_only_shape_key = True
+				if smd.jobType == FLEX and cur_shape.mute:
+					log.warning("Skipping muted shape \"{}\"".format(cur_shape.name))
+					continue
 	
 			if obj.type in mesh_compatible:
 				has_edge_split = False
@@ -2582,44 +2554,43 @@ def bakeObj(in_object):
 					edgesplit = obj.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
 					edgesplit.use_edge_angle = False
 				
-				baked = bi['baked'] = bpy.data.objects.new(obj.name,obj.to_mesh(bpy.context.scene, True, 'PREVIEW') ) # bake it!
+				baked = bpy.data.objects.new(obj.name,obj.to_mesh(bpy.context.scene, True, 'PREVIEW') ) # bake it!
 				bpy.context.scene.objects.link(baked)
 				bpy.context.scene.objects.active = baked
 				baked.select = True
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					baked['src_name'] = obj_in.name
-					bi['shapes'].append(baked)
-					
-				# Handle bone parents / armature modifiers, and warn of multiple associations
-				baked['bp'] = ""
-				envelope_described = False
-				if obj_in.parent_bone and obj_in.parent_type == 'BONE':
-					baked['bp'] = obj_in.parent_bone
-					smd.a = obj_in.parent
-				for con in obj_in.constraints:
-					if con.mute:
-						continue
-					if con.type in ['CHILD_OF','COPY_TRANSFORMS'] and con.target.type == 'ARMATURE' and con.subtarget:
-						if baked['bp']:
-							if not envelope_described:
-								print(" - Enveloped to bone \"{}\"".format(baked['bp']))
-							log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj_in.name))
-						else:
-							baked['bp'] = con.subtarget
-							smd.a = con.target
-				for mod in obj_in.modifiers:
-					if mod.type == 'ARMATURE':
-						if (smd.a and mod.object != smd.a) or baked['bp']:
-							if not envelope_described:
-								msg = " - Enveloped to {} \"{}\""
-								if baked['bp']: print( msg.format("bone",baked['bp']) )
-								else: print( msg.format("armature",smd.a.name) )
-							log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj_in.name))
-						else:
-							smd.a = mod.object
-							bi['arm_mod'] = mod
+					bakes.append(baked)
+				else:	
+					# Handle bone parents / armature modifiers, and warn of multiple associations
+					baked['bp'] = ""
+					envelope_described = False
+					if obj.parent_bone and obj.parent_type == 'BONE':
+						baked['bp'] = obj.parent_bone
+						smd.a = obj.parent
+					for con in obj.constraints:
+						if con.mute:
+							continue
+						if con.type in ['CHILD_OF','COPY_TRANSFORMS'] and con.target.type == 'ARMATURE' and con.subtarget:
+							if baked['bp']:
+								if not envelope_described:
+									print(" - Enveloped to bone \"{}\"".format(baked['bp']))
+								log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj.name))
+							else:
+								baked['bp'] = con.subtarget
+								smd.a = con.target
+					for mod in obj.modifiers:
+						if mod.type == 'ARMATURE':
+							if (smd.a and mod.object != smd.a) or baked['bp']:
+								if not envelope_described:
+									msg = " - Enveloped to {} \"{}\""
+									if baked['bp']: print( msg.format("bone",baked['bp']) )
+									else: print( msg.format("armature",smd.a.name) )
+								log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
+							else:
+								smd.a = mod.object
+								baked['arm_mod'] = mod
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
@@ -2633,19 +2604,9 @@ def bakeObj(in_object):
 					elif solidify_fill_rim:
 						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
 					bpy.ops.object.mode_set(mode='OBJECT')
-					
-				# work on the baked vertices
-				if obj.matrix_world.is_negative:
-					bpy.ops.mesh.flip_normals()
-				
-				if not smd.isDMX:
-					bpy.ops.object.mode_set(mode='EDIT')
-					bpy.ops.mesh.select_all(action='SELECT')
-					bpy.ops.mesh.quads_convert_to_tris()
-					bpy.ops.object.mode_set(mode='OBJECT')
 
 				# project a UV map
-				if len(baked.data.uv_textures) == 0 and smd.jobType != FLEX:
+				if smd.jobType != FLEX and len(baked.data.uv_textures) == 0:
 					if len(baked.data.vertices) < 2000:
 						bpy.ops.object.mode_set(mode='OBJECT')
 						bpy.ops.object.select_all(action='DESELECT')
@@ -2657,63 +2618,13 @@ def bakeObj(in_object):
 						bpy.ops.uv.unwrap()
 		
 		bpy.ops.object.mode_set(mode='OBJECT')
-		if obj_in.type in mesh_compatible:
-			removeObject(obj)
-		return baked
-		# END _ObjectCopy()
-
-	if in_object.type == 'ARMATURE':
-		_ObjectCopy(in_object)
-		smd.a = bi['baked']
-	elif in_object.type in mesh_compatible:
-		# hide all metaballs that we don't want
-		metaballs = []
-		for object in bpy.context.scene.objects:
-			if (smd.g or object != in_object) and object.type == 'META' and (not object.smd_export or not (smd.g and smd.g in object.users_group)):
-				element_states = []
-				for i in range(len(object.data.elements)):
-					element_states.append(object.data.elements[i].hide)
-					object.data.elements[i].hide = True
-				metaballs.append( dict( ob=object, states = element_states) )
-		bpy.context.scene.update() # actually found a use for this!!
-
-		if not smd.g:
-			_ObjectCopy(in_object)
+		obj.select = False
+		if smd.jobType == FLEX:
+			del bakes[i]
 		else:
-			have_baked_metaballs = False
-			validObs = getValidObs()
-			for object in smd.g.objects:
-				if object.smd_export and object in validObs and not (object.type == 'META' and have_baked_metaballs):
-					if smd.jobType == FLEX and not object.data.shape_keys:
-						continue
-					bi['baked'] = _ObjectCopy(object)
-					smd.bakeInfo.append(bi) # save to manager
-					bi = dict(src=object)
-					if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
-			
-		# restore metaball state
-		for meta_state in metaballs:
-			for i in range(len(meta_state['states'])):
-				meta_state['ob'].data.elements[i].hide = meta_state['states'][i]
+			bakes[i] = baked
 
-	if bi.get('baked') or (bi.get('shapes') and len(bi.get('shapes'))):
-		smd.bakeInfo.append(bi) # save to manager
-
-def unBake():
-	bpy.ops.object.mode_set(mode='OBJECT')
-	for bi in smd.bakeInfo:
-		if bi.get('shapes'):
-			for shape in bi['shapes']:
-				type = removeObject(shape)
-		else:
-			type = removeObject(bi['baked'])
-
-		if type == 'MESH':
-			smd.m = bi['src']
-		elif type == 'ARMATURE':
-			smd.a = bi['src']
-
-		del bi
+	smd.bakeInfo.extend(bakes) # save to manager
 
 # Creates an SMD file
 def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = False ):
@@ -2786,7 +2697,6 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		elif smd.jobType == FLEX:
 			writeShapes()
 
-	unBake()
 	smd.file.close()
 	if not quiet: printTimeMessage(smd.startTime,smd.jobName,"export")
 
@@ -3258,10 +3168,8 @@ class SmdExporter(bpy.types.Operator):
 	'''Export Studiomdl Data files and compile them with QC scripts'''
 	bl_idname = "export_scene.smd"
 	bl_label = "Export SMD/VTA"
-	bl_options = { 'UNDO', 'REGISTER' }
 
-	# This should really be a directory select, but there is no way to explain to the user that a dir is needed except through the default filename!
-	directory = StringProperty(name="Export root", description="The root folder into which SMDs from this scene are written", subtype='FILE_PATH')	
+	directory = StringProperty(name="Export root", description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')	
 	filename = StringProperty(default="", options={'HIDDEN'})
 
 	exportMode_enum = (
@@ -3270,7 +3178,6 @@ class SmdExporter(bpy.types.Operator):
 		('SINGLE_ANIM','Current action',"Exports the active Armature's current Action"),
 		('MULTI','Selection','All selected objects'),
 		('SCENE','Scene','Export the objects and animations selected in Scene Properties'),
-		#('FILE','Whole .blend file','Export absolutely everything, from all scenes'),
 		)
 	exportMode = EnumProperty(items=exportMode_enum,options={'HIDDEN'})
 	groupIndex = IntProperty(default=-1,options={'HIDDEN'})
@@ -3311,57 +3218,18 @@ class SmdExporter(bpy.types.Operator):
 		global log
 		log = logger()
 				
-		had_auto_keyframe = bpy.context.tool_settings.use_keyframe_insert_auto
-		had_auto_keyset = bpy.context.tool_settings.use_keyframe_insert_keyingset
 		bpy.context.tool_settings.use_keyframe_insert_auto = False
 		bpy.context.tool_settings.use_keyframe_insert_keyingset = False
 		
-		prev_arm_mode = None
 		if props.exportMode == 'SINGLE_ANIM': # really hacky, hopefully this will stay a one-off!
-			ob = context.active_object
-			if ob.type == 'ARMATURE':
-				prev_arm_mode = ob.data.smd_action_selection
-				ob.data.smd_action_selection = 'CURRENT'
+			if context.active_object.type == 'ARMATURE':
+				context.active_object.data.smd_action_selection = 'CURRENT'
 			props.exportMode = 'SINGLE'
 
 		print("\nSMD EXPORTER RUNNING")
-		prev_active_ob = context.active_object
-		if prev_active_ob and prev_active_ob.type == 'ARMATURE':
-			prev_bone_selection = bpy.context.selected_pose_bones
-			prev_active_bone = context.active_bone
-		prev_selection = context.selected_objects
-		prev_visible = [] # visible_objects isn't useful due to layers
-		for ob in context.scene.objects:
-			if not ob.hide: prev_visible.append(ob)
-		prev_frame = context.scene.frame_current
 
-		# store Blender mode user was in before export
-		prev_mode = bpy.context.mode
-		if prev_mode.startswith("EDIT"):
-			prev_mode = "EDIT" # remove any suffixes
-		if prev_active_ob:
-			prev_active_ob.hide = False
-			ops.object.mode_set(mode='OBJECT')
-
-		pose_backups = {}
 		for object in bpy.context.scene.objects:
 			object.hide = False # lots of operators only work on visible objects
-			if object.type == 'ARMATURE' and object.animation_data:
-				context.scene.objects.active = object
-				ops.object.mode_set(mode='POSE')
-				context.scene.objects.active = object
-				# Back up any unkeyed pose. I'd use the pose library, but it can't be deleted if empty!
-				pb_act = bpy.data.actions.new(name=object.name+" pose backup")
-				pb_act.user_clear()
-				pose_backups[object.name] = [ object.animation_data.action, pb_act ]
-				bpy.ops.pose.copy()
-				object.animation_data.action = pose_backups[object.name][1]
-				bpy.ops.pose.paste()
-				bpy.ops.pose.select_all(action='SELECT')
-				bpy.ops.anim.keyframe_insert(type='LocRotScale')
-				object.animation_data.action = pose_backups[object.name][0]
-				ops.object.mode_set(mode='OBJECT')
-		context.scene.objects.active = prev_active_ob
 
 		# check export mode and perform appropriate jobs
 		self.countSMDs = 0
@@ -3422,48 +3290,6 @@ class SmdExporter(bpy.types.Operator):
 					if should_export:
 						self.exportObject(context,object)
 
-		elif props.exportMode == 'FILE': # can't be done until Blender scripts become able to change the scene
-			for scene in bpy.data.scenes:
-				scene_root = scene.get("smd_path")
-				if not scene_root:
-					log.warning("Skipped unconfigured scene",scene.name)
-					continue
-				else:
-					props.directory = scene_root
-
-				for object in bpy.data.objects:
-					if object.type in ['MESH', 'ARMATURE']:
-						self.exportObject(context,object)
-
-		# Export jobs complete! Clean up...
-		context.scene.objects.active = prev_active_ob
-		if prev_active_ob and context.scene.objects.active:
-			ops.object.mode_set(mode=prev_mode)
-			if prev_active_ob.type == 'ARMATURE' and prev_active_bone:
-				prev_active_ob.data.bones.active = prev_active_ob.data.bones[ prev_active_bone.name ]
-				for i in range( len(prev_active_ob.pose.bones) ):
-					prev_active_ob.data.bones[i].select = True if prev_bone_selection and prev_active_ob.pose.bones[i] in prev_bone_selection else False
-
-		for object in context.scene.objects:
-			object.select = object in prev_selection
-			object.hide = object not in prev_visible
-			if object.type == 'ARMATURE' and object.animation_data:
-				object.animation_data.action = pose_backups[object.name][1] # backed up pose
-
-		context.scene.frame_set(prev_frame) # apply backup pose
-		for object in context.scene.objects:
-			if object.type == 'ARMATURE' and object.animation_data:
-				object.animation_data.action = pose_backups[object.name][0] # switch to original action, don't apply
-				pose_backups[object.name][1].use_fake_user = False
-				pose_backups[object.name][1].user_clear()
-				bpy.data.actions.remove(pose_backups[object.name][1]) # remove backup
-		
-		if prev_arm_mode:
-			prev_active_ob.data.smd_action_selection = prev_arm_mode
-			
-		bpy.context.tool_settings.use_keyframe_insert_auto = had_auto_keyframe
-		bpy.context.tool_settings.use_keyframe_insert_keyingset = had_auto_keyset
-
 		jobMessage = "exported"
 
 		if self.countSMDs == 0:
@@ -3476,7 +3302,8 @@ class SmdExporter(bpy.types.Operator):
 			
 		log.errorReport(jobMessage,"file",self,self.countSMDs)
 			
-		bpy.ops.ed.undo_push(message="SMD Export")
+		# Clean everything up
+		bpy.ops.ed.undo_push(message=self.bl_label)
 		bpy.ops.ed.undo()
 
 		return {'FINISHED'}
@@ -3521,9 +3348,7 @@ class SmdExporter(bpy.types.Operator):
 					self.countSMDs += 1
 		elif object.type == 'ARMATURE':
 			ad = object.animation_data
-			prev_action = None
-			if ad.action: prev_action = ad.action
-
+			
 			if object.data.smd_action_selection == 'FILTERED':
 				for action in bpy.data.actions:
 					if action.users and (not object.smd_action_filter or action.name.lower().find(object.smd_action_filter.lower()) != -1):
@@ -3544,7 +3369,6 @@ class SmdExporter(bpy.types.Operator):
 									ad.action = strip.action
 									if writeSMD(context,object,-1,path + ad.action.name + getFileExt(), ANIM):
 										self.countSMDs += 1
-			ad.action = prev_action
 
 	def invoke(self, context, event):
 		if not ValidateBlenderVersion(self):
@@ -3831,9 +3655,9 @@ def register():
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
 	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports",default=False)
 
-	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export the members of this group to a single SMD",default=True)
+	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export this group with the scene",default=True)
 	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
-	bpy.types.Group.smd_expand = BoolProperty(name="SMD show expanded",description="Show the contents of this group in the UI",default=False)
+	bpy.types.Group.smd_expand = BoolProperty(name="SMD show expanded",description="Show the contents of this group in the Scene Exports panel",default=False)
 	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Prevents the SMD exporter from merging the objects in this group together",default=False)
 	
 	bpy.types.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=(
