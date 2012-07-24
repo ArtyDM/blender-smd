@@ -2510,7 +2510,7 @@ def bakeObj(in_object):
 
 		if smd.jobType != FLEX: # we've already messed about with this object during ref export
 			if obj.type == "MESH":
-				bpy.ops.object.mode_set(mode='EDIT')			
+				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.reveal()
 				bpy.ops.mesh.select_all(action="SELECT")
 				if obj.matrix_world.is_negative:
@@ -3220,8 +3220,10 @@ class SmdExporter(bpy.types.Operator):
 
 		print("\nSMD EXPORTER RUNNING")
 
+		# lots of operators only work on visible objects
 		for object in bpy.context.scene.objects:
-			object.hide = False # lots of operators only work on visible objects
+			object.hide = False
+		bpy.context.scene.layers = [True] * len(bpy.context.scene.layers)
 
 		# check export mode and perform appropriate jobs
 		self.countSMDs = 0
@@ -3250,16 +3252,18 @@ class SmdExporter(bpy.types.Operator):
 			for object in context.selected_objects:
 				if object.type in mesh_compatible:
 					if object.users_group:
-						for i in range(len(object.users_group)):
-							if object.smd_export and object.users_group[i] not in exported_groups:
-								self.exportObject(context,object,groupIndex=i)
-								exported_groups.append(object.users_group[i])
+						if object.smd_export:
+							for i in range(len(object.users_group)):
+								if object.users_group[i] not in exported_groups:
+									exported_groups.append(object.users_group[i])
+									self.exportObject(context,object,groupIndex=i)
 					else:
 						self.exportObject(context,object)
 				elif object.type == 'ARMATURE':
 					self.exportObject(context,object)
 
 		elif props.exportMode == 'SCENE':
+			objects = bpy.context.scene.objects[:] # avoid pollution from the baking process
 			for group in bpy.data.groups:
 				if shouldExportGroup(group):
 					for object in group.objects:
@@ -3270,8 +3274,8 @@ class SmdExporter(bpy.types.Operator):
 									g_index = i
 									break
 							self.exportObject(context,object,groupIndex=g_index)
-							break
-			for object in bpy.context.scene.objects:
+							break # only export the first valid object
+			for object in objects:
 				if object.smd_export:
 					should_export = True
 					if object.users_group and object.type != 'ARMATURE':
