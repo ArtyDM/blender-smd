@@ -2155,13 +2155,9 @@ def writeFrames():
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
 
-	scene = bpy.context.scene
-
 	# remove any non-keyframed positions
-	scene.objects.active = smd.a
-	bpy.ops.object.mode_set(mode='POSE')
-	bpy.ops.pose.select_all(action='SELECT')
-	bpy.ops.pose.transforms_clear()
+	for posebone in smd.a.pose.bones:
+		posebone.matrix_basis.identity()
 
 	# If this isn't an animation, mute all pose constraints
 	if smd.jobType != ANIM:
@@ -2174,10 +2170,7 @@ def writeFrames():
 	if smd.jobType == ANIM:
 		start_frame, last_frame = smd.a.animation_data.action.frame_range
 		num_frames = int(last_frame - start_frame) + 1 # add 1 due to the way range() counts
-		scene.frame_set(start_frame)
-
-	# Final bone positions are only available in pose mode
-	bpy.ops.object.mode_set(mode='POSE')
+		bpy.context.scene.frame_set(start_frame)
 	
 	# Start writing out the animation
 	for i in range(num_frames):
@@ -2226,7 +2219,7 @@ def writeFrames():
 			smd.file.write( str(smd.boneNameToID[posebone.name]) + pos_str + rot_str + "\n" )
 
 		# All bones processed, advance the frame
-		scene.frame_set(scene.frame_current + 1)	
+		bpy.context.scene.frame_set(bpy.context.scene.frame_current + 1)	
 
 	smd.file.write("end\n")
 
@@ -2240,7 +2233,6 @@ def writeFrames():
 
 # triangles block
 def writePolys(internal=False):
-
 	if not internal:
 		smd.file.write("triangles\n")
 		have_cleared_pose = False
@@ -2459,6 +2451,7 @@ def bakeObj(in_object):
 				top_parent = cur_parent
 			cur_parent = cur_parent.parent
 
+		bpy.context.scene.objects.active = obj
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent
 		bpy.ops.object.transform_apply(location=True)	
@@ -2525,7 +2518,7 @@ def bakeObj(in_object):
 				bpy.ops.mesh.quads_convert_to_tris()
 				bpy.ops.object.mode_set(mode='OBJECT')
 		
-			_ApplyVisualTransform(obj)		
+			_ApplyVisualTransform(obj)
 			
 			if obj.type != 'ARMATURE': # don't apply transforms to armatures until/unless actions are baked too
 				obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
@@ -2686,7 +2679,6 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	# these write empty blocks if no armature is found. Required!
 	writeBones(quiet = smd.jobType == FLEX)
 	writeFrames()
-
 
 	if smd.m:
 		if smd.jobType in [REF,PHYS]:
