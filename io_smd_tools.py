@@ -2106,7 +2106,7 @@ def writeBones(quiet=False):
 		if not quiet: print("- No skeleton to export")
 		return
 		
-	curID = 0
+	curID = 1 if smd.a.data.smd_implicit_zero_bone else 0
 
 	# Write to file
 	for bone in smd.a.data.bones:		
@@ -2150,6 +2150,7 @@ def writeFrames():
 		return
 
 	smd.file.write("skeleton\n")
+	action = smd.a.animation_data.action
 
 	if not smd.a:
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
@@ -2168,10 +2169,14 @@ def writeFrames():
 	# Get the working frame range
 	num_frames = 1
 	if smd.jobType == ANIM:
-		start_frame, last_frame = smd.a.animation_data.action.frame_range
+		start_frame, last_frame = action.frame_range
 		num_frames = int(last_frame - start_frame) + 1 # add 1 due to the way range() counts
 		bpy.context.scene.frame_set(start_frame)
-	
+		
+	if 'fps' in dir(action):
+		bpy.context.scene.render.fps = action.fps
+		bpy.context.scene.render.fps_base = 1
+
 	# Start writing out the animation
 	for i in range(num_frames):
 		smd.file.write("time {}\n".format(i))
@@ -2251,8 +2256,8 @@ def writePolys(internal=False):
 			if baked.type == 'MESH':
 				# write out each object in turn. Joining them would destroy unique armature modifier settings
 				smd.m = baked
-				if baked.get('arm_mod') and baked.get('arm_mod').object:
-					smd.amod = baked['arm_mod']
+				if len(baked.modifiers):
+					smd.amod = baked.modifiers[0]
 				else:
 					smd.amod = None
 				if len(smd.m.data.polygons) == 0:
@@ -2443,7 +2448,8 @@ def bakeObj(in_object):
 	for object in bpy.context.selected_objects:
 		object.select = False
 	bpy.context.scene.objects.active = in_object
-
+	bpy.ops.object.mode_set(mode='OBJECT')
+	
 	def _ApplyVisualTransform(obj):
 		top_parent = cur_parent = obj
 		while(cur_parent):
@@ -2547,8 +2553,13 @@ def bakeObj(in_object):
 					edgesplit = obj.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
 					edgesplit.use_edge_angle = False
 				
-				baked = bpy.data.objects.new(obj.name,obj.to_mesh(bpy.context.scene, True, 'PREVIEW') ) # bake it!
-				bpy.context.scene.objects.link(baked)
+				data = obj.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
+				baked = obj
+				if obj.type == 'MESH':
+					baked.data = data
+				else:
+					baked = bpy.data.objects.new(obj.name, data)
+					bpy.context.scene.objects.link(baked)
 				bpy.context.scene.objects.active = baked
 				baked.select = True
 				
@@ -2574,7 +2585,7 @@ def bakeObj(in_object):
 								baked['bp'] = con.subtarget
 								smd.a = con.target
 					for mod in obj.modifiers:
-						if mod.type == 'ARMATURE':
+						if mod.type == 'ARMATURE' and mod.object:
 							if (smd.a and mod.object != smd.a) or baked['bp']:
 								if not envelope_described:
 									msg = " - Enveloped to {} \"{}\""
@@ -2583,7 +2594,10 @@ def bakeObj(in_object):
 								log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
 							else:
 								smd.a = mod.object
-								baked['arm_mod'] = mod
+								dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
+								props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group']
+								for prop in props:
+									exec ("dupe_amod.{0} = mod.{0}".format(prop))
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
