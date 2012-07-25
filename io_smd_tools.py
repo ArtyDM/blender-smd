@@ -2159,6 +2159,7 @@ def writeFrames():
 	# remove any non-keyframed positions
 	for posebone in smd.a.pose.bones:
 		posebone.matrix_basis.identity()
+	bpy.context.scene.update()
 
 	# If this isn't an animation, mute all pose constraints
 	if smd.jobType != ANIM:
@@ -2266,6 +2267,7 @@ def writePolys(internal=False):
 					# change the pose bones' data!
 					for posebone in smd.amod.object.pose.bones:
 						posebone.matrix_basis.identity()
+					bpy.context.scene.update()
 					have_cleared_pose = True
 				bpy.ops.object.mode_set(mode='OBJECT')
 
