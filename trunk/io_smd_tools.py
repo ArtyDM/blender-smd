@@ -2228,9 +2228,6 @@ def writeFrames():
 
 	smd.file.write("end\n")
 
-	if smd.a.animation_data and smd.a.animation_data.action:
-		smd.a.animation_data.action.user_clear() # otherwise the UI shows 100s of users!
-		smd.a.animation_data.action.use_fake_user = True
 	bpy.ops.object.mode_set(mode='OBJECT')
 	
 	print("- Exported {} frames{}".format(num_frames," (legacy rotation)" if smd.a.data.smd_legacy_rotation else ""))
@@ -2554,10 +2551,11 @@ def bakeObj(in_object):
 				data = obj.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
 				baked = obj
 				if obj.type == 'MESH':
+					baked = baked.copy()
 					baked.data = data
 				else:
 					baked = bpy.data.objects.new(obj.name, data)
-					bpy.context.scene.objects.link(baked)
+				bpy.context.scene.objects.link(baked)
 				bpy.context.scene.objects.active = baked
 				baked.select = True
 				
