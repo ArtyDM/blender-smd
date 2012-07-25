@@ -2267,10 +2267,8 @@ def writePolys(internal=False):
 				if smd.amod and not have_cleared_pose:
 					# This is needed due to a Blender bug. Setting the armature to Rest mode doesn't actually
 					# change the pose bones' data!
-					bpy.context.scene.objects.active = smd.amod.object
-					bpy.ops.object.mode_set(mode='POSE')
-					bpy.ops.pose.select_all()
-					bpy.ops.pose.transforms_clear()
+					for posebone in smd.amod.object.pose.bones:
+						posebone.matrix_basis.identity()
 					have_cleared_pose = True
 				bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -2594,10 +2592,11 @@ def bakeObj(in_object):
 								log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
 							else:
 								smd.a = mod.object
-								dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
-								props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group']
-								for prop in props:
-									exec ("dupe_amod.{0} = mod.{0}".format(prop))
+								if obj.type != 'MESH':
+									dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
+									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group']
+									for prop in props:
+										exec ("dupe_amod.{0} = mod.{0}".format(prop))
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
