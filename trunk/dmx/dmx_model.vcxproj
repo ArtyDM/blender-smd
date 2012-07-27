@@ -184,6 +184,9 @@ copy "$(TargetPath)" "C:\blender-git\trunk\vc10\bin\Release\"</Command>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='AS Debug|Win32'">Create</PrecompiledHeader>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="dmx_model.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

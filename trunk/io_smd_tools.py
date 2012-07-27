@@ -877,7 +877,8 @@ def applyFrames(bone_mats,num_frames, dmx_key_sets = None, fps = None): # this i
 		oldType = bpy.context.area.type
 		bpy.context.area.type = 'GRAPH_EDITOR'
 		smd.a.select = True
-		bpy.ops.graph.handle_type(type='AUTO')
+		if bpy.ops.graph.handle_type.poll():
+			bpy.ops.graph.handle_type(type='AUTO')
 		bpy.context.area.type = oldType # in Blender 2.59 this leaves context.region blank, making some future ops calls (e.g. view3d.view_all) fail!
 		for bone in smd.a.data.bones:
 			bone.select = False
@@ -1061,10 +1062,8 @@ def readPolys():
 		line = line.rstrip("\n")
 
 		if smdBreak(line):
-			print("break",line)
 			break
 		if smdContinue(line):
-			print("continue",line)
 			continue
 
 		mat, mat_ind = getMeshMaterial(line)
@@ -1382,9 +1381,16 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 				if not qc.a: qc.a = findArmature()
 			
 				if line[i].lower() not in qc.animation_names:
+					if not qc.a.animation_data: qc.a.animation_data_create()
+					last_action = qc.a.animation_data.action
 					loadSMD(i,"smd",ANIM)
 					if line[0] == "$animation":
 						qc.animation_names.append(line[1].lower())
+					while i < len(line) - 1:
+						if line[i] == "fps" and qc.a.animation_data.action != last_action:
+							if 'fps' in dir(qc.a.animation_data.action):
+								qc.a.animation_data.action.fps = float(line[i+1])
+						i += 1
 				break
 			continue
 
@@ -2592,7 +2598,7 @@ def bakeObj(in_object):
 								log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
 							else:
 								smd.a = mod.object
-								if obj.type != 'MESH':
+								if obj.type != 'MESH': # mesh objects are copied, no need to transfer the modifier
 									dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
 									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group']
 									for prop in props:

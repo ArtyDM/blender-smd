@@ -1,0 +1,32 @@
+#include <windows.h>
+#include <commctrl.h>
+#include <richedit.h>
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+1 VERSIONINFO
+	FILEVERSION		0,3,0,0
+	PRODUCTVERSION	1,3,0,0
+	FILETYPE		VFT_APP
+	FILESUBTYPE		VFT2_UNKNOWN
+	FILEFLAGSMASK	0x00000000
+	FILEFLAGS		0x00000000
+{
+	BLOCK "StringFileInfo"
+	{
+		BLOCK "08090025"
+		{
+			VALUE "Comments", "Writes a DMX model to stdout in a simple, flat format"
+			VALUE "FileDescription", "DMX Model"
+			VALUE "FileVersion", "0.3"
+			VALUE "InternalName", "dmx_model"
+			VALUE "OriginalFilename", "dmx_model.exe"
+			VALUE "ProductName", "Blender SMD Tools"
+			VALUE "ProductVersion", "1.3"
+			VALUE "LegalCopyright", "Tom Edwards 2012"
+		}
+	}
+	BLOCK "VarFileInfo"
+	{
+		VALUE "Translation", 0x0809, 0x0025
+	}
+}
