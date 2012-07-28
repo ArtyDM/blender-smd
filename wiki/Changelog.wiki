@@ -1,4 +1,30 @@
 #labels Featured
+== SMD Tools 1.3 - July 28th, 2012 ==
+
+Importer:
+
+  * Added DMX shape key import
+  * Fixed back-to-back faces being destroyed by Blender (running Remove Doubles will still destroy them, watch out)
+  * DMX Model 0.3 is now required to import DMX models
+  * Improved post-import 3D View camera and grid fixup
+  * Fixed keyframe handles all being at (0,0,0)
+  * Y-up DMX objects no longer start with unapplied rotations
+  * Newly-imported objects are now always selected when the script finishes
+  * Fixed QC flex names being applied to the wrong shape keys
+  * Fixed importing DMX animations when the armature was not already the active object
+  * Added support for Action Libraries (not supported by official Blender builds)
+  * Added support for per-Action framerates (not supported by official Blender builds)
+  
+Exporter:
+
+  * Added Source Filmmaker as a target engine
+  * Fixed exporting Y-up shape keys
+  * Curve object polygon generation options now work again
+  * Fixed exporting non-mesh objects
+  * Fixed exporting while a blank text block was open
+  * Lots of code refactoring (6K smaller!) now that I can undo from within the script
+  * The export operator no longer shows up in the Tool Shelf after it runs
+
 == SMD Tools 1.2.6 - June 12th, 2012 ==
 
 Importer:
