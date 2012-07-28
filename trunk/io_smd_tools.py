@@ -1403,7 +1403,7 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 		if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
 			for i in range(1,len(line)):
 				if line[i] == "frame":
-					qc.ref_mesh.data.shape_keys.key_blocks[int(line[i+1])-1].name = line[1] # subtract 1 because frame 0 isn't a real shape key
+					qc.ref_mesh.data.shape_keys.key_blocks[int(line[i+1])].name = line[1]
 					break
 			continue
 
