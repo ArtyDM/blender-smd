@@ -2640,9 +2640,6 @@ def bakeObj(in_object):
 
 # Creates an SMD file
 def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = False ):
-	if filepath.endswith("dmx"):
-		return writeDMX( context, object, groupIndex, filepath, smd_type, quiet )
-
 	global smd
 	smd	= smd_info()
 	smd.jobType = smd_type
@@ -2650,7 +2647,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		smd.g = object.users_group[groupIndex]
 	smd.startTime = time.time()
 	smd.uiTime = 0
-
+	
 	def _workStartNotice():
 		if not quiet:
 			print( "\nSMD EXPORTER: now working on {}{}".format(smd.jobName," (shape keys)" if smd.jobType == FLEX else "") )
@@ -2691,8 +2688,12 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	if smd.a and smd.jobType != FLEX:
 		bakeObj(smd.a) # MUST be baked after the mesh		
 
+	if filepath.endswith("dmx"):
+		return writeDMX( context, object, groupIndex, filepath, smd_type, quiet )
+		
 	smd.file = open(filepath, 'w')
 	print("-",filepath)
+		
 	smd.file.write("version 1\n")
 
 	# these write empty blocks if no armature is found. Required!
@@ -2713,6 +2714,181 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 
 	return True
 
+import datamodel
+def getDatamodelQuat(blender_quat):
+	return datamodel.Quaternion([blender_quat[1], blender_quat[2], blender_quat[3], blender_quat[0]])
+
+def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = False ):
+	start = time.time()
+	dm = datamodel.DataModel("binary",5,"model",18)
+	
+	root = dm.add_element("root")
+	
+	model = dm.add_element(bpy.context.scene.name,"DmeModel")
+	root.add_property("model",model)
+	root.add_property("skeleton",model)
+	
+	if smd.jobType == REF:
+		# skeleton
+		jointList = model.add_property("jointList",[],datamodel.Element)
+		bone_names = []
+		
+		# remove any non-keyframed positions
+		for posebone in smd.a.pose.bones:
+			posebone.matrix_basis.identity()
+		bpy.context.scene.update()
+		
+		def writeBone(bone):
+			bone_elem = dm.add_element(bone.name,"DmeJoint")
+			jointList.value.append(bone_elem)
+			bone_names.append(bone.name)
+			
+			trfm = dm.add_element(bone.name,"DmeTransform")
+			relMat = mathutils.Matrix()
+			if bone.parent: relMat = bone.parent.matrix.inverted()
+			relMat = relMat * bone.matrix
+			trfm.add_property("position",datamodel.Vector3(relMat.to_translation()))
+			trfm.add_property("orientation",getDatamodelQuat(relMat.to_quaternion()))
+			
+			bone_elem.add_property("transform",trfm)
+			
+			children = bone_elem.add_property("children",[],datamodel.Element)
+			for child in bone.children:
+				children.value.append( writeBone(child) )
+			
+			return bone_elem
+	
+		root_bones = []
+		if smd.a.type == 'ARMATURE':
+			for bone in smd.a.pose.bones:
+				if not bone.parent:
+					root_bones.append(writeBone(bone))
+					
+		# model
+		materials = {}
+		dags = []
+		for ob in smd.bakeInfo:
+			if ob.type != 'MESH': continue
+			vertex_data = dm.add_element("bind","DmeVertexData")
+			
+			shape = dm.add_element(ob.name,"DmeMesh")
+			shape.add_property("visible",True)
+			shape.add_property("baseStates",[vertex_data],datamodel.Element)
+			
+			trfm = dm.add_element("transform","DmeTransform")
+			trfm.add_property("position",datamodel.Vector3(list(ob.location)))
+			trfm.add_property("orientation",getDatamodelQuat(ob.matrix_world.to_quaternion()))
+			
+			dag = dm.add_element(ob.name,"DmeDag")
+			dag.add_property("transform",trfm)
+			dag.add_property("shape",shape)
+			dags.append(dag)
+			
+			vertex_data.add_property("vertexFormat",[
+				"positions",
+				"normals",
+				"textureCoordinates",
+				"jointWeights",
+				"jointIndices"
+				]
+			,str)
+			vertex_data.add_property("flipVCoordinates",True)
+			
+			pos = []
+			posIndices = []
+			norms = []
+			normIndices = []
+			texco = []
+			texcoIndices = []
+			jointWeights = []
+			jointIndices = []
+			
+			uv_layer = ob.data.uv_layers.active.data
+			
+			jointCount = 0
+			for vert in ob.data.vertices:
+				if vert.co not in pos:
+					pos.append(list(vert.co))
+				if vert.normal not in norms:
+					norms.append(list(vert.normal))
+				jointCount = max(jointCount,len(vert.groups))
+				
+			for vert in ob.data.vertices:
+				weights = [0.0,0.0,0.0]
+				indices = [0,0,0]
+				i = 0
+				for vg in vert.groups:
+					weights[i] = vg.weight
+					indices[i] = bone_names.index(ob.vertex_groups[vg.group].name)
+					i+=1
+				jointWeights.extend(weights)
+				jointIndices.extend(indices)
+				
+			vertex_data.add_property("jointCount",jointCount)
+			
+			for poly in ob.data.polygons:
+				i=0
+				for vert_index in poly.vertices:
+					vert = ob.data.vertices[vert_index]
+					
+					posIndices.append(pos.index(list(vert.co)))			
+					normIndices.append(norms.index(list(vert.normal)))
+					
+					uv = uv_layer[poly.loop_start + i].uv
+					if uv not in texco:
+						texco.append(list(uv))
+					texcoIndices.append(texco.index(list(uv_layer[poly.loop_start + i].uv)))
+					
+					i+=1
+				
+			vertex_data.add_property("positions",pos,datamodel.Vector3)
+			vertex_data.add_property("positionsIndices",posIndices,int)
+			
+			vertex_data.add_property("normals",norms,datamodel.Vector3)
+			vertex_data.add_property("normalsIndices",normIndices,int)
+			
+			vertex_data.add_property("textureCoordinates",texco,datamodel.Vector2)
+			vertex_data.add_property("textureCoordinatesIndices",texcoIndices,int)
+			
+			vertex_data.add_property("jointWeights",jointWeights,float)
+			vertex_data.add_property("jointIndices",jointIndices,int)
+			
+			face_sets = []
+			for material_index in range(len(ob.material_slots)):
+				material = ob.material_slots[material_index].material
+				faces = []
+				vert_offset = 0
+				for poly in ob.data.polygons:
+					if poly.material_index == material_index:
+						for vert_index in poly.vertices:
+							faces.append( vert_offset )
+							vert_offset+=1
+						faces.append(-1)
+					else:
+						vert_offset += len(poly.vertices)
+				faceSet = dm.add_element(material.name,"DmeFaceSet")	
+				face_sets.append(faceSet)
+				faceSet.add_property("faces",faces,int)
+				
+				if not materials.get(material):
+					material_elem = dm.add_element(material.name,"DmeMaterial")
+					materials[material] = material_elem
+					material_elem.add_property("mtlName",bpy.context.scene.smd_material_path + material.name)	
+				faceSet.add_property("material",materials[material])
+			
+			shape.add_property("faceSets",face_sets,datamodel.Element)
+
+		dags = root_bones + dags
+		model.add_property("children",dags,datamodel.Element)
+
+		print("Created datamodel in {}".format(time.time() - start))
+
+		start = time.time()
+		dm.write(filepath)
+		print("Wrote datamodel in {}".format(time.time() - start))
+		
+		return True
+	
 def getQCs(path = None):
 	import glob
 	ext = ".qc"
@@ -2748,8 +2924,10 @@ def compileQCs(path=None):
 	studiomdl_path = None
 	if branch in ['ep1','source2007','source2009', 'orangebox'] and sdk_path:
 		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2', 'SourceFilmmaker'] and ncf_path:
+	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2'] and ncf_path:
 		studiomdl_path = ncf_path + branch + "\\bin\\"
+	elif branch in ['SourceFilmmaker']:
+		studiomdl_path = ncf_path + branch + "\\game\\bin\\"
 	elif branch == 'CUSTOM':
 		studiomdl_path = scene.smd_studiomdl_custom_path = bpy.path.abspath(scene.smd_studiomdl_custom_path)
 
@@ -2971,6 +3149,9 @@ class SMD_PT_Scene(bpy.types.Panel):
 		self.embed_scene = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
 
+		row = l.row().split(0.33)
+		row.label(text="Output Format:")
+		row.row().prop(scene,"smd_format",text="Format",expand=True)
 		l.prop(scene,"smd_path",text="Output Folder")
 		l.prop(scene,"smd_studiomdl_branch",text="Target Engine")
 		if scene.smd_studiomdl_branch == 'CUSTOM':
@@ -2978,6 +3159,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
+		l.prop(scene,"smd_material_path",text="Material Path")
 
 		validObs = getValidObs()
 		l.row()
@@ -3654,10 +3836,11 @@ def register():
 	('SMD', "SMD", "Studiomdl Data" ),
 	('DMX', "DMX", "Data Model Exchange" )
 	)
-	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD',description="Currently unused")
+	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD')
 	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Ignore Materials",description="Only export face-assigned image filenames",default=False)
 	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Only consider objects in active viewport layers for export",default=False)
-
+	bpy.types.Scene.smd_material_path = StringProperty(name="DMX material path",description="Folder containing VMTs referenced in this scene. DMX only.")
+	
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
@@ -3697,6 +3880,7 @@ def unregister():
 	del Scene.smd_format
 	del Scene.smd_use_image_names
 	del Scene.smd_layer_filter
+	del Scene.smd_material_path
 
 	Object = bpy.types.Object
 	del Object.smd_export
