@@ -23,9 +23,16 @@ class _Array:
 				if type(item) != self.type:
 					raise TypeError("List must contain only {} values".format(self.type))
 			self.list = list
+		else:
+			self.list = []
 	
 	def tobytes(self, datamodel, elem):
 		return array.array(self.type_str,self.list).tobytes()
+		
+	def append(self,value):
+		if type(value) != self.type:
+			raise ValueError("Value must be of type",self.type)
+		self.list.append(value)
 
 class _BoolArray(_Array):
 	type = bool
@@ -183,8 +190,14 @@ class Element:
 			elif prop_type == Matrix: prop_type = _MatrixArray
 			else: raise ValueError("Unsupported array type")			
 			value = prop_type(list(value))
-		self.properties[name] = Property(name,value)
+		prop = Property(name,value)
+		self.properties[name] = prop
 		self.property_order.append(name)
+		
+		return prop
+		
+	def get_property(self,name):
+		return self.properites[name]
 
 Property._dmxtype[1] = Element
 
@@ -284,21 +297,7 @@ class DataModel:
 		if len(self.elem_chain) == 0:
 			return
 		else:
-			self._write_element_props(elem)			
-		
-		#for name in elem.property_order:
-		#	prop = elem.properties[name]
-		#	if prop.value not in written_elems:
-		#		t = type(prop.value)
-		#		if t == _ElementArray:
-		#			for i in prop.value.list:
-		#				self._write_element_props(i)
-		#				written_elems.append(i)
-		#	if prop.value not in written_elems:
-		#		t = type(prop.value)
-		#		if t == Element:
-		#			self._write_element_props(prop.value)
-		#			written_elems.append(prop.value)
+			self._write_element_props(elem)
 		
 	def _write_element(self,elem):
 		self._write_element_index(elem)		
@@ -313,9 +312,6 @@ class DataModel:
 			self.str_dict.add(name)
 			if type(prop.value) == str:
 				self.str_dict.add(prop.value)
-			#if type(prop.value) == _StrArray:
-			#	for i in prop.value.list:
-			#		self.str_dict.add(i)
 			if type(prop.value) == Element:
 				if prop.value not in self.str_dict_checked:
 					self._build_str_dict(prop.value)
@@ -342,7 +338,7 @@ class DataModel:
 		x=0
 		for i in self.str_dict:
 			self._write(i,use_str_dict = False)
-			print(x,i)
+			#print(x,i)
 			x+=1
 			
 		# count elements
@@ -357,11 +353,12 @@ class DataModel:
 						_count_child_elems(prop.value)
 					if t == _ElementArray:
 						for i in prop.value.list:
-							_count_child_elems(i)
+							if i not in out_elems:
+								_count_child_elems(i)
 		_count_child_elems(self.root)
 		self._write(len(out_elems))
 		
 		self.elem_chain = []
-		self._write_element(self.root) # only write stuff referenced by the first element
+		self._write_element(self.root) # only write stuff referenced by the root element
 				
 		self.out.close()
