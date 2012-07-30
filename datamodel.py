@@ -202,16 +202,13 @@ class Element:
 Property._dmxtype[1] = Element
 
 class DataModel:
-	_dmx_header = "<!-- dmx encoding {} {} format {} {} -->\n"
 	elements = []
 	root = None
 	
-	def __init__(self,encoding,encoding_ver,format,format_ver):
-		if type(encoding) != str or type(encoding_ver) != int or type(format) != str or type(format_ver) != int:
-			raise TypeError("Expected str, int, str, int")
-			
-		self.encoding = encoding
-		self.encoding_ver = encoding_ver
+	def __init__(self,format,format_ver):
+		if type(format) != str or type(format_ver) != int:
+			raise TypeError("Expected str, int")
+		
 		self.format = format
 		self.format_ver = format_ver
 		
@@ -320,14 +317,14 @@ class DataModel:
 					if i not in self.str_dict_checked:
 						self._build_str_dict(i)				
 		
-	def write(self,path):
+	def write(self,path,encoding,encoding_ver):
 		self.out = open(path,'wb')
 		self.str_dict = []
 		self.str_dict_checked = []
 		self.elem_index = []
 		
 		# header
-		self._write(self._dmx_header.format(self.encoding,self.encoding_ver,self.format,self.format_ver))
+		self._write("<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver))
 		
 		# string dictionary
 		self.str_dict = set()

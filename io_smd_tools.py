@@ -2566,6 +2566,7 @@ def bakeObj(in_object):
 				bpy.context.scene.objects.link(baked)
 				bpy.context.scene.objects.active = baked
 				baked.select = True
+				baked['src_name'] = obj.name
 				
 				if smd.jobType == FLEX:
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
@@ -2720,7 +2721,7 @@ def getDatamodelQuat(blender_quat):
 
 def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = False ):
 	start = time.time()
-	dm = datamodel.DataModel("binary",5,"model",18)
+	dm = datamodel.DataModel("model",18)
 	
 	root = dm.add_element("root")
 	
@@ -2771,7 +2772,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			if ob.type != 'MESH': continue
 			vertex_data = dm.add_element("bind","DmeVertexData")
 			
-			shape = dm.add_element(ob.name,"DmeMesh")
+			shape = dm.add_element(ob['src_name'],"DmeMesh")
 			shape.add_property("visible",True)
 			shape.add_property("baseStates",[vertex_data],datamodel.Element)
 			
@@ -2779,7 +2780,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			trfm.add_property("position",datamodel.Vector3(list(ob.location)))
 			trfm.add_property("orientation",getDatamodelQuat(ob.matrix_world.to_quaternion()))
 			
-			dag = dm.add_element(ob.name,"DmeDag")
+			dag = dm.add_element(ob['src_name'],"DmeDag")
 			dag.add_property("transform",trfm)
 			dag.add_property("shape",shape)
 			dags.append(dag)
@@ -2807,20 +2808,28 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			
 			jointCount = 0
 			for vert in ob.data.vertices:
-				if vert.co not in pos:
-					pos.append(list(vert.co))
-				if vert.normal not in norms:
-					norms.append(list(vert.normal))
-				jointCount = max(jointCount,len(vert.groups))
+				pos.append(list(vert.co))
+				norms.append(list(vert.normal))
+				weightlinks = 0
+				for vg in vert.groups:
+					if ob.vertex_groups[vg.group].name in bone_names:
+						weightlinks += 1
+				jointCount = max(jointCount,weightlinks)
 				
+			# remove dupes
+			import itertools
+			norms = list(norms for norms,_ in itertools.groupby(norms))
+			
 			for vert in ob.data.vertices:
-				weights = [0.0,0.0,0.0]
-				indices = [0,0,0]
+				weights = [0.0] * jointCount
+				indices = [0] * jointCount
 				i = 0
 				for vg in vert.groups:
-					weights[i] = vg.weight
-					indices[i] = bone_names.index(ob.vertex_groups[vg.group].name)
-					i+=1
+					real_group = ob.vertex_groups[vg.group]
+					if real_group.name in bone_names:
+						weights[i] = vg.weight
+						indices[i] = bone_names.index(real_group.name)
+						i+=1
 				jointWeights.extend(weights)
 				jointIndices.extend(indices)
 				
@@ -2884,7 +2893,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		print("Created datamodel in {}".format(time.time() - start))
 
 		start = time.time()
-		dm.write(filepath)
+		dm.write(filepath,"binary",5)
 		print("Wrote datamodel in {}".format(time.time() - start))
 		
 		return True
@@ -3159,7 +3168,9 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
-		l.prop(scene,"smd_material_path",text="Material Path")
+		row = l.row()
+		row.prop(scene,"smd_material_path",text="Material Path")
+		row.enabled = scene.smd_format == 'DMX'
 
 		validObs = getValidObs()
 		l.row()
