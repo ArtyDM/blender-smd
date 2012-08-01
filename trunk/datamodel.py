@@ -139,7 +139,7 @@ class Property:
 	
 	def __init__(self,name,value):
 		if type(name) != str or not type(value) in self._dmxtype:
-			raise TypeError("Expected str, {}",self._dmxtype)
+			raise TypeError("Expected str, {}",self._dmxtype[1:14])
 		self.name = name
 		self.value = value
 	
@@ -197,7 +197,7 @@ class Element:
 		return prop
 		
 	def get_property(self,name):
-		return self.properites[name]
+		return self.properties[name]
 
 Property._dmxtype[1] = Element
 
@@ -232,7 +232,7 @@ class DataModel:
 	def remove_element(self,element):
 		pass
 		
-	def _write(self,value = None, elem = None, use_str_dict = True):
+	def _write(self,value, elem = None, use_str_dict = True):
 		t = type(value)
 		if t == bytes:
 			self.out.write(value)
@@ -240,7 +240,7 @@ class DataModel:
 		elif t == uuid.UUID:
 			self.out.write(value.bytes)
 		elif t == Element:
-			raise Error("Don't write elements as properites")
+			raise Error("Don't write elements as properties")
 		elif t == str:
 			self.out.write( _get_string(self,value,use_str_dict) )
 				
@@ -255,9 +255,7 @@ class DataModel:
 		elif t == int:
 			self.out.write( struct.pack("i",value) )
 		elif t == float:
-			self.out.write( struct.pack("f",value) )	
-		else:
-			self.out.write(_null)
+			self.out.write( struct.pack("f",value) )
 	
 	def _write_element_index(self,elem):
 		self._write(elem.type)
@@ -319,15 +317,14 @@ class DataModel:
 		
 	def write(self,path,encoding,encoding_ver):
 		self.out = open(path,'wb')
-		self.str_dict = []
-		self.str_dict_checked = []
 		self.elem_index = []
 		
 		# header
-		self._write("<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver))
+		self._write("<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver),use_str_dict = False)
 		
 		# string dictionary
 		self.str_dict = set()
+		self.str_dict_checked = []
 		self._build_str_dict(self.root)
 		self.str_dict = list(self.str_dict)
 		

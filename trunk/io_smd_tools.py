@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 3, 0),
+	"version": (1, 4, 0),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -104,6 +104,7 @@ class smd_info:
 		self.attachments = []
 		self.meshes = []
 		self.parent_chain = []
+		self.dmxShapes = {}
 
 		self.frameData = []
 
@@ -2146,9 +2147,13 @@ def writeBones(quiet=False):
 		smd.file.write(line + comment + "\n")
 
 	smd.file.write("end\n")
-	if not quiet: print("- Exported",len(smd.a.data.bones),"bones")
-	if len(smd.a.data.bones) > 128:
-		log.warning("Source only supports 128 bones!")
+	num_bones = len(smd.a.data.bones)
+	if not quiet: print("- Exported",num_bones,"bones")
+	
+	if smd.isDMX and num_bones > 1023:
+		log.warning("DMX bone limit is 1023, you have {}!".format(num_bones))
+	if not smd.isDMX and num_bones > 128:
+		log.warning("SMD bone limit in 128, you have {}!".format(num_bones))
 
 # skeleton block
 def writeFrames():
@@ -2156,12 +2161,11 @@ def writeFrames():
 		return
 
 	smd.file.write("skeleton\n")
-	action = smd.a.animation_data.action
 
 	if not smd.a:
 		smd.file.write("time 0\n0 0 0 0 0 0 0\nend\n")
 		return
-
+	
 	# remove any non-keyframed positions
 	for posebone in smd.a.pose.bones:
 		posebone.matrix_basis.identity()
@@ -2176,13 +2180,14 @@ def writeFrames():
 	# Get the working frame range
 	num_frames = 1
 	if smd.jobType == ANIM:
+		action = smd.a.animation_data.action
 		start_frame, last_frame = action.frame_range
 		num_frames = int(last_frame - start_frame) + 1 # add 1 due to the way range() counts
 		bpy.context.scene.frame_set(start_frame)
 		
-	if 'fps' in dir(action):
-		bpy.context.scene.render.fps = action.fps
-		bpy.context.scene.render.fps_base = 1
+		if 'fps' in dir(action):
+			bpy.context.scene.render.fps = action.fps
+			bpy.context.scene.render.fps_base = 1
 
 	# Start writing out the animation
 	for i in range(num_frames):
@@ -2447,7 +2452,8 @@ def writeShapes(cur_shape = 0):
 
 # Creates a mesh with object transformations and modifiers applied
 def bakeObj(in_object):
-	bakes = []
+	bakes_in = []
+	bakes_out = []
 	for object in bpy.context.selected_objects:
 		object.select = False
 	bpy.context.scene.objects.active = in_object
@@ -2478,26 +2484,26 @@ def bakeObj(in_object):
 
 		# get a list of objects we want to bake
 		if not smd.g:
-			bakes = [in_object]
+			bakes_in = [in_object]
 		else:
 			have_baked_metaballs = False
 			validObs = getValidObs()
 			flex_obs = []
 			for object in smd.g.objects:
 				if object.smd_export and object in validObs and not (object.type == 'META' and have_baked_metaballs):
-					bakes.append(object)
+					bakes_in.append(object)
 					if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
 					
 			if smd.jobType == FLEX: # we can merge everything because we only care about the verts
 				for ob in bpy.context.scene.objects:
-					ob.select = ob in bakes
-				bpy.context.scene.objects.active = bakes[0]
+					ob.select = ob in bakes_in
+				bpy.context.scene.objects.active = bakes_in[0]
 				bpy.ops.object.join()
-				bakes = [bpy.context.scene.objects.active]
+				bakes_in = [bpy.context.scene.objects.active]
 		
 	# bake the list of objects!
-	for i in range(len(bakes)):
-		obj = bakes[i]
+	for i in range(len(bakes_in)):
+		obj = bakes_in[i]
 		solidify_fill_rim = False
 
 		if obj.type in shape_types and obj.data.shape_keys:
@@ -2505,7 +2511,7 @@ def bakeObj(in_object):
 		else:
 			shape_keys = []
 
-		if smd.jobType == FLEX:
+		if smd.jobType == FLEX or (smd.isDMX and len(shape_keys)):
 			if obj.type not in shape_types:
 				raise TypeError( "Shapes found on unsupported object type (\"{}\", {})".format(obj.name,obj.type) )				
 			num_out = len(shape_keys)
@@ -2524,7 +2530,8 @@ def bakeObj(in_object):
 				bpy.ops.mesh.select_all(action="SELECT")
 				if obj.matrix_world.is_negative:
 					bpy.ops.mesh.flip_normals()
-				bpy.ops.mesh.quads_convert_to_tris()
+				if not smd.isDMX:
+					bpy.ops.mesh.quads_convert_to_tris()
 				bpy.ops.object.mode_set(mode='OBJECT')
 		
 			_ApplyVisualTransform(obj)
@@ -2567,10 +2574,16 @@ def bakeObj(in_object):
 				bpy.context.scene.objects.active = baked
 				baked.select = True
 				baked['src_name'] = obj.name
+				if x == 0:
+					bakes_out.append(baked)
+				if smd.isDMX:
+					if x == 0: smd.dmxShapes[obj.name] = []
+					else: smd.dmxShapes[obj.name].append(baked)					
 				
-				if smd.jobType == FLEX:
+				if smd.jobType == FLEX or (smd.isDMX and x > 0):
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					bakes.append(baked)
+					if not smd.isDMX:
+						bakes_out.append(baked)
 				else:	
 					# Handle bone parents / armature modifiers, and warn of multiple associations
 					baked['bp'] = ""
@@ -2631,19 +2644,16 @@ def bakeObj(in_object):
 						bpy.ops.uv.unwrap()
 		
 		bpy.ops.object.mode_set(mode='OBJECT')
-		obj.select = False
-		if smd.jobType == FLEX:
-			del bakes[i]
-		else:
-			bakes[i] = baked
-
-	smd.bakeInfo.extend(bakes) # save to manager
+		obj.select = False		
+	
+	smd.bakeInfo.extend(bakes_out) # save to manager
 
 # Creates an SMD file
 def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = False ):
 	global smd
 	smd	= smd_info()
 	smd.jobType = smd_type
+	smd.isDMX = filepath.endswith(".dmx")
 	if groupIndex != -1:
 		smd.g = object.users_group[groupIndex]
 	smd.startTime = time.time()
@@ -2689,7 +2699,7 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	if smd.a and smd.jobType != FLEX:
 		bakeObj(smd.a) # MUST be baked after the mesh		
 
-	if filepath.endswith("dmx"):
+	if smd.isDMX:
 		return writeDMX( context, object, groupIndex, filepath, smd_type, quiet )
 		
 	smd.file = open(filepath, 'w')
@@ -2723,21 +2733,20 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	start = time.time()
 	dm = datamodel.DataModel("model",18)
 	
+	print("-",filepath)
+	
 	root = dm.add_element("root")
 	
-	model = dm.add_element(bpy.context.scene.name,"DmeModel")
-	root.add_property("model",model)
-	root.add_property("skeleton",model)
+	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel")
+	root.add_property("model",DmeModel)
+	root.add_property("skeleton",DmeModel)
 	
 	if smd.jobType == REF:
 		# skeleton
-		jointList = model.add_property("jointList",[],datamodel.Element)
+		benchReset()
+		jointList = DmeModel.add_property("jointList",[],datamodel.Element)
+		jointTransforms = DmeModel.add_property("jointTransforms",[],datamodel.Element)
 		bone_names = []
-		
-		# remove any non-keyframed positions
-		for posebone in smd.a.pose.bones:
-			posebone.matrix_basis.identity()
-		bpy.context.scene.update()
 		
 		def writeBone(bone):
 			bone_elem = dm.add_element(bone.name,"DmeJoint")
@@ -2745,6 +2754,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bone_names.append(bone.name)
 			
 			trfm = dm.add_element(bone.name,"DmeTransform")
+			jointTransforms.value.append(trfm)
 			relMat = mathutils.Matrix()
 			if bone.parent: relMat = bone.parent.matrix.inverted()
 			relMat = relMat * bone.matrix
@@ -2760,37 +2770,49 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			return bone_elem
 	
 		root_bones = []
-		if smd.a.type == 'ARMATURE':
+		if smd.a:
+			# remove any non-keyframed positions
+			for posebone in smd.a.pose.bones:
+				posebone.matrix_basis.identity()
+			bpy.context.scene.update()
+			
 			for bone in smd.a.pose.bones:
 				if not bone.parent:
 					root_bones.append(writeBone(bone))
 					
+		bench("skeleton")
 		# model
 		materials = {}
 		dags = []
 		for ob in smd.bakeInfo:
 			if ob.type != 'MESH': continue
+			print("\n" + ob['src_name'])
 			vertex_data = dm.add_element("bind","DmeVertexData")
 			
-			shape = dm.add_element(ob['src_name'],"DmeMesh")
-			shape.add_property("visible",True)
-			shape.add_property("baseStates",[vertex_data],datamodel.Element)
+			DmeMesh = dm.add_element(ob['src_name'],"DmeMesh")
+			DmeMesh.add_property("visible",True)			
+			DmeMesh.add_property("bindState",vertex_data)
+			DmeMesh.add_property("currentState",vertex_data)
+			DmeMesh.add_property("baseStates",[vertex_data],datamodel.Element)
 			
-			trfm = dm.add_element("transform","DmeTransform")
+			trfm = dm.add_element(ob['src_name'],"DmeTransform")
+			jointTransforms.value.append(trfm)
 			trfm.add_property("position",datamodel.Vector3(list(ob.location)))
 			trfm.add_property("orientation",getDatamodelQuat(ob.matrix_world.to_quaternion()))
 			
-			dag = dm.add_element(ob['src_name'],"DmeDag")
-			dag.add_property("transform",trfm)
-			dag.add_property("shape",shape)
-			dags.append(dag)
+			DmeDag = dm.add_element(ob['src_name'],"DmeDag")
+			jointList.value.append(DmeDag)
+			DmeDag.add_property("transform",trfm)
+			DmeDag.add_property("shape",DmeMesh)
+			dags.append(DmeDag)
 			
 			vertex_data.add_property("vertexFormat",[
 				"positions",
 				"normals",
 				"textureCoordinates",
 				"jointWeights",
-				"jointIndices"
+				"jointIndices",
+				"balance"
 				]
 			,str)
 			vertex_data.add_property("flipVCoordinates",True)
@@ -2806,10 +2828,19 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			
 			uv_layer = ob.data.uv_layers.active.data
 			
+			bench("setup")
 			jointCount = 0
 			for vert in ob.data.vertices:
 				pos.append(list(vert.co))
 				norms.append(list(vert.normal))
+								
+				'''co = list(vert.co)
+				norm = list(vert.normal)
+				if not co in pos:
+					pos.append(co)
+				if not norm in norms:
+					norms.append(norm)'''
+					
 				weightlinks = 0
 				for vg in vert.groups:
 					if ob.vertex_groups[vg.group].name in bone_names:
@@ -2818,6 +2849,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				
 			# remove dupes
 			import itertools
+			pos = list(pos for pos,_ in itertools.groupby(pos))
 			norms = list(norms for norms,_ in itertools.groupby(norms))
 			
 			for vert in ob.data.vertices:
@@ -2834,7 +2866,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				jointIndices.extend(indices)
 				
 			vertex_data.add_property("jointCount",jointCount)
-			
+			bench("verts")
 			for poly in ob.data.polygons:
 				i=0
 				for vert_index in poly.vertices:
@@ -2849,7 +2881,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					texcoIndices.append(texco.index(list(uv_layer[poly.loop_start + i].uv)))
 					
 					i+=1
-				
+			bench("polys")
 			vertex_data.add_property("positions",pos,datamodel.Vector3)
 			vertex_data.add_property("positionsIndices",posIndices,int)
 			
@@ -2862,6 +2894,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			vertex_data.add_property("jointWeights",jointWeights,float)
 			vertex_data.add_property("jointIndices",jointIndices,int)
 			
+			vertex_data.add_property("balance",[0.0] * len(posIndices),float)
+			vertex_data.add_property("balanceIndices",[0] * len(posIndices),int)
+			bench("insert")
 			face_sets = []
 			for material_index in range(len(ob.material_slots)):
 				material = ob.material_slots[material_index].material
@@ -2885,11 +2920,96 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					material_elem.add_property("mtlName",bpy.context.scene.smd_material_path + material.name)	
 				faceSet.add_property("material",materials[material])
 			
-			shape.add_property("faceSets",face_sets,datamodel.Element)
-
+			DmeMesh.add_property("faceSets",face_sets,datamodel.Element)
+			bench("faces")
+			
+			# shapes
+			if smd.dmxShapes.get(ob['src_name']):
+				shape_elems = []
+				control_elems = []
+				control_values = []
+				delta_state_weights = []
+				for shape in smd.dmxShapes[ob['src_name']]:
+					DmeCombinationInputControl = dm.add_element(shape['shape_name'],"DmeCombinationInputControl")
+					control_elems.append(DmeCombinationInputControl)
+					
+					DmeCombinationInputControl.add_property("rawControlNames",[shape['shape_name']],str)
+					DmeCombinationInputControl.add_property("stereo",False)
+					DmeCombinationInputControl.add_property("eyelid",False)
+					DmeCombinationInputControl.add_property("wrinkleScales",[0.0],float)
+					
+					control_values.append([0,0.5,0.5])
+					delta_state_weights.append([0,0])
+					
+					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
+					shape_elems.append(DmeVertexDeltaData)
+					
+					DmeVertexDeltaData.add_property("vertexFormat",[
+						"positions",
+						"normals",
+						"wrinkle"
+						]
+					,str)
+					
+					DmeVertexDeltaData.add_property("jointCount",0)
+					DmeVertexDeltaData.add_property("flipVCoordinates",False)
+					DmeVertexDeltaData.add_property("corrected",True)
+					
+					pos = []
+					posIndices = []
+					norms = []
+					normIndices = []
+					
+					for i in range(len(ob.data.vertices)):
+						ob_vert = ob.data.vertices[i]
+						shape_vert = shape.data.vertices[i]
+						if ob_vert.co != shape_vert.co:
+							pos.append(list(ob_vert.co - shape_vert.co))
+							posIndices.append(i)						
+						norms.append(list(shape_vert.normal))
+						normIndices.append(i)
+						
+					#for i in range(len(ob.data.vertices)):
+					#	ob_vert = ob.data.vertices[i]
+					#	shape_vert = shape.data.vertices[i]
+					#	if ob_vert.co != shape_vert.co:
+					#		pos.append(list(ob_vert.co - shape_vert.co))
+					#		posIndices.append(i)
+					#i = 0
+					#for poly in ob.data.polygons:
+					#	for vert_index in poly.vertices:
+					#		ob_vert = ob.data.vertices[vert_index]
+					#		shape_vert = shape.data.vertices[vert_index]
+					#		if vert_index in posIndices or ob_vert.normal != shape_vert.normal:
+					#			norms.append(list(shape_vert.normal))
+					#			normIndices.append(vert_index)
+					#		i += 1
+					
+					DmeVertexDeltaData.add_property("positions",pos,datamodel.Vector3)
+					DmeVertexDeltaData.add_property("positionIndices",posIndices,int)
+					DmeVertexDeltaData.add_property("normals",norms,datamodel.Vector3)
+					DmeVertexDeltaData.add_property("normalIndices",normIndices,int)
+					DmeVertexDeltaData.add_property("wrinkle",[],float)
+					DmeVertexDeltaData.add_property("wrinkleIndices",[],int)
+					
+				DmeMesh.add_property("deltaStates",shape_elems,datamodel.Element)
+				DmeMesh.add_property("deltaStateWeights",delta_state_weights,datamodel.Vector2)
+				DmeMesh.add_property("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
+				
+				DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
+				DmeCombinationOperator.add_property("controls",control_elems,datamodel.Element)
+				DmeCombinationOperator.add_property("controlValues",control_values,datamodel.Vector3)
+				DmeCombinationOperator.add_property("controlValuesLagged",control_values,datamodel.Vector3)
+				DmeCombinationOperator.add_property("usesLaggedValues",False)
+				DmeCombinationOperator.add_property("dominators",[],datamodel.Element)				
+				DmeCombinationOperator.add_property("targets",[DmeMesh],datamodel.Element)
+				root.add_property("combinationOperator",DmeCombinationOperator)				
+				
+				bench("shapes")			
+		
 		dags = root_bones + dags
-		model.add_property("children",dags,datamodel.Element)
-
+		DmeModel.add_property("children",dags,datamodel.Element)
+		
 		print("Created datamodel in {}".format(time.time() - start))
 
 		start = time.time()
@@ -3154,6 +3274,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		l = self.layout
 		scene = context.scene
 		num_to_export = 0
+		self.bl_label = scene.smd_format + " Export"
 
 		self.embed_scene = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -3444,13 +3565,16 @@ class SmdExporter(bpy.types.Operator):
 			group_name = None
 			if props.groupIndex != -1:
 				# handle the selected object being in a group, but disabled
-				group_name = ob.users_group[props.groupIndex].name
-				for g_ob in ob.users_group[props.groupIndex].objects:
-					if g_ob.smd_export:
-						ob = g_ob
-						break
-					else:
-						ob = None
+				try:
+					group_name = ob.users_group[props.groupIndex].name
+					for g_ob in ob.users_group[props.groupIndex].objects:
+						if g_ob.smd_export:
+							ob = g_ob
+							break
+						else:
+							ob = None
+				except IndexError:
+					pass # Blender saved settings from a previous run, doh!
 
 			if ob:
 				self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
@@ -3850,7 +3974,7 @@ def register():
 	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD')
 	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Ignore Materials",description="Only export face-assigned image filenames",default=False)
 	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Only consider objects in active viewport layers for export",default=False)
-	bpy.types.Scene.smd_material_path = StringProperty(name="DMX material path",description="Folder containing VMTs referenced in this scene. DMX only.")
+	bpy.types.Scene.smd_material_path = StringProperty(name="DMX material path",description="Folder relative to game root containing VMTs referenced in this scene (DMX only)")
 	
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
