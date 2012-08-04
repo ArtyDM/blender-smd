@@ -30,7 +30,7 @@ class _Array(list):
 	
 	def __init__(self,list=None):
 		_validate_array_list(list,self.type)
-		return super(_Array,self).__init__(list)
+		return super().__init__(list)
 	
 	def tobytes(self, datamodel, elem):
 		return array.array(self.type_str,self).tobytes()
@@ -66,7 +66,16 @@ class _Vector(list):
 	def __init__(self,list):
 		if len(list) != len(self.type_str):
 			raise ValueError("Expected list of {} floats".format(len(self.type_str)))
-		super(_Vector,self).__init__(list)
+		super().__init__(list)
+	def __sub__(self, other):
+		if type(other) != type(self):
+			raise TypeError("Vectors can only be subtracted from other vectors")
+		
+		out = []
+		for i in range(len(self.type_str)):
+			out.append( self[i] - other[i] )
+		t = type(self)
+		return t(out)
 	def tobytes(self):
 		out = bytes()
 		for ord in self:
@@ -79,7 +88,7 @@ class Vector3(_Vector):
 class Vector4(_Vector):
 	type_str = "ffff"
 class Quaternion(Vector4):
-	pass	
+	pass
 class Angle(Vector3):
 	pass
 class _VectorArray(_Array):
@@ -94,25 +103,25 @@ class _VectorArray(_Array):
 				out += struct.pack("f",item[ordinate])
 		return out
 class _Vector2Array(_VectorArray):
-	pass
+	type = Vector2
 class _Vector3Array(_VectorArray):
-	pass
+	type = Vector3
 class _Vector4Array(_VectorArray):
-	pass
+	type = Vector4
 class _QuaternionArray(_Vector4Array):
-	pass
+	type = Quaternion
 class _AngleArray(_Vector3Array):
-	pass
+	type = Angle
 
 class Matrix:
 	pass
 class _MatrixArray():
-	pass
+	type = Matrix
 
 class Binary(bytes):
 	pass
 class _BinaryArray(_Array):
-	type = bytes
+	type = Binary
 class Color(Vector4):
 	pass
 class _ColorArray(_Vector4Array):
@@ -312,7 +321,7 @@ class DataModel:
 			if type(prop.value) == _ElementArray:
 				for i in prop.value:
 					if i not in self.str_dict_checked:
-						self._build_str_dict(i)				
+						self._build_str_dict(i)
 		
 	def write(self,path,encoding,encoding_ver):
 		self.out = open(path,'wb')
