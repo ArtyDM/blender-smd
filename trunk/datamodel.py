@@ -12,27 +12,28 @@ def _get_string(datamodel,string,use_str_dict = True):
 	else:
 		return bytes(string,'ASCII') + _null
 
-class _Array:
-	list = []
+def _validate_array_list(list,array_type,item_len=0,item_type=None):
+	if not list: return
+	for item in list:
+		if type(item) != array_type:
+			raise TypeError("Sequences must contain only {} values".format(array_type))
+		if item_len and len(item) != item_len:
+			raise TypeError("All sequences must have {} items".format(len(self.type_str)))
+		if item_type:
+			for sub_item in item:
+				if type(sub_item) != item_type:
+					raise TypeError("Sequences must contain only {} values".format(array_type))
+
+class _Array(list):
 	type = None
 	type_str = ""
 	
 	def __init__(self,list=None):
-		if list:
-			for item in list:
-				if type(item) != self.type:
-					raise TypeError("List must contain only {} values".format(self.type))
-			self.list = list
-		else:
-			self.list = []
+		_validate_array_list(list,self.type)
+		return super(_Array,self).__init__(list)
 	
 	def tobytes(self, datamodel, elem):
-		return array.array(self.type_str,self.list).tobytes()
-		
-	def append(self,value):
-		if type(value) != self.type:
-			raise ValueError("Value must be of type",self.type)
-		self.list.append(value)
+		return array.array(self.type_str,self).tobytes()
 
 class _BoolArray(_Array):
 	type = bool
@@ -47,7 +48,7 @@ class _StrArray(_Array):
 	type = str	
 	def tobytes(self, datamodel, elem):
 		out = bytes()
-		for item in self.list:
+		for item in self:
 			out += _get_string(datamodel,item,use_str_dict=False)
 		return out
 class _ElementArray(_Array):
@@ -56,61 +57,21 @@ class _ElementArray(_Array):
 		_Array.__init__(self,list)
 	def tobytes(self, datamodel, elem):
 		out = []
-		for item in self.list:
+		for item in self:
 			out.append(datamodel.elem_index.index(item))
 		return array.array("i",out).tobytes()
-		
-class _VectorArray(_Array):
-	type = list
-	def __init__(self,list=None):
-		_Array.__init__(self,list)
-		if list:
-			for item in list:
-				if len(item) != len(self.type_str):
-					raise TypeError("All sequences must have {} items".format(len(self.type_str)))
-					for ordinate in item:
-						if type(ordinate) != float:
-							raise TypeError("Sequences must contain only float values")	
-	def tobytes(self, datamodel, elem):
-		out = bytes()
-		for item in self.list:
-			for ordinate in range(len(self.type_str)):
-				out += struct.pack("f",item[ordinate])
-		return out
-class _Vector2Array(_VectorArray):
-	type_str = "ff"
-class _Vector3Array(_VectorArray):
-	type_str = "fff"
-class _Vector4Array(_VectorArray):
-	type_str = "ffff"
-class _QuaternionArray(_Vector4Array):
-	pass
 	
-class _AngleArray(_Vector3Array):
-	pass
-class _MatrixArray():
-	pass
-	
-class _BinaryArray(_Array):
-	pass
-class _TimeArray(_FloatArray):
-	pass
-class _ColorArray(_Vector3Array):
-	pass
-		
-class _Vector:
-	list = []
+class _Vector(list):
 	type_str = ""
 	def __init__(self,list):
 		if len(list) != len(self.type_str):
 			raise ValueError("Expected list of {} floats".format(len(self.type_str)))
-		self.list = list
+		super(_Vector,self).__init__(list)
 	def tobytes(self):
 		out = bytes()
-		for ord in self.list:
+		for ord in self:
 			out += struct.pack("f",ord)
-		return out
-		
+		return out		
 class Vector2(_Vector):
 	type_str = "ff"
 class Vector3(_Vector):
@@ -118,19 +79,55 @@ class Vector3(_Vector):
 class Vector4(_Vector):
 	type_str = "ffff"
 class Quaternion(Vector4):
-	pass
-	
+	pass	
 class Angle(Vector3):
 	pass
-class Matrix:
+class _VectorArray(_Array):
+	type = list
+	def __init__(self,list=None):
+		_validate_array_list(self,list)
+		_Array.__init__(self,list)
+	def tobytes(self, datamodel, elem):
+		out = bytes()
+		for item in self:
+			for ordinate in range(len(item.type_str)):
+				out += struct.pack("f",item[ordinate])
+		return out
+class _Vector2Array(_VectorArray):
+	pass
+class _Vector3Array(_VectorArray):
+	pass
+class _Vector4Array(_VectorArray):
+	pass
+class _QuaternionArray(_Vector4Array):
+	pass
+class _AngleArray(_Vector3Array):
 	pass
 
-class Binary():
+class Matrix:
 	pass
-class Time(float):
+class _MatrixArray():
 	pass
+
+class Binary(bytes):
+	pass
+class _BinaryArray(_Array):
+	type = bytes
 class Color(Vector4):
 	pass
+class _ColorArray(_Vector4Array):
+	pass
+	
+class Time(float):
+	def tobytes(self):
+		return struct.pack("i",int(self * 10000))
+class _TimeArray(_Array):
+	type = Time
+	def tobytes(self, datamodel, elem):
+		out = bytes()
+		for item in self:
+			out += item.tobytes()
+		return out
 
 class Property:
 	_dmxtype = [None,"Element",int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
@@ -161,7 +158,7 @@ class Element:
 		self.property_order = []
 		
 	def __repr__(self):
-		return "<Datamodel element \"{}\" ({})>".format(self.name,self.type)
+		return "<Datamodel element {}[{}]>".format(self.type,self.name)
 		
 	def add_property(self,name,value,prop_type = None):
 		t = type(value)
@@ -189,7 +186,7 @@ class Element:
 			elif prop_type == Quaternion: prop_type = _QuaternionArray
 			elif prop_type == Matrix: prop_type = _MatrixArray
 			else: raise ValueError("Unsupported array type")			
-			value = prop_type(list(value))
+			value = prop_type(value)			
 		prop = Property(name,value)
 		self.properties[name] = prop
 		self.property_order.append(name)
@@ -245,7 +242,7 @@ class DataModel:
 			self.out.write( _get_string(self,value,use_str_dict) )
 				
 		elif issubclass(t, _Array):
-			self.out.write( struct.pack("i",len(value.list)) )
+			self.out.write( struct.pack("i",len(value)) )
 			self.out.write( value.tobytes(self,elem) )
 		elif issubclass(t,_Vector):
 			self.out.write(value.tobytes())
@@ -256,6 +253,8 @@ class DataModel:
 			self.out.write( struct.pack("i",value) )
 		elif t == float:
 			self.out.write( struct.pack("f",value) )
+		elif t == Time:
+			self.out.write( value.tobytes() )
 	
 	def _write_element_index(self,elem):
 		self._write(elem.type)
@@ -271,7 +270,7 @@ class DataModel:
 			if t == Element and prop.value not in self.elem_index:
 				self._write_element_index(prop.value)
 			if t == _ElementArray:
-				for i in prop.value.list:
+				for i in prop.value:
 					if i not in self.elem_index:
 						self._write_element_index(i)
 		
@@ -311,7 +310,7 @@ class DataModel:
 				if prop.value not in self.str_dict_checked:
 					self._build_str_dict(prop.value)
 			if type(prop.value) == _ElementArray:
-				for i in prop.value.list:
+				for i in prop.value:
 					if i not in self.str_dict_checked:
 						self._build_str_dict(i)				
 		
@@ -342,13 +341,12 @@ class DataModel:
 			for name in elem.property_order:
 				prop = elem.properties[name]
 				t = type(prop.value)
-				if prop.value not in out_elems:
-					if t == Element:
-						_count_child_elems(prop.value)
-					if t == _ElementArray:
-						for i in prop.value.list:
-							if i not in out_elems:
-								_count_child_elems(i)
+				if t == Element and prop.value not in out_elems:
+					_count_child_elems(prop.value)
+				if t == _ElementArray:
+					for i in prop.value:
+						if i not in out_elems:
+							_count_child_elems(i)
 		_count_child_elems(self.root)
 		self._write(len(out_elems))
 		
