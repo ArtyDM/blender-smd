@@ -2831,8 +2831,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bench("setup")
 			jointCount = 0
 			for vert in ob.data.vertices:
-				pos.append(list(vert.co))
-				norms.append(list(vert.normal))
+				pos.append(datamodel.Vector3(vert.co))
+				norms.append(datamodel.Vector3(vert.normal))
 								
 				'''co = list(vert.co)
 				norm = list(vert.normal)
@@ -2872,9 +2872,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					vert = ob.data.vertices[vert_index]
 					
 					posIndices.append(vert_index)
-					normIndices.append(norms.index(list(vert.normal)))
+					normIndices.append(norms.index(datamodel.Vector3(vert.normal)))
 					
-					uv = list(uv_layer[poly.loop_start + i].uv)
+					uv = datamodel.Vector2(uv_layer[poly.loop_start + i].uv)
 					try:
 						texcoIndices.append(texco.index(uv))
 					except ValueError:
@@ -2925,7 +2925,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bench("faces")
 			
 			# shapes
-			if smd.dmxShapes.get(ob['src_name']):
+			if 0 and smd.dmxShapes.get(ob['src_name']):
 				shape_elems = []
 				control_elems = []
 				control_values = []
@@ -2939,8 +2939,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeCombinationInputControl.add_property("eyelid",False)
 					DmeCombinationInputControl.add_property("wrinkleScales",[0.0],float)
 					
-					control_values.append([0,0.5,0.5])
-					delta_state_weights.append([0,0])
+					control_values.append(datamodel.Vector3([0,0.5,0.5]))
+					delta_state_weights.append(datamodel.Vector2([0,0]))
 					
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
@@ -2964,7 +2964,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					i=0
 					for poly in ob.data.polygons:
 						for vert_index in poly.vertices:
-							shape_norms.append([0,0,-1])
+							shape_norms.append(datamodel.Vector3([0,0,-1]))
 							shape_normIndices.append(i)
 							i+=1
 					#for i in range(len(ob.data.vertices)):
@@ -3029,7 +3029,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				
 				bench("shapes")			
 		
-		DmeModel_children.value.append(dags)
+		DmeModel_children.value.extend(dags)
 	
 	if smd.jobType == ANIM: # animation
 		action = smd.a.animation_data.action
@@ -3071,22 +3071,32 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		
 		num_frames = int(action.frame_range[1] + 1)
 		bench("Animation setup")
+		epsilon = Vector([0.0001] * 3)
+		prev_pos = {}
+		prev_rot = {}
+		
 		for frame in range(0,num_frames):
 			bpy.context.scene.frame_set(frame)
 			time = datamodel.Time(frame / fps)
 			for bone in smd.a.pose.bones:
-				channels = bone_channels[bone]
-				for log in channels:
-					log.get_property("times").value.append(time)
-				
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
 				else: relMat = bone.matrix
 				
+				pos = relMat.to_translation()				
+				if not prev_pos.get(bone) or pos - prev_pos[bone] > epsilon:
+					bone_channels[bone][0].get_property("times").value.append(time)
+					bone_channels[bone][0].get_property("values").value.append(datamodel.Vector3(pos))
+				prev_pos[bone] = pos
 				
-				channels[0].get_property("values").value.append(datamodel.Vector3(relMat.to_translation()))
-				channels[1].get_property("values").value.append(getDatamodelQuat(relMat.to_quaternion()))
+				rot = relMat.to_quaternion()
+				if not prev_rot.get(bone) or Vector(rot.to_euler()) - Vector(prev_rot[bone].to_euler()) > epsilon:
+					bone_channels[bone][1].get_property("times").value.append(time)					
+					bone_channels[bone][1].get_property("values").value.append(getDatamodelQuat(rot))
+				prev_rot[bone] = rot
+				
 			bench("frame {}".format(frame+1))
-				
+	
+	benchReset()
 	dm.write(filepath,"binary",5)
 	bench("Writing")
 	
