@@ -77,6 +77,19 @@ src_branches = (
 ('SourceFilmmaker', 'Source Filmmaker', '')
 )
 
+# [encoding,format]
+dmx_versions = {
+'ep1':[0,0],
+'source2007':[2,1],
+'orangebox':[2,1],
+'source2009':[2,1],
+'left 4 dead':[5,18],
+'left 4 dead 2':[5,18],
+'alien swarm':[5,18],
+'portal 2':[5,18],
+'SourceFilmmaker':[5,18]
+}
+
 # I hate Python's var redefinition habits
 class smd_info:
 	def __init__(self):
@@ -230,12 +243,18 @@ def ValidateBlenderVersion(op):
 			return False
 	except ValueError:
 		return True
+	
+def shouldExportDMX(scene):
+	if scene.smd_studiomdl_branch == 'CUSTOM':
+		dmx_versions['CUSTOM'] = [scene.smd_studiomdl_custom_path_dmx_encoding, scene.smd_studiomdl_custom_path_dmx_format]
+	return scene.smd_format == 'DMX' and dmx_versions[scene.smd_studiomdl_branch][0] > 0 and dmx_versions[scene.smd_studiomdl_branch][1] > 0
 
 def getFileExt(flex=False):
-	if flex and bpy.context.scene.smd_format == 'SMD':
-		return ".vta"
+	if shouldExportDMX(bpy.context.scene):
+		return ".dmx"
 	else:
-		return "." + bpy.context.scene.smd_format.lower()
+		if flex: return ".vta"
+		else: return ".smd"
 
 def getFilename(filepath):
 	return filepath.split('\\')[-1].split('/')[-1].rsplit(".")[0]
@@ -2730,6 +2749,7 @@ def getDatamodelQuat(blender_quat):
 	return datamodel.Quaternion([blender_quat[1], blender_quat[2], blender_quat[3], blender_quat[0]])
 
 def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = False ):	
+	start = time.time()
 	print("-",filepath)
 	benchReset()
 	
@@ -3077,28 +3097,31 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		
 		for frame in range(0,num_frames):
 			bpy.context.scene.frame_set(frame)
-			time = datamodel.Time(frame / fps)
+			keyframe_time = datamodel.Time(frame / fps)
 			for bone in smd.a.pose.bones:
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
 				else: relMat = bone.matrix
 				
-				pos = relMat.to_translation()				
+				pos = relMat.to_translation()
 				if not prev_pos.get(bone) or pos - prev_pos[bone] > epsilon:
-					bone_channels[bone][0].get_property("times").value.append(time)
+					bone_channels[bone][0].get_property("times").value.append(keyframe_time)
 					bone_channels[bone][0].get_property("values").value.append(datamodel.Vector3(pos))
 				prev_pos[bone] = pos
 				
 				rot = relMat.to_quaternion()
-				if not prev_rot.get(bone) or Vector(rot.to_euler()) - Vector(prev_rot[bone].to_euler()) > epsilon:
-					bone_channels[bone][1].get_property("times").value.append(time)					
+				rot_vec = Vector(rot.to_euler())
+				if not prev_rot.get(bone) or rot_vec - prev_rot[bone] > epsilon:
+					bone_channels[bone][1].get_property("times").value.append(keyframe_time)
 					bone_channels[bone][1].get_property("values").value.append(getDatamodelQuat(rot))
-				prev_rot[bone] = rot
+				prev_rot[bone] = rot_vec
 				
 			bench("frame {}".format(frame+1))
 	
 	benchReset()
 	dm.write(filepath,"binary",5)
 	bench("Writing")
+	
+	print("DMX export took",time.time() - start)
 	
 	return True
 		
@@ -3183,7 +3206,7 @@ def compileQCs(path=None):
 		return num_good_compiles
 
 class SMD_MT_ExportChoice(bpy.types.Menu):
-	bl_label = "SMD export mode"
+	bl_label = "SMD/DMX export mode"
 
 	# returns an icon, a label, and the number of valid actions
 	# supports single actions, NLA tracks, or nothing
@@ -3311,10 +3334,8 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 		elif len(context.selected_objects) > 1 and not embed_arm:
 			l.operator(SmdExporter.bl_idname, text="Selected objects\\groups", icon='GROUP').exportMode = 'MULTI' # multiple obects
 
-
 		if not embed_arm:
 			l.operator(SmdExporter.bl_idname, text="Scene as configured", icon='SCENE_DATA').exportMode = 'SCENE'
-		#l.operator(SmdExporter.bl_idname, text="Whole .blend", icon='FILE_BLEND').exportMode = 'FILE' # can't do this until scene changes become possible
 
 class SMD_OT_Compile(bpy.types.Operator):
 	bl_idname = "smd.compile_qc"
@@ -3348,7 +3369,7 @@ def getValidObs():
 
 qc_path = qc_paths = qc_path_last_update = 0
 class SMD_PT_Scene(bpy.types.Panel):
-	bl_label = "SMD Export"
+	bl_label = "SMD/DMX Export"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
@@ -3358,24 +3379,27 @@ class SMD_PT_Scene(bpy.types.Panel):
 		l = self.layout
 		scene = context.scene
 		num_to_export = 0
-		self.bl_label = scene.smd_format + " Export"
 
 		self.embed_scene = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
 
-		row = l.row().split(0.33)
-		row.label(text="Output Format:")
-		row.row().prop(scene,"smd_format",text="Format",expand=True)
 		l.prop(scene,"smd_path",text="Output Folder")
 		l.prop(scene,"smd_studiomdl_branch",text="Target Engine")
 		if scene.smd_studiomdl_branch == 'CUSTOM':
 			l.prop(scene,"smd_studiomdl_custom_path",text="Studiomdl path")
+			row = l.row(align=True)
+			row.prop(scene,"smd_studiomdl_custom_path_dmx_encoding",text="DMX encoding",slider=False)
+			row.prop(scene,"smd_studiomdl_custom_path_dmx_format",text="DMX format",slider=False)
+		row = l.row().split(0.33)
+		row.label(text="Output Format:")
+		row.row().prop(scene,"smd_format",text="Format",expand=True)
+		row.enabled = dmx_versions[scene.smd_studiomdl_branch][0] > 0
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
 		row = l.row()
 		row.prop(scene,"smd_material_path",text="Material Path")
-		row.enabled = scene.smd_format == 'DMX'
+		row.enabled = shouldExportDMX(scene)
 
 		validObs = getValidObs()
 		l.row()
@@ -3560,9 +3584,8 @@ class SMD_PT_Data(bpy.types.Panel):
 		l.prop(arm.data,"smd_action_selection")
 		l.prop(arm,"smd_action_filter",text="Action Filter")
 
-		row = l.row()
-		row.prop(arm.data,"smd_implicit_zero_bone")
-		row.prop(arm.data,"smd_legacy_rotation")
+		l.prop(arm.data,"smd_implicit_zero_bone")
+		if not shouldExportDMX(scene): row.prop(arm.data,"smd_legacy_rotation")
 
 		self.embed_arm = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
@@ -3574,9 +3597,9 @@ class SMD_PT_Data(bpy.types.Panel):
 		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
 
 class SmdExporter(bpy.types.Operator):
-	'''Export Studiomdl Data files and compile them with QC scripts'''
+	'''Export Studiomdl Data or Datamodel Exchange files and compile them with QC scripts'''
 	bl_idname = "export_scene.smd"
-	bl_label = "Export SMD/VTA"
+	bl_label = "Export SMD/VTA/DMX"
 
 	directory = StringProperty(name="Export root", description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')	
 	filename = StringProperty(default="", options={'HIDDEN'})
@@ -4027,7 +4050,7 @@ def menu_func_import(self, context):
 	self.layout.operator(SmdImporter.bl_idname, text="Source Engine (.smd, .vta, .dmx, .qc)")
 
 def menu_func_export(self, context):
-	self.layout.operator(SmdExporter.bl_idname, text="Source Engine (.smd, .vta)")
+	self.layout.operator(SmdExporter.bl_idname, text="Source Engine (.smd, .vta, .dmx)")
 
 def panel_func_group_mute(self,context):
 	# This is crap
@@ -4051,7 +4074,9 @@ def register():
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
 	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported", subtype="FILE_PATH")
 	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles",default='source2009')
-	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Studiomdl Path",description="Location of studiomdl.exe for a custom compile", subtype="FILE_PATH")
+	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Custom Studiomdl Path",description="Location of studiomdl.exe for a custom compile", subtype="FILE_PATH")
+	bpy.types.Scene.smd_studiomdl_custom_path_dmx_encoding = IntProperty(name="SMD Custom DMX encoding",description="Version of the binary DMX encoding to export",subtype='UNSIGNED')
+	bpy.types.Scene.smd_studiomdl_custom_path_dmx_format = IntProperty(name="SMD Custom DMX format",description="Version of the DMX model format to export",subtype='UNSIGNED')
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
 	formats = (
 	('SMD', "SMD", "Studiomdl Data" ),
@@ -4072,7 +4097,7 @@ def register():
 	('FILTERED',"Action Filter","All actions that match the armature's filter term")
 	)
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
-	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports",default=False)
+	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports (SMD only)",default=False)
 
 	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export this group with the scene",default=True)
 	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
@@ -4097,6 +4122,8 @@ def unregister():
 	del Scene.smd_qc_path
 	del Scene.smd_studiomdl_branch
 	del Scene.smd_studiomdl_custom_path
+	del Scene.smd_studiomdl_custom_path_dmx_encoding
+	del Scene.smd_studiomdl_custom_path_dmx_format
 	del Scene.smd_up_axis
 	del Scene.smd_format
 	del Scene.smd_use_image_names
