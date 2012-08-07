@@ -10,17 +10,11 @@ def _get_string(datamodel,string,use_str_dict = True):
 	else:
 		return bytes(string,'ASCII') + bytes(1)
 
-def _validate_array_list(list,array_type,item_len=0,item_type=None):
+def _validate_array_list(list,array_type):
 	if not list: return
 	for item in list:
 		if type(item) != array_type:
-			raise TypeError("Sequences must contain only {} values".format(array_type))
-		if item_len and len(item) != item_len:
-			raise TypeError("All sequences must have {} items".format(len(self.type_str)))
-		if item_type:
-			for sub_item in item:
-				if type(sub_item) != item_type:
-					raise TypeError("Sequences must contain only {} values".format(array_type))
+			raise TypeError("Sequence must contain only {} values".format(array_type))
 
 class _Array(list):
 	type = None

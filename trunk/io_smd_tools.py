@@ -2826,15 +2826,18 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			DmeDag.add_property("shape",DmeMesh)
 			dags.append(DmeDag)
 			
-			vertex_data.add_property("vertexFormat",[
-				"positions",
-				"normals",
-				"textureCoordinates",
-				"jointWeights",
-				"jointIndices",
-				"balance"
-				]
-			,str)
+			jointCount = 0
+			for vert in ob.data.vertices:
+				weightlinks = 0
+				for vert_vg in vert.groups:
+					if ob.vertex_groups[vert_vg.group].name in bone_names:
+						weightlinks += 1
+				jointCount = max(jointCount,weightlinks)
+			
+			format = [ "positions", "normals", "textureCoordinates" ]
+			if jointCount: format.extend( [ "jointWeights", "jointIndices" ] )
+			vertex_data.add_property("vertexFormat", format, str)
+			
 			vertex_data.add_property("flipVCoordinates",True)
 			
 			pos = []
@@ -2849,40 +2852,23 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			uv_layer = ob.data.uv_layers.active.data
 			
 			bench("setup")
-			jointCount = 0
-			for vert in ob.data.vertices:
+			
+			for vert in ob.data.vertices:				
 				pos.append(datamodel.Vector3(vert.co))
 				norms.append(datamodel.Vector3(vert.normal))
-								
-				'''co = list(vert.co)
-				norm = list(vert.normal)
-				if not co in pos:
-					pos.append(co)
-				if not norm in norms:
-					norms.append(norm)'''
-					
-				weightlinks = 0
-				for vert_vg in vert.groups:
-					if ob.vertex_groups[vert_vg.group].name in bone_names:
-						weightlinks += 1
-				jointCount = max(jointCount,weightlinks)
 				
-			# remove dupes...normals only since there aren't likely to be many vert dupes
-			import itertools
-			norms = list(norms for norms,_ in itertools.groupby(norms))
-			
-			for vert in ob.data.vertices:
-				weights = [0.0] * jointCount
-				indices = [0] * jointCount
-				i = 0
-				for vert_vg in vert.groups:
-					ob_vg = ob.vertex_groups[vert_vg.group]
-					if ob_vg.name in bone_names:
-						weights[i] = vert_vg.weight
-						indices[i] = bone_names.index(ob_vg.name)
-						i+=1
-				jointWeights.extend(weights)
-				jointIndices.extend(indices)
+				if jointCount:
+					weights = [0.0] * jointCount
+					indices = [0] * jointCount
+					i = 0
+					for vert_vg in vert.groups:
+						ob_vg = ob.vertex_groups[vert_vg.group]
+						if ob_vg.name in bone_names:
+							weights[i] = vert_vg.weight
+							indices[i] = bone_names.index(ob_vg.name)
+							i+=1
+					jointWeights.extend(weights)
+					jointIndices.extend(indices)
 				
 			vertex_data.add_property("jointCount",jointCount)
 			bench("verts")
@@ -2892,7 +2878,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					vert = ob.data.vertices[vert_index]
 					
 					posIndices.append(vert_index)
-					normIndices.append(norms.index(datamodel.Vector3(vert.normal)))
+					normIndices.append(vert_index)
 					
 					uv = datamodel.Vector2(uv_layer[poly.loop_start + i].uv)
 					try:
@@ -2912,11 +2898,12 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			vertex_data.add_property("textureCoordinates",texco,datamodel.Vector2)
 			vertex_data.add_property("textureCoordinatesIndices",texcoIndices,int)
 			
-			vertex_data.add_property("jointWeights",jointWeights,float)
-			vertex_data.add_property("jointIndices",jointIndices,int)
+			if jointCount:
+				vertex_data.add_property("jointWeights",jointWeights,float)
+				vertex_data.add_property("jointIndices",jointIndices,int)
 			
-			vertex_data.add_property("balance",[0.0] * len(posIndices),float)
-			vertex_data.add_property("balanceIndices",[0] * len(posIndices),int)
+			#vertex_data.add_property("balance",[0.0] * len(posIndices),float)
+			#vertex_data.add_property("balanceIndices",[0] * len(posIndices),int)
 			bench("insert")
 			face_sets = []
 			for material_index in range(len(ob.material_slots)):
@@ -2945,7 +2932,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bench("faces")
 			
 			# shapes
-			if 0 and smd.dmxShapes.get(ob['src_name']):
+			if smd.dmxShapes.get(ob['src_name']):
 				shape_elems = []
 				control_elems = []
 				control_values = []
@@ -2959,18 +2946,17 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeCombinationInputControl.add_property("eyelid",False)
 					DmeCombinationInputControl.add_property("wrinkleScales",[0.0],float)
 					
-					control_values.append(datamodel.Vector3([0,0.5,0.5]))
-					delta_state_weights.append(datamodel.Vector2([0,0]))
+					control_values.append(datamodel.Vector3([0.0,0.0,0.5]))
+					delta_state_weights.append(datamodel.Vector2([0.0,0.0]))
 					
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
 					
 					DmeVertexDeltaData.add_property("vertexFormat",[
 						"positions",
-						"normals",
-						"wrinkle"
+						"normals"
 						]
-					,str)
+					,str) # "wrinkle"
 					
 					DmeVertexDeltaData.add_property("jointCount",0)
 					DmeVertexDeltaData.add_property("flipVCoordinates",True)
@@ -2981,58 +2967,24 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					shape_norms = []
 					shape_normIndices = []
 					
-					i=0
-					for poly in ob.data.polygons:
-						for vert_index in poly.vertices:
-							shape_norms.append(datamodel.Vector3([0,0,-1]))
-							shape_normIndices.append(i)
-							i+=1
-					#for i in range(len(ob.data.vertices)):
-					#	ob_vert = ob.data.vertices[i]
-					#	shape_vert = shape.data.vertices[i]
-					#	if ob_vert.co != shape_vert.co:
-					#		shape_pos.append(list(ob_vert.co - shape_vert.co))
-					#		shape_posIndices.append(i)
-					#
-					#i = 0
-					#for poly in ob.data.polygons:
-					#	exported = False
-					#	for vert_index in poly.vertices:
-					#		if vert_index in shape_posIndices:
-					#			for vert_index in poly.vertices:									
-					#				ob_vert = ob.data.vertices[vert_index]
-					#				shape_vert = shape.data.vertices[vert_index]
-					#				#if ob_vert.normal != shape_vert.normal:
-					#				shape_norms.append(list(shape_vert.normal))
-					#				shape_normIndices.append(i)
-					#				i += 1
-					#			exported = True	
-					#		if exported: break
-					#	if not exported:
-					#		i += len(poly.vertices)
+					for i in range(len(ob.data.vertices)):
+						ob_vert = ob.data.vertices[i]
+						shape_vert = shape.data.vertices[i]
+						
+						if ob_vert.co != shape_vert.co:
+							shape_pos.append(datamodel.Vector3(shape_vert.co - ob_vert.co))
+							shape_posIndices.append(i)
 							
-					#for i in range(len(ob.data.vertices)):
-					#	ob_vert = ob.data.vertices[i]
-					#	shape_vert = shape.data.vertices[i]
-					#	if ob_vert.co != shape_vert.co:
-					#		pos.append(list(ob_vert.co - shape_vert.co))
-					#		posIndices.append(i)
-					#i = 0
-					#for poly in ob.data.polygons:
-					#	for vert_index in poly.vertices:
-					#		ob_vert = ob.data.vertices[vert_index]
-					#		shape_vert = shape.data.vertices[vert_index]
-					#		if vert_index in posIndices or ob_vert.normal != shape_vert.normal:
-					#			norms.append(list(shape_vert.normal))
-					#			normIndices.append(vert_index)
-					#		i += 1
+						if ob_vert.normal != shape_vert.normal:
+							shape_norms.append(datamodel.Vector3(shape_vert.normal))
+							shape_normIndices.append(i)
 					
 					DmeVertexDeltaData.add_property("positions",shape_pos,datamodel.Vector3)
-					DmeVertexDeltaData.add_property("positionIndices",shape_posIndices,int)
+					DmeVertexDeltaData.add_property("positionsIndices",shape_posIndices,int)
 					DmeVertexDeltaData.add_property("normals",shape_norms,datamodel.Vector3)
-					DmeVertexDeltaData.add_property("normalIndices",shape_normIndices,int)
-					DmeVertexDeltaData.add_property("wrinkle",[],float)
-					DmeVertexDeltaData.add_property("wrinkleIndices",[],int)
+					DmeVertexDeltaData.add_property("normalsIndices",shape_normIndices,int)
+					#DmeVertexDeltaData.add_property("wrinkle",[],float)
+					#DmeVertexDeltaData.add_property("wrinkleIndices",[],int)
 					
 				DmeMesh.add_property("deltaStates",shape_elems,datamodel.Element)
 				DmeMesh.add_property("deltaStateWeights",delta_state_weights,datamodel.Vector2)
