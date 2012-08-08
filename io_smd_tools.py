@@ -83,9 +83,9 @@ dmx_versions = {
 'source2007':[2,1],
 'orangebox':[2,1],
 'source2009':[2,1],
-'left 4 dead':[5,18],
-'left 4 dead 2':[5,18],
-'alien swarm':[5,18],
+'left 4 dead':[5,15],
+'left 4 dead 2':[5,15],
+'alien swarm':[5,15],
 'portal 2':[5,18],
 'SourceFilmmaker':[5,18]
 }
@@ -243,11 +243,19 @@ def ValidateBlenderVersion(op):
 			return False
 	except ValueError:
 		return True
-	
-def shouldExportDMX(scene):
+
+def canExportDMX(scene):
 	if scene.smd_studiomdl_branch == 'CUSTOM':
 		dmx_versions['CUSTOM'] = [scene.smd_studiomdl_custom_path_dmx_encoding, scene.smd_studiomdl_custom_path_dmx_format]
-	return scene.smd_format == 'DMX' and dmx_versions[scene.smd_studiomdl_branch][0] > 0 and dmx_versions[scene.smd_studiomdl_branch][1] > 0
+	
+	try: datamodel.check_support("binary",dmx_versions[scene.smd_studiomdl_branch][0])
+	except: return False
+	
+	return dmx_versions[scene.smd_studiomdl_branch][1] in [18]
+	
+def shouldExportDMX(scene):
+	if scene.smd_format != 'DMX': return False
+	return canExportDMX(scene)	
 
 def getFileExt(flex=False):
 	if shouldExportDMX(bpy.context.scene):
@@ -482,6 +490,18 @@ def getBoneBySmdName(bones,name):
 
 def shouldExportGroup(group):
 	return group.smd_export and not group.smd_mute
+
+def DatamodelEncodingVersion():
+	if bpy.context.scene.smd_studiomdl_branch == 'CUSTOM':
+		return bpy.context.scene.smd_studiomdl_custom_path_dmx_encoding
+	else:
+		return dmx_versions[bpy.context.scene.smd_studiomdl_branch][0]
+	
+def DatamodelFormatVersion():
+	if bpy.context.scene.smd_studiomdl_branch == 'CUSTOM':
+		return bpy.context.scene.smd_studiomdl_custom_path_dmx_format
+	else:
+		return dmx_versions[bpy.context.scene.smd_studiomdl_branch][1]
 
 ########################
 #        Import        #
@@ -2410,6 +2430,7 @@ def writePolys(internal=False):
 	if bad_face_mats:
 		log.warning("{} faces on {} did not have a texture{} assigned".format(bad_face_mats,smd.jobName,"" if bpy.context.scene.smd_use_image_names else " or material"))
 	print("- Exported",face_index,"polys")
+	removeObject(smd.m)
 	return
 
 # vertexanimation block
@@ -2461,6 +2482,8 @@ def writeShapes(cur_shape = 0):
 				smd_vert_id +=1
 		if num_bad_verts:
 			log.error("Shape \"{}\" has {} vertex movements that exceed eight units. Source does not support this!".format(shape['shape_name'],num_bad_verts))		
+		if shape != smd.m:
+			removeObject(shape)
 	
 	smd.file.write("end\n")
 	print("- Exported {} flex shapes ({} verts)".format(cur_shape,total_verts))
@@ -2594,7 +2617,11 @@ def bakeObj(in_object):
 					bakes_out.append(baked)
 				if smd.isDMX:
 					if x == 0: smd.dmxShapes[obj.name] = []
-					else: smd.dmxShapes[obj.name].append(baked)					
+					else: smd.dmxShapes[obj.name].append(baked)
+					
+				for mod in baked.modifiers:
+					if mod.type == 'ARMATURE':
+						mod.show_viewport = False
 				
 				if smd.jobType == FLEX or (smd.isDMX and x > 0):
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
@@ -2633,7 +2660,7 @@ def bakeObj(in_object):
 								else:
 									dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
 									baked['amod'] = dupe_amod
-									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group']
+									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group', 'show_viewport']
 									for prop in props:
 										exec ("dupe_amod.{0} = mod.{0}".format(prop))
 		
@@ -2663,7 +2690,7 @@ def bakeObj(in_object):
 						bpy.ops.uv.unwrap()
 		
 		bpy.ops.object.mode_set(mode='OBJECT')
-		obj.select = False		
+		obj.select = False
 	
 	smd.bakeInfo.extend(bakes_out) # save to manager
 
@@ -2753,7 +2780,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	print("-",filepath)
 	benchReset()
 	
-	dm = datamodel.DataModel("model",18)
+	dm = datamodel.DataModel("model",DatamodelFormatVersion())
 	root = dm.add_element("root")	
 	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel")
 	DmeModel_children = DmeModel.add_property("children",[],datamodel.Element)
@@ -2986,6 +3013,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					#DmeVertexDeltaData.add_property("wrinkle",[],float)
 					#DmeVertexDeltaData.add_property("wrinkleIndices",[],int)
 					
+					removeObject(shape)
+					
 				DmeMesh.add_property("deltaStates",shape_elems,datamodel.Element)
 				DmeMesh.add_property("deltaStateWeights",delta_state_weights,datamodel.Vector2)
 				DmeMesh.add_property("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
@@ -3002,6 +3031,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				bench("shapes")			
 		
 		DmeModel_children.value.extend(dags)
+		removeObject(ob)
 	
 	if smd.jobType == ANIM: # animation
 		action = smd.a.animation_data.action
@@ -3070,7 +3100,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bench("frame {}".format(frame+1))
 	
 	benchReset()
-	dm.write(filepath,"binary",5)
+	dm.write(filepath,"binary",DatamodelEncodingVersion())
 	bench("Writing")
 	
 	print("DMX export took",time.time() - start)
@@ -3340,12 +3370,12 @@ class SMD_PT_Scene(bpy.types.Panel):
 		if scene.smd_studiomdl_branch == 'CUSTOM':
 			l.prop(scene,"smd_studiomdl_custom_path",text="Studiomdl path")
 			row = l.row(align=True)
-			row.prop(scene,"smd_studiomdl_custom_path_dmx_encoding",text="DMX encoding",slider=False)
-			row.prop(scene,"smd_studiomdl_custom_path_dmx_format",text="DMX format",slider=False)
+			row.prop(scene,"smd_studiomdl_custom_path_dmx_encoding",text="DMX binary",slider=False)
+			row.prop(scene,"smd_studiomdl_custom_path_dmx_format",text="Model format",slider=False)
 		row = l.row().split(0.33)
 		row.label(text="Output Format:")
 		row.row().prop(scene,"smd_format",text="Format",expand=True)
-		row.enabled = dmx_versions[scene.smd_studiomdl_branch][0] > 0
+		row.enabled = canExportDMX(scene)
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
@@ -3575,6 +3605,9 @@ class SmdExporter(bpy.types.Operator):
 		if props.exportMode == 'NONE':
 			self.report({'ERROR'},"Programmer error: bpy.ops.{} called without exportMode".format(SmdExporter.bl_idname))
 			return {'CANCELLED'}
+			
+		if context.scene.smd_format == 'DMX':
+			datamodel.check_support("binary",DatamodelEncodingVersion())
 
 		# Handle export root path
 		if len(props.directory):

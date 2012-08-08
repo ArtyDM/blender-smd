@@ -1,5 +1,12 @@
 import uuid, struct, array
 
+def check_support(encoding,encoding_ver):
+	if encoding == 'binary':
+		if encoding_ver not in [5]:
+			raise ValueError("Version {} of binary DMX is not supported".format(encoding_ver))
+	else:
+		raise ValueError("DMX encoding \"{}\" is not supported".format(encoding))
+
 def _get_string(datamodel,string,use_str_dict = True):
 	dict_index = -1
 	if use_str_dict:
@@ -176,10 +183,10 @@ _dmxtypes = [Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector
 _dmxtypes_array = [_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray]
 
 def _get_array_type(single_type):
-	if single_type in _dmxtypes_array: raise ArgumentException("Argument is already an array type")
+	if single_type in _dmxtypes_array: raise ValueError("Argument is already an array type")
 	return _dmxtypes_array[ _dmxtypes.index(single_type) ]
 def _get_single_type(array_type):
-	if array_type in _dmxtypes: raise ArgumentException("Argument is already a single type")
+	if array_type in _dmxtypes: raise ValueError("Argument is already a single type")
 	return _dmxtypes[ _dmxtypes_array.index(array_type) ]
 
 def _get_dmx_type_id(encoding,version,type):
@@ -222,7 +229,7 @@ class DataModel:
 		
 	def remove_element(self,element):
 		del self.elements[element]
-		
+	
 	def _write(self,value, elem = None, use_str_dict = True):
 		t = type(value)
 		if t == bytes:
@@ -299,6 +306,8 @@ class DataModel:
 						self._build_str_dict(i)
 		
 	def write(self,path,encoding,encoding_ver):
+		check_support(encoding, encoding_ver)
+		
 		self.out = open(path,'wb')
 		self.encoding = encoding
 		self.encoding_ver = encoding_ver
