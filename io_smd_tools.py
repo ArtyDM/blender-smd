@@ -1741,6 +1741,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			elif block_name == "FACE":
 				mat_info = get_name().replace("\\","/").rsplit("/",1)
 				mat_name = mat_info[-1]
+				bpy.context.scene.smd_material_path = mat_info[0]
 				mat, mat_ind = getMeshMaterial(mat_name)
 		
 				if len(mat_info) == 2:
@@ -2647,6 +2648,7 @@ def bakeObj(in_object):
 								smd.a = con.target
 					for mod in obj.modifiers:
 						if mod.type == 'ARMATURE' and mod.object:
+							mod.show_viewport = False
 							if (smd.a and mod.object != smd.a) or baked['bp']:
 								if not envelope_described:
 									msg = " - Enveloped to {} \"{}\""
@@ -2660,7 +2662,7 @@ def bakeObj(in_object):
 								else:
 									dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
 									baked['amod'] = dupe_amod
-									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group', 'show_viewport']
+									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group' ]
 									for prop in props:
 										exec ("dupe_amod.{0} = mod.{0}".format(prop))
 		
@@ -2779,16 +2781,27 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	start = time.time()
 	print("-",filepath)
 	benchReset()
+	global log
+	
+	def makeTransform(name,matrix):
+		trfm = dm.add_element(name,"DmeTransform")
+		pos = matrix.to_translation()
+		rot = matrix.to_quaternion()
+		
+		if pos != Vector([0,0,0]): trfm.add_attribute("position",datamodel.Vector3(pos))
+		if rot != Quaternion([1,0,0,0]): trfm.add_attribute("orientation",getDatamodelQuat(rot))
+		return trfm
 	
 	dm = datamodel.DataModel("model",DatamodelFormatVersion())
 	root = dm.add_element("root")	
 	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel")
-	DmeModel_children = DmeModel.add_property("children",[],datamodel.Element)
+	DmeModel.add_attribute("transform", makeTransform("upaxis",getUpAxisMat(bpy.context.scene.smd_up_axis)) )
+	DmeModel_children = DmeModel.add_attribute("children",[],datamodel.Element)
 	
 	if smd.jobType in [REF,ANIM]: # skeleton
-		root.add_property("skeleton",DmeModel)		
-		jointList = DmeModel.add_property("jointList",[],datamodel.Element)
-		jointTransforms = DmeModel.add_property("jointTransforms",[],datamodel.Element)
+		root.add_attribute("skeleton",DmeModel)		
+		jointList = DmeModel.add_attribute("jointList",[],datamodel.Element)
+		jointTransforms = DmeModel.add_attribute("jointTransforms",[],datamodel.Element)
 		bone_names = []
 		bone_transforms = {}
 		
@@ -2797,18 +2810,15 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			jointList.value.append(bone_elem)
 			bone_names.append(bone.name)
 			
-			trfm = dm.add_element(bone.name,"DmeTransform")
+			if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
+			else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
+			
+			trfm = makeTransform(bone.name,relMat)
 			jointTransforms.value.append(trfm)
 			bone_transforms[bone] = trfm
+			bone_elem.add_attribute("transform",trfm)
 			
-			if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-			else: relMat = bone.matrix
-			
-			trfm.add_property("position",datamodel.Vector3(relMat.to_translation()))
-			trfm.add_property("orientation",getDatamodelQuat(relMat.to_quaternion()))			
-			bone_elem.add_property("transform",trfm)
-			
-			children = bone_elem.add_property("children",[],datamodel.Element)
+			children = bone_elem.add_attribute("children",[],datamodel.Element)
 			for child in bone.children:
 				children.value.append( writeBone(child) )
 			
@@ -2827,7 +2837,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		bench("skeleton")
 		
 	if smd.jobType == REF: # mesh
-		root.add_property("model",DmeModel)
+		root.add_attribute("model",DmeModel)
 		
 		materials = {}
 		dags = []
@@ -2837,20 +2847,18 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			vertex_data = dm.add_element("bind","DmeVertexData")
 			
 			DmeMesh = dm.add_element(ob['src_name'],"DmeMesh")
-			DmeMesh.add_property("visible",True)			
-			DmeMesh.add_property("bindState",vertex_data)
-			DmeMesh.add_property("currentState",vertex_data)
-			DmeMesh.add_property("baseStates",[vertex_data],datamodel.Element)
+			DmeMesh.add_attribute("visible",True)			
+			DmeMesh.add_attribute("bindState",vertex_data)
+			DmeMesh.add_attribute("currentState",vertex_data)
+			DmeMesh.add_attribute("baseStates",[vertex_data],datamodel.Element)
 			
-			trfm = dm.add_element(ob['src_name'],"DmeTransform")
+			trfm = makeTransform(ob['src_name'],ob.matrix_world)
 			jointTransforms.value.append(trfm)
-			trfm.add_property("position",datamodel.Vector3(list(ob.location)))
-			trfm.add_property("orientation",getDatamodelQuat(ob.matrix_world.to_quaternion()))
 			
 			DmeDag = dm.add_element(ob['src_name'],"DmeDag")
 			jointList.value.append(DmeDag)
-			DmeDag.add_property("transform",trfm)
-			DmeDag.add_property("shape",DmeMesh)
+			DmeDag.add_attribute("transform",trfm)
+			DmeDag.add_attribute("shape",DmeMesh)
 			dags.append(DmeDag)
 			
 			jointCount = 0
@@ -2863,9 +2871,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			
 			format = [ "positions", "normals", "textureCoordinates" ]
 			if jointCount: format.extend( [ "jointWeights", "jointIndices" ] )
-			vertex_data.add_property("vertexFormat", format, str)
+			vertex_data.add_attribute("vertexFormat", format, str)
 			
-			vertex_data.add_property("flipVCoordinates",True)
+			vertex_data.add_attribute("flipVCoordinates",True)
 			
 			pos = []
 			posIndices = []
@@ -2897,7 +2905,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					jointWeights.extend(weights)
 					jointIndices.extend(indices)
 				
-			vertex_data.add_property("jointCount",jointCount)
+			vertex_data.add_attribute("jointCount",jointCount)
 			bench("verts")
 			for poly in ob.data.polygons:
 				i=0
@@ -2916,46 +2924,56 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					
 					i+=1
 			bench("polys")
-			vertex_data.add_property("positions",pos,datamodel.Vector3)
-			vertex_data.add_property("positionsIndices",posIndices,int)
+			vertex_data.add_attribute("positions",pos,datamodel.Vector3)
+			vertex_data.add_attribute("positionsIndices",posIndices,int)
 			
-			vertex_data.add_property("normals",norms,datamodel.Vector3)
-			vertex_data.add_property("normalsIndices",normIndices,int)
+			vertex_data.add_attribute("normals",norms,datamodel.Vector3)
+			vertex_data.add_attribute("normalsIndices",normIndices,int)
 			
-			vertex_data.add_property("textureCoordinates",texco,datamodel.Vector2)
-			vertex_data.add_property("textureCoordinatesIndices",texcoIndices,int)
+			vertex_data.add_attribute("textureCoordinates",texco,datamodel.Vector2)
+			vertex_data.add_attribute("textureCoordinatesIndices",texcoIndices,int)
 			
 			if jointCount:
-				vertex_data.add_property("jointWeights",jointWeights,float)
-				vertex_data.add_property("jointIndices",jointIndices,int)
+				vertex_data.add_attribute("jointWeights",jointWeights,float)
+				vertex_data.add_attribute("jointIndices",jointIndices,int)
 			
-			#vertex_data.add_property("balance",[0.0] * len(posIndices),float)
-			#vertex_data.add_property("balanceIndices",[0] * len(posIndices),int)
+			#vertex_data.add_attribute("balance",[0.0] * len(posIndices),float)
+			#vertex_data.add_attribute("balanceIndices",[0] * len(posIndices),int)
 			bench("insert")
-			face_sets = []
-			for material_index in range(len(ob.material_slots)):
-				material = ob.material_slots[material_index].material
-				faces = []
-				vert_offset = 0
-				for poly in ob.data.polygons:
-					if poly.material_index == material_index:
-						for vert_index in poly.vertices:
-							faces.append( vert_offset )
-							vert_offset+=1
-						faces.append(-1)
-					else:
-						vert_offset += len(poly.vertices)
-				faceSet = dm.add_element(material.name,"DmeFaceSet")	
-				face_sets.append(faceSet)
-				faceSet.add_property("faces",faces,int)
+			face_sets = {}
+			bad_face_mats = 0
+			vert_index = 0
+			for poly in ob.data.polygons:
+				mat_name = None
+				if not bpy.context.scene.smd_use_image_names:
+					try: mat_name = ob.material_slots[poly.material_index].material.name
+					except: pass
+				if not mat_name and smd.m.data.uv_textures.active:
+					try: mat_name = getFilename(smd.m.data.uv_textures.active.data[poly.index].image.filepath)
+					except: pass					
+				if not mat_name:
+					mat_name = "Material"
+					bad_face_mats += 1
+					
+				if not face_sets.get(mat_name):
+					material_elem = dm.add_element(mat_name,"DmeMaterial")
+					material_elem.add_attribute("mtlName",bpy.context.scene.smd_material_path + mat_name)
+					
+					faceSet = dm.add_element(mat_name,"DmeFaceSet")
+					faceSet.add_attribute("material",material_elem)
+					faceSet.add_attribute("faces",[],int)
+					
+					face_sets[mat_name] = faceSet
 				
-				if not materials.get(material):
-					material_elem = dm.add_element(material.name,"DmeMaterial")
-					materials[material] = material_elem
-					material_elem.add_property("mtlName",bpy.context.scene.smd_material_path + material.name)	
-				faceSet.add_property("material",materials[material])
+				face_list = face_sets[mat_name].get_attribute("faces").value
+				for vert in poly.vertices:
+					face_list.append(vert_index)
+					vert_index += 1
+				face_list.append(-1)
 			
-			DmeMesh.add_property("faceSets",face_sets,datamodel.Element)
+			DmeMesh.add_attribute("faceSets",list(face_sets.values()),datamodel.Element)
+			if bad_face_mats:
+				log.warning("{} faces on {} did not have a texture{} assigned".format(bad_face_mats,ob['src_name'],"" if bpy.context.scene.smd_use_image_names else " or material"))
 			bench("faces")
 			
 			# shapes
@@ -2968,10 +2986,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeCombinationInputControl = dm.add_element(shape['shape_name'],"DmeCombinationInputControl")
 					control_elems.append(DmeCombinationInputControl)
 					
-					DmeCombinationInputControl.add_property("rawControlNames",[shape['shape_name']],str)
-					DmeCombinationInputControl.add_property("stereo",False)
-					DmeCombinationInputControl.add_property("eyelid",False)
-					DmeCombinationInputControl.add_property("wrinkleScales",[0.0],float)
+					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
+					DmeCombinationInputControl.add_attribute("stereo",False)
+					DmeCombinationInputControl.add_attribute("eyelid",False)
+					DmeCombinationInputControl.add_attribute("wrinkleScales",[0.0],float)
 					
 					control_values.append(datamodel.Vector3([0.0,0.0,0.5]))
 					delta_state_weights.append(datamodel.Vector2([0.0,0.0]))
@@ -2979,15 +2997,15 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
 					
-					DmeVertexDeltaData.add_property("vertexFormat",[
+					DmeVertexDeltaData.add_attribute("vertexFormat",[
 						"positions",
 						"normals"
 						]
 					,str) # "wrinkle"
 					
-					DmeVertexDeltaData.add_property("jointCount",0)
-					DmeVertexDeltaData.add_property("flipVCoordinates",True)
-					DmeVertexDeltaData.add_property("corrected",True)
+					DmeVertexDeltaData.add_attribute("jointCount",0)
+					DmeVertexDeltaData.add_attribute("flipVCoordinates",True)
+					DmeVertexDeltaData.add_attribute("corrected",True)
 					
 					shape_pos = []
 					shape_posIndices = []
@@ -3006,35 +3024,37 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 							shape_norms.append(datamodel.Vector3(shape_vert.normal))
 							shape_normIndices.append(i)
 					
-					DmeVertexDeltaData.add_property("positions",shape_pos,datamodel.Vector3)
-					DmeVertexDeltaData.add_property("positionsIndices",shape_posIndices,int)
-					DmeVertexDeltaData.add_property("normals",shape_norms,datamodel.Vector3)
-					DmeVertexDeltaData.add_property("normalsIndices",shape_normIndices,int)
-					#DmeVertexDeltaData.add_property("wrinkle",[],float)
-					#DmeVertexDeltaData.add_property("wrinkleIndices",[],int)
+					DmeVertexDeltaData.add_attribute("positions",shape_pos,datamodel.Vector3)
+					DmeVertexDeltaData.add_attribute("positionsIndices",shape_posIndices,int)
+					DmeVertexDeltaData.add_attribute("normals",shape_norms,datamodel.Vector3)
+					DmeVertexDeltaData.add_attribute("normalsIndices",shape_normIndices,int)
+					#DmeVertexDeltaData.add_attribute("wrinkle",[],float)
+					#DmeVertexDeltaData.add_attribute("wrinkleIndices",[],int)
 					
 					removeObject(shape)
 					
-				DmeMesh.add_property("deltaStates",shape_elems,datamodel.Element)
-				DmeMesh.add_property("deltaStateWeights",delta_state_weights,datamodel.Vector2)
-				DmeMesh.add_property("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
+				DmeMesh.add_attribute("deltaStates",shape_elems,datamodel.Element)
+				DmeMesh.add_attribute("deltaStateWeights",delta_state_weights,datamodel.Vector2)
+				DmeMesh.add_attribute("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
 				
 				DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
-				DmeCombinationOperator.add_property("controls",control_elems,datamodel.Element)
-				DmeCombinationOperator.add_property("controlValues",control_values,datamodel.Vector3)
-				DmeCombinationOperator.add_property("controlValuesLagged",control_values,datamodel.Vector3)
-				DmeCombinationOperator.add_property("usesLaggedValues",False)
-				DmeCombinationOperator.add_property("dominators",[],datamodel.Element)				
-				DmeCombinationOperator.add_property("targets",[DmeMesh],datamodel.Element)
-				root.add_property("combinationOperator",DmeCombinationOperator)				
+				DmeCombinationOperator.add_attribute("controls",control_elems,datamodel.Element)
+				DmeCombinationOperator.add_attribute("controlValues",control_values,datamodel.Vector3)
+				DmeCombinationOperator.add_attribute("controlValuesLagged",control_values,datamodel.Vector3)
+				DmeCombinationOperator.add_attribute("usesLaggedValues",False)
+				DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)				
+				DmeCombinationOperator.add_attribute("targets",[DmeMesh],datamodel.Element)
+				root.add_attribute("combinationOperator",DmeCombinationOperator)				
 				
 				bench("shapes")			
 		
+			removeObject(ob)
+		
 		DmeModel_children.value.extend(dags)
-		removeObject(ob)
 	
 	if smd.jobType == ANIM: # animation
 		action = smd.a.animation_data.action
+		
 		if ('fps') in dir(action):
 			fps = bpy.context.scene.render.fps = action.fps
 			bpy.context.scene.render.fps_base = 1
@@ -3043,16 +3063,16 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		
 		DmeChannelsClip = dm.add_element(action.name,"DmeChannelsClip")		
 		DmeAnimationList = dm.add_element(smd.a.name,"DmeAnimationList")
-		DmeAnimationList.add_property("animations",[DmeChannelsClip],datamodel.Element)
-		root.add_property("animationList",DmeAnimationList)
+		DmeAnimationList.add_attribute("animations",[DmeChannelsClip],datamodel.Element)
+		root.add_attribute("animationList",DmeAnimationList)
 		
 		DmeTimeFrame = dm.add_element("timeframe","DmeTimeFrame")
-		DmeTimeFrame.add_property("duration",datamodel.Time(action.frame_range[1] / fps))
-		DmeTimeFrame.add_property("scale",1.0)
-		DmeChannelsClip.add_property("timeFrame",DmeTimeFrame)
-		DmeChannelsClip.add_property("frameRate",int(fps))
+		DmeTimeFrame.add_attribute("duration",datamodel.Time(action.frame_range[1] / fps))
+		DmeTimeFrame.add_attribute("scale",1.0)
+		DmeChannelsClip.add_attribute("timeFrame",DmeTimeFrame)
+		DmeChannelsClip.add_attribute("frameRate",int(fps))
 		
-		channels = DmeChannelsClip.add_property("channels",[],datamodel.Element).value
+		channels = DmeChannelsClip.add_attribute("channels",[],datamodel.Element).value
 		bone_channels = {}
 		for bone in smd.a.pose.bones:
 			bone_channels[bone] = []
@@ -3062,12 +3082,12 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			]
 			for template in channel_template:
 				cur = dm.add_element(bone.name + template[0],"DmeChannel")
-				cur.add_property("toAttribute",template[1])
-				cur.add_property("toElement",bone_transforms[bone])
-				cur.add_property("mode",1)
-				log = cur.add_property("log",dm.add_element(template[2]+" log","Dme"+template[2]+"Log")).value.add_property("layers",[dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer")],datamodel.Element).value[0]
-				log.add_property("times",[],datamodel.Time)
-				log.add_property("values",[],template[3])
+				cur.add_attribute("toAttribute",template[1])
+				cur.add_attribute("toElement",bone_transforms[bone])
+				cur.add_attribute("mode",1)
+				log = cur.add_attribute("log",dm.add_element(template[2]+" log","Dme"+template[2]+"Log")).value.add_attribute("layers",[dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer")],datamodel.Element).value[0]
+				log.add_attribute("times",[],datamodel.Time)
+				log.add_attribute("values",[],template[3])
 				bone_channels[bone].append(log)
 				channels.append(cur)
 		
@@ -3082,19 +3102,19 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			keyframe_time = datamodel.Time(frame / fps)
 			for bone in smd.a.pose.bones:
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-				else: relMat = bone.matrix
+				else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
 				
 				pos = relMat.to_translation()
 				if not prev_pos.get(bone) or pos - prev_pos[bone] > epsilon:
-					bone_channels[bone][0].get_property("times").value.append(keyframe_time)
-					bone_channels[bone][0].get_property("values").value.append(datamodel.Vector3(pos))
+					bone_channels[bone][0].get_attribute("times").value.append(keyframe_time)
+					bone_channels[bone][0].get_attribute("values").value.append(datamodel.Vector3(pos))
 				prev_pos[bone] = pos
 				
 				rot = relMat.to_quaternion()
 				rot_vec = Vector(rot.to_euler())
 				if not prev_rot.get(bone) or rot_vec - prev_rot[bone] > epsilon:
-					bone_channels[bone][1].get_property("times").value.append(keyframe_time)
-					bone_channels[bone][1].get_property("values").value.append(getDatamodelQuat(rot))
+					bone_channels[bone][1].get_attribute("times").value.append(keyframe_time)
+					bone_channels[bone][1].get_attribute("values").value.append(getDatamodelQuat(rot))
 				prev_rot[bone] = rot_vec
 				
 			bench("frame {}".format(frame+1))
@@ -3647,6 +3667,8 @@ class SmdExporter(bpy.types.Operator):
 
 		print("\nSMD EXPORTER RUNNING")
 
+		self.validObs = getValidObs()
+		
 		# lots of operators only work on visible objects
 		for object in bpy.context.scene.objects:
 			object.hide = False
@@ -3738,14 +3760,13 @@ class SmdExporter(bpy.types.Operator):
 	def exportObject(self,context,object,flex=False,groupIndex=-1):
 		props = self.properties
 
-		validObs = getValidObs()
 		if groupIndex == -1:
-			if not object in validObs:
+			if not object in self.validObs:
 				return
 		else:
-			if len(set(validObs).intersection( set(object.users_group[groupIndex].objects) )) == 0:
+			if len(set(self.validObs).intersection( set(object.users_group[groupIndex].objects) )) == 0:
 				return
-
+				
 		# handle subfolder
 		if len(object.smd_subdir) == 0 and object.type == 'ARMATURE':
 			object.smd_subdir = "anims"
