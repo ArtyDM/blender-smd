@@ -118,7 +118,7 @@ class _TimeArray(_Array):
 			out += item.tobytes()
 		return out
 
-class Property:	
+class Attribute:	
 	value = None
 	
 	def __init__(self,name,value):
@@ -128,7 +128,7 @@ class Property:
 		self.value = value
 		
 	def __repr__(self):
-		return "<Datamodel property {}[{}]>".format(type(self.value),self.name)
+		return "<Datamodel Attribute {}[{}]>".format(type(self.value),self.name)
 	
 	def typeid(self,encoding,version):
 		return _get_dmx_type_id(encoding,version,type(self.value))
@@ -146,15 +146,15 @@ class Element:
 		self.id = id if id else uuid.uuid4()
 		
 		self.properties = {}
-		self.property_order = []
+		self.attribute_order = []
 		
 	def __repr__(self):
 		return "<Datamodel element {}[{}]>".format(self.type,self.name)
 		
-	def add_property(self,name,value,prop_type = None):
+	def add_attribute(self,name,value,prop_type = None):
 		t = type(value)
 		if self.properties.get(name):
-			raise ValueError("Property \"{}\" already exists".format(name))
+			raise ValueError("Attribute \"{}\" already exists".format(name))
 		if t in _array_types and not prop_type:
 			raise ValueError("A datamodel type must be specified for arrays")
 		if t not in _dmxtypes and t not in _array_types:
@@ -162,13 +162,13 @@ class Element:
 		if t in _array_types:
 			prop_type = _get_array_type(prop_type)
 			value = prop_type(value)
-		prop = Property(name,value)
+		prop = Attribute(name,value)
 		self.properties[name] = prop
-		self.property_order.append(name)
+		self.attribute_order.append(name)
 		
 		return prop
 		
-	def get_property(self,name):
+	def get_attribute(self,name):
 		return self.properties[name]
 
 class _ElementArray(_Array):
@@ -190,15 +190,25 @@ def _get_single_type(array_type):
 	return _dmxtypes[ _dmxtypes_array.index(array_type) ]
 
 def _get_dmx_type_id(encoding,version,type):
-	if encoding == "binary":
-		if version in [5]:
-			return [
+	attr_list_v1 = [
+				None,Element,int,float,bool,str,Binary,"ObjectID",Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
+				_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,"_ObjectIDArray",_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray
+			] # ObjectID is an element UUID
+	attr_list_v2 = [
 				None,Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
 				_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray
-			].index(type)
-	if encoding == "keyvalues2":
+			]
+	
+	if encoding == "binary":
+		if version in [2]:
+			return attr_list_v1.index(type)
 		if version in [5]:
-			pass
+			return attr_list_v2.index(type)
+	if encoding == "keyvalues2":
+		if version == 1:
+			return attr_list_v1.index(type)
+		if version in [2]:
+			return attr_list_v2.index(type)
 				
 	raise ValueError("Type {} not supported in {} {}".format(type,encoding,version))
 
@@ -232,7 +242,8 @@ class DataModel:
 	
 	def _write(self,value, elem = None, use_str_dict = True):
 		t = type(value)
-		if t == bytes:
+		
+		if t in [bytes,Binary]:
 			self.out.write(value)
 		
 		elif t == uuid.UUID:
@@ -262,7 +273,7 @@ class DataModel:
 		
 		self.elem_chain.append(elem)
 		
-		for name in elem.property_order:
+		for name in elem.attribute_order:
 			prop = elem.properties[name]
 			t = type(prop.value)
 			if t == Element and prop.value not in self.elem_chain:
@@ -275,7 +286,7 @@ class DataModel:
 	def _write_element_props(self):
 		for elem in self.elem_chain:
 			self._write(len(elem.properties))
-			for prop_name in elem.property_order:
+			for prop_name in elem.attribute_order:
 				prop = elem.properties[prop_name]
 				self._write(prop_name)
 				self._write(struct.pack("b", prop.typeid(self.encoding,self.encoding_ver) ))
@@ -292,7 +303,7 @@ class DataModel:
 		self.str_dict.add(elem.name)
 		self.str_dict_checked.append(elem)
 		self.str_dict.add(elem.type)
-		for name in elem.property_order:
+		for name in elem.attribute_order:
 			prop = elem.properties[name]
 			self.str_dict.add(name)
 			if type(prop.value) == str:
@@ -332,7 +343,7 @@ class DataModel:
 		out_elems = set()
 		def _count_child_elems(elem):
 			out_elems.add(elem)
-			for name in elem.property_order:
+			for name in elem.attribute_order:
 				prop = elem.properties[name]
 				t = type(prop.value)
 				if t == Element and prop.value not in out_elems:
