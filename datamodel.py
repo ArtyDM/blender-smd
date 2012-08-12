@@ -1,4 +1,4 @@
-import uuid, struct, array
+import struct, array
 
 def check_support(encoding,encoding_ver):
 	if encoding == 'binary':
@@ -138,11 +138,15 @@ class Element:
 	properties = {}
 	
 	def __init__(self,name,elemtype="DmElement",id=None):
+		# Blender bug: importing uuid causes a runtime exception. The return value is not affected, thankfully.
+		# http://projects.blender.org/tracker/index.php?func=detail&aid=28732&group_id=9&atid=498
+		import uuid
+		
 		if type(name) != str or type(elemtype) != str or (id and type(id) != uuid.UUID):
 			raise TypeError("Expected str, [str, uuid.UUID]")
 			
 		self.name = name
-		self.type = elemtype		
+		self.type = elemtype
 		self.id = id if id else uuid.uuid4()
 		
 		self.properties = {}
@@ -241,6 +245,7 @@ class DataModel:
 		del self.elements[element]
 	
 	def _write(self,value, elem = None, use_str_dict = True):
+		import uuid
 		t = type(value)
 		
 		if t in [bytes,Binary]:
