@@ -51,6 +51,8 @@ rz90n = Matrix.Rotation(radians(-90),4,'Z')
 
 mat_BlenderToSMD = ry90 * rz90 # for legacy support only
 
+epsilon = Vector([0.0001] * 3)
+
 # SMD types
 REF = 0x1 # $body, $model, $bodygroup->studio (if before a $body or $model)
 REF_ADD = 0x2 # $bodygroup, $lod->replacemodel
@@ -1248,7 +1250,7 @@ def readShapes():
 			if making_base_shape:
 				smd.m.shape_key_add("Basis")
 			else:
-				smd.m.shape_key_add("Unnamed")
+				smd.m.shape_key_add(str(values[1]))
 				num_shapes += 1
 
 			continue # to the first vertex of the new shape
@@ -1443,7 +1445,8 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 		if line[0] in ["flex","flexpair"]: # "flex" is safe because it cannot come before "flexfile"
 			for i in range(1,len(line)):
 				if line[i] == "frame":
-					qc.ref_mesh.data.shape_keys.key_blocks[int(line[i+1])].name = line[1]
+					shape = qc.ref_mesh.data.shape_keys.key_blocks.get(line[i+1])
+					if shape: shape.name = line[1]
 					break
 			continue
 
@@ -2435,7 +2438,7 @@ def writePolys(internal=False):
 	return
 
 # vertexanimation block
-def writeShapes(cur_shape = 0):
+def writeShapes():
 	num_verts = 0
 
 	def _writeTime(time, shape = None):
@@ -2450,14 +2453,13 @@ def writeShapes(cur_shape = 0):
 
 	smd.file.write("vertexanimation\n")
 	
-	cur_shape = 0
 	vert_offset = 0
 	total_verts = 0
 	smd.m = smd.bakeInfo[0]
 	
-	for i in range(len(smd.bakeInfo)):
-		_writeTime(i)
-		shape = smd.bakeInfo[i]
+	for cur_shape in range(len(smd.bakeInfo)):
+		_writeTime(cur_shape)
+		shape = smd.bakeInfo[cur_shape]
 		start_time = time.time()
 		num_bad_verts = 0
 		smd_vert_id = 0
@@ -2468,11 +2470,11 @@ def writeShapes(cur_shape = 0):
 				if cur_shape != 0:
 					diff_vec = shape_vert.co - mesh_vert.co
 					for ordinate in diff_vec:
-						if not bad_vert and ordinate > 8:
+						if ordinate > 8:
 							num_bad_verts += 1
 							break
 
-				if cur_shape == 0 or (shape_vert.co != mesh_vert.co or shape_vert.normal != mesh_vert.normal):
+				if cur_shape == 0 or (diff_vec > epsilon or shape_vert.normal - mesh_vert.normal > epsilon):
 					cos = norms = ""
 					for i in range(3):
 						cos += " " + getSmdFloat(shape_vert.co[i])
@@ -2891,6 +2893,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			for vert in ob.data.vertices:				
 				pos.append(datamodel.Vector3(vert.co))
 				norms.append(datamodel.Vector3(vert.normal))
+				vert.select = False
 				
 				if jointCount:
 					weights = [0.0] * jointCount
@@ -2915,7 +2918,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					posIndices.append(vert_index)
 					normIndices.append(vert_index)
 					
-					uv = datamodel.Vector2(uv_layer[poly.loop_start + i].uv)
+					uv = datamodel.Vector2(uv_layer[poly.loop_start + i].uv)					
 					try:
 						texcoIndices.append(texco.index(uv))
 					except ValueError:
@@ -3085,15 +3088,14 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				cur.add_attribute("toAttribute",template[1])
 				cur.add_attribute("toElement",bone_transforms[bone])
 				cur.add_attribute("mode",1)
-				log = cur.add_attribute("log",dm.add_element(template[2]+" log","Dme"+template[2]+"Log")).value.add_attribute("layers",[dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer")],datamodel.Element).value[0]
-				log.add_attribute("times",[],datamodel.Time)
-				log.add_attribute("values",[],template[3])
-				bone_channels[bone].append(log)
+				val_arr = cur.add_attribute("log",dm.add_element(template[2]+" log","Dme"+template[2]+"Log")).value.add_attribute("layers",[dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer")],datamodel.Element).value[0]
+				val_arr.add_attribute("times",[],datamodel.Time)
+				val_arr.add_attribute("values",[],template[3])
+				bone_channels[bone].append(val_arr)
 				channels.append(cur)
 		
 		num_frames = int(action.frame_range[1] + 1)
 		bench("Animation setup")
-		epsilon = Vector([0.0001] * 3)
 		prev_pos = {}
 		prev_rot = {}
 		
