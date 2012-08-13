@@ -1,4 +1,21 @@
 #labels Featured
+== SMD Tools 1.4 - August 13th, 2012 ==
+
+A problem with official builds of Blender leads to a "runtime error" the first time you export a DMX file. The error is harmless and can be ignored.
+
+Importer:
+
+  * Fixed QC flex name import when flex frames weren't sequential (HL2 citizen SDK sample)
+
+Exporter:
+
+  * Added DMX export for mesh, flex, and animation
+  ** DMX Model is NOT required for export
+  ** No support for any DMX-specific features yet
+  ** Portal 2 and Source Filmmaker only for now
+  ** Due to a Blender bug, you will receive a harmless runtime error the first time you export a DMX file
+  * Optimised the export process in general
+
 == SMD Tools 1.3.1 - August 1st, 2012 ==
 
 Exporter:
