@@ -1,7 +1,7 @@
 #labels Featured
 == SMD Tools 1.4 - August 13th, 2012 ==
 
-A problem with official builds of Blender leads to a "runtime error" the first time you export a DMX file. The error is harmless and can be ignored.
+A problem with official builds of Blender leads to a "runtime error" the first time you export a DMX file. The error is harmless and can be ignored. See issue 43.
 
 Importer:
 
