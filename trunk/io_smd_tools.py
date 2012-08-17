@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 4, 0),
+	"version": (1, 4, 1),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2032,6 +2032,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				if not findArmature():
 					smd.append = False
 				ob = smd.a = createArmature(mdl_name)
+				smd.a.data.smd_implicit_zero_bone = False # Too easy to break compatibility, plus the skeleton is probably set up already
 				if not smd_manager.a: smd_manager.a = ob
 				bpy.context.scene.objects.active = smd.a
 				bpy.ops.object.mode_set(mode='EDIT')
@@ -2287,6 +2288,42 @@ def writeFrames():
 	
 	print("- Exported {} frames{}".format(num_frames," (legacy rotation)" if smd.a.data.smd_legacy_rotation else ""))
 	return
+	
+def getWeightmap(ob):
+	out = []
+	if not smd.amod: return out
+	
+	def boneIndex(name):
+		if smd.isDMX: return bone_list.index(name)
+		else: return 
+		
+	for v in ob.data.vertices:
+		weights = []
+		if smd.amod.use_vertex_groups:
+			for j in range(len(v.groups)):
+				group_index = v.groups[j].group
+				if group_index < len(ob.vertex_groups):
+					# Vertex group might not exist on object if it's re-using a datablock
+					group_name = ob.vertex_groups[group_index].name
+					group_weight = v.groups[j].weight
+				else:
+					continue
+
+				if group_name == smd.amod.vertex_group:
+					am_vertex_group_weight = group_weight
+
+				bone = smd.amod.object.data.bones.get(group_name)
+				if bone and bone.use_deform:
+					weights.append([ smd.boneNameToID[bone.name], group_weight ])
+
+		if smd.amod.use_bone_envelopes: # vertex groups completely override envelopes
+			for pose_bone in smd.amod.object.pose.bones:
+				if not pose_bone.bone.use_deform:
+					continue
+				weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( ob.matrix_world * v.co )
+				if weight: weights.append([ smd.boneNameToID[pose_bone.name], weight ])
+		out.append(weights)
+	return out
 
 # triangles block
 def writePolys(internal=False):
@@ -2308,7 +2345,6 @@ def writePolys(internal=False):
 			if baked.type == 'MESH':
 				# write out each object in turn. Joining them would destroy unique armature modifier settings
 				smd.m = baked
-				smd.amod = baked.get('amod')
 				if len(smd.m.data.polygons) == 0:
 					log.error("Object {} has no faces, cannot export".format(smd.jobName))
 					continue
@@ -2336,6 +2372,8 @@ def writePolys(internal=False):
 
 	uv_loop = md.uv_layers.active.data
 	uv_tex = md.uv_textures.active.data
+	
+	weights = getWeightmap(smd.m)
 	
 	bad_face_mats = 0
 	for poly in md.polygons:
@@ -2372,40 +2410,14 @@ def writePolys(internal=False):
 				uv += " " + getSmdFloat(uv_loop[poly.loop_start + i].uv[j])
 
 			# Weightmaps
-			weights = []
 			if ob_weight_str:
 				weight_string = ob_weight_str
 			elif smd.amod:
 				am_vertex_group_weight = 0
-
-				if smd.amod.use_vertex_groups:
-					for j in range(len(v.groups)):
-						group_index = v.groups[j].group
-						if group_index < len(smd.m.vertex_groups):
-							# Vertex group might not exist on object if it's re-using a datablock
-							group_name = smd.m.vertex_groups[group_index].name
-							group_weight = v.groups[j].weight
-						else:
-							continue
-
-						if group_name == smd.amod.vertex_group:
-							am_vertex_group_weight = group_weight
-
-						bone = smd.amod.object.data.bones.get(group_name)
-						if bone and bone.use_deform:
-							weights.append([smd.boneNameToID[bone.name], group_weight])
-
-				if smd.amod.use_bone_envelopes and not weights: # vertex groups completely override envelopes
-					for pose_bone in smd.amod.object.pose.bones:
-						if not pose_bone.bone.use_deform:
-							continue
-						weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( v.co * smd.m.matrix_world )
-						if weight:
-							weights.append([smd.boneNameToID[pose_bone.name], weight])
-					
+			
 			total_weight = 0
 			if smd.amod:
-				for link in weights:
+				for link in weights[i]:
 					total_weight += link[1]
 
 			if not smd.amod or total_weight == 0:
@@ -2414,11 +2426,11 @@ def writePolys(internal=False):
 				# all verts will be 100% attached to it. To transform only some verts you need a second bone that stays put.
 			else:
 				# Shares out unused weight between extant bones, like Blender does, otherwise Studiomdl puts it onto the root		
-				for link in weights:
+				for link in weights[i]:
 					link[1] *= 1/total_weight # This also handles weights totalling more than 100%
 
-				weight_string = " " + str(len(weights))
-				for link in weights: # one link on one vertex
+				weight_string = " " + str(len(weights[i]))
+				for link in weights[i]: # one link on one vertex
 					if smd.amod.vertex_group: # strength modifier
 						link[1] *= am_vertex_group_weight
 						if smd.amod.invert_vertex_group:
@@ -2494,6 +2506,12 @@ def writeShapes():
 
 # Creates a mesh with object transformations and modifiers applied
 def bakeObj(in_object):
+	if in_object.library:
+		in_object = in_object.copy()
+		bpy.context.scene.objects.link(in_object)
+	if in_object.data and in_object.data.library:
+		in_object.data = in_object.data.copy()
+	
 	bakes_in = []
 	bakes_out = []
 	for object in bpy.context.selected_objects:
@@ -2502,6 +2520,9 @@ def bakeObj(in_object):
 	bpy.ops.object.mode_set(mode='OBJECT')
 	
 	def _ApplyVisualTransform(obj):
+		if obj.data.users > 1:
+			obj.data = obj.data.copy()
+		
 		top_parent = cur_parent = obj
 		while(cur_parent):
 			if not cur_parent.parent:
@@ -2510,7 +2531,7 @@ def bakeObj(in_object):
 
 		bpy.context.scene.objects.active = obj
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-		obj.location -= top_parent.location # undo location of topmost parent
+		obj.location -= top_parent.location # undo location of topmost parent (potentially the object itself)
 		bpy.ops.object.transform_apply(location=True)	
 
 	if in_object.type == 'ARMATURE':
@@ -2564,6 +2585,9 @@ def bakeObj(in_object):
 		bpy.ops.object.select_all(action="DESELECT")
 		obj.select = True
 		bpy.context.scene.objects.active = obj
+		
+		if obj.type == 'CURVE':
+			obj.data.dimensions = '3D'
 
 		if smd.jobType != FLEX: # we've already messed about with this object during ref export
 			if obj.type == "MESH":
@@ -2575,12 +2599,12 @@ def bakeObj(in_object):
 				if not smd.isDMX:
 					bpy.ops.mesh.quads_convert_to_tris()
 				bpy.ops.object.mode_set(mode='OBJECT')
-		
+			
 			_ApplyVisualTransform(obj)
 			
 			if obj.type != 'ARMATURE': # don't apply transforms to armatures until/unless actions are baked too
 				obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
-				bpy.ops.object.transform_apply(location=True,scale=True,rotation=True)
+				bpy.ops.object.transform_apply(location=not smd.isDMX,scale=True,rotation=not smd.isDMX)
 		
 		# Apply modifiers; need to do this per shape key
 		bpy.ops.object.mode_set(mode='OBJECT')
@@ -2659,14 +2683,15 @@ def bakeObj(in_object):
 								log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
 							else:
 								smd.a = mod.object
-								if obj.type == 'MESH':
-									baked['amod'] = mod
-								else:
-									dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
-									baked['amod'] = dupe_amod
-									props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group' ]
-									for prop in props:
-										exec ("dupe_amod.{0} = mod.{0}".format(prop))
+								smd.amod = mod
+								#if obj.type == 'MESH':
+								#	smd.amod = mod
+								#else:
+								#	dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
+								#	smd.amod = dupe_amod
+								#	props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group' ]
+								#	for prop in props:
+								#		exec ("dupe_amod.{0} = mod.{0}".format(prop))
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
@@ -2790,8 +2815,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		pos = matrix.to_translation()
 		rot = matrix.to_quaternion()
 		
-		if pos != Vector([0,0,0]): trfm.add_attribute("position",datamodel.Vector3(pos))
-		if rot != Quaternion([1,0,0,0]): trfm.add_attribute("orientation",getDatamodelQuat(rot))
+		#if pos != Vector([0,0,0]): trfm.add_attribute("position",datamodel.Vector3(pos))
+		trfm.add_attribute("position",datamodel.Vector3(pos))
+		#if rot != Quaternion([1,0,0,0]): trfm.add_attribute("orientation",getDatamodelQuat(rot))
+		trfm.add_attribute("orientation",getDatamodelQuat(rot))
 		return trfm
 	
 	dm = datamodel.DataModel("model",DatamodelFormatVersion())
@@ -2800,29 +2827,40 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	DmeModel.add_attribute("transform", makeTransform("upaxis",getUpAxisMat(bpy.context.scene.smd_up_axis)) )
 	DmeModel_children = DmeModel.add_attribute("children",[],datamodel.Element)
 	
+	implicit_trfm = None
+	
 	if smd.jobType in [REF,ANIM]: # skeleton
 		root.add_attribute("skeleton",DmeModel)		
 		jointList = DmeModel.add_attribute("jointList",[],datamodel.Element)
 		jointTransforms = DmeModel.add_attribute("jointTransforms",[],datamodel.Element)
-		bone_names = []
 		bone_transforms = {}
 		
 		def writeBone(bone):
-			bone_elem = dm.add_element(bone.name,"DmeJoint")
+			bone_name = bone.name if bone else "blender_implicit"
+			
+			bone_elem = dm.add_element(bone_name,"DmeJoint")
 			jointList.value.append(bone_elem)
-			bone_names.append(bone.name)
+			smd.boneNameToID[bone_name] = len(smd.boneNameToID)
 			
-			if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-			else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
+			relMat = None
+			if bone:
+				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
+				else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
+			else:
+				relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
 			
-			trfm = makeTransform(bone.name,relMat)
+			trfm = makeTransform(bone_name,relMat)
 			jointTransforms.value.append(trfm)
-			bone_transforms[bone] = trfm
+			if bone:
+				bone_transforms[bone] = trfm
+			else:
+				implicit_trfm = trfm
 			bone_elem.add_attribute("transform",trfm)
 			
-			children = bone_elem.add_attribute("children",[],datamodel.Element)
-			for child in bone.children:
-				children.value.append( writeBone(child) )
+			if bone:
+				children = bone_elem.add_attribute("children",[],datamodel.Element)
+				for child in bone.children:
+					children.value.append( writeBone(child) )
 			
 			return bone_elem
 	
@@ -2831,6 +2869,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			for posebone in smd.a.pose.bones:
 				posebone.matrix_basis.identity()
 			bpy.context.scene.update()
+			
+			if smd.a.data.smd_implicit_zero_bone:
+				DmeModel_children.value.append(writeBone(None))
 			
 			for bone in smd.a.pose.bones:
 				if not bone.parent:
@@ -2863,14 +2904,20 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			DmeDag.add_attribute("shape",DmeMesh)
 			dags.append(DmeDag)
 			
-			jointCount = 0
-			for vert in ob.data.vertices:
-				weightlinks = 0
-				for vert_vg in vert.groups:
-					if ob.vertex_groups[vert_vg.group].name in bone_names:
-						weightlinks += 1
-				jointCount = max(jointCount,weightlinks)
+			ob_weights = []
 			
+			jointCount = 0
+			if ob['bp']:
+				jointCount = 1
+				smd.a = ob['bp'].id_data
+			elif smd.amod:
+				ob_weights = getWeightmap(ob)
+				for vert_weight in ob_weights:
+					jointCount = max(jointCount,len(vert_weight))
+			
+			if smd.a.data.smd_implicit_zero_bone:
+				jointCount += 1
+			print(jointCount)
 			format = [ "positions", "normals", "textureCoordinates" ]
 			if jointCount: format.extend( [ "jointWeights", "jointIndices" ] )
 			vertex_data.add_attribute("vertexFormat", format, str)
@@ -2895,16 +2942,24 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				norms.append(datamodel.Vector3(vert.normal))
 				vert.select = False
 				
-				if jointCount:
+				if ob['bp']:
+					jointWeights.extend( 1.0 )
+					jointIndices.extend( smd.boneNameToID[ob['bp'].name] )
+				elif jointCount:
 					weights = [0.0] * jointCount
 					indices = [0] * jointCount
 					i = 0
-					for vert_vg in vert.groups:
-						ob_vg = ob.vertex_groups[vert_vg.group]
-						if ob_vg.name in bone_names:
-							weights[i] = vert_vg.weight
-							indices[i] = bone_names.index(ob_vg.name)
-							i+=1
+					total_weight = 0
+					vert_weight = ob_weights[vert.index]
+					for i in range(len(vert_weight)):
+						indices[i] = vert_weight[i][0]
+						weights[i] = vert_weight[i][1]
+						total_weight += weights[i]
+						i+=1
+					if smd.a.data.smd_implicit_zero_bone and total_weight < 1:
+						weights[-1] = float(1 - total_weight)
+					#print(weights,indices)
+					
 					jointWeights.extend(weights)
 					jointIndices.extend(indices)
 				
@@ -2992,7 +3047,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
 					DmeCombinationInputControl.add_attribute("stereo",False)
 					DmeCombinationInputControl.add_attribute("eyelid",False)
-					DmeCombinationInputControl.add_attribute("wrinkleScales",[0.0],float)
+					
+					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
+					if wrinkle_vg:
+						DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)
 					
 					control_values.append(datamodel.Vector3([0.0,0.0,0.5]))
 					delta_state_weights.append(datamodel.Vector2([0.0,0.0]))
@@ -3000,11 +3058,16 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
 					
-					DmeVertexDeltaData.add_attribute("vertexFormat",[
+					vertexFormat = DmeVertexDeltaData.add_attribute("vertexFormat",[
 						"positions",
 						"normals"
 						]
-					,str) # "wrinkle"
+					,str)
+					
+					wrinkle = []
+					wrinkleIndices = []
+					
+					if wrinkle_vg: vertexFormat.value.append("wrinkle")
 					
 					DmeVertexDeltaData.add_attribute("jointCount",0)
 					DmeVertexDeltaData.add_attribute("flipVCoordinates",True)
@@ -3026,13 +3089,21 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 						if ob_vert.normal != shape_vert.normal:
 							shape_norms.append(datamodel.Vector3(shape_vert.normal))
 							shape_normIndices.append(i)
+						
+						if wrinkle_vg:
+							try:
+								wrinkle.append(wrinkle_vg.weight(i))
+								wrinkleIndices.append(i)
+							except RuntimeError:
+								pass
 					
 					DmeVertexDeltaData.add_attribute("positions",shape_pos,datamodel.Vector3)
 					DmeVertexDeltaData.add_attribute("positionsIndices",shape_posIndices,int)
 					DmeVertexDeltaData.add_attribute("normals",shape_norms,datamodel.Vector3)
 					DmeVertexDeltaData.add_attribute("normalsIndices",shape_normIndices,int)
-					#DmeVertexDeltaData.add_attribute("wrinkle",[],float)
-					#DmeVertexDeltaData.add_attribute("wrinkleIndices",[],int)
+					if wrinkle_vg:
+						DmeVertexDeltaData.add_attribute("wrinkle",wrinkle,float)
+						DmeVertexDeltaData.add_attribute("wrinkleIndices",wrinkleIndices,int)
 					
 					removeObject(shape)
 					
@@ -3077,23 +3148,26 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		
 		channels = DmeChannelsClip.add_attribute("channels",[],datamodel.Element).value
 		bone_channels = {}
-		for bone in smd.a.pose.bones:
-			bone_channels[bone] = []
+		def makeChannel(bone):
+			if bone: bone_channels[bone] = []
 			channel_template = [
 				[ "_p", "position", "Vector3", datamodel.Vector3 ],
 				[ "_o", "orientation", "Quaternion", datamodel.Quaternion ]
 			]
+			name = bone.name if bone else "blender_implicit"
 			for template in channel_template:
-				cur = dm.add_element(bone.name + template[0],"DmeChannel")
+				cur = dm.add_element(name + template[0],"DmeChannel")
 				cur.add_attribute("toAttribute",template[1])
-				cur.add_attribute("toElement",bone_transforms[bone])
+				cur.add_attribute("toElement",bone_transforms[bone] if bone else jointTransforms.value[0])
 				cur.add_attribute("mode",1)
 				val_arr = cur.add_attribute("log",dm.add_element(template[2]+" log","Dme"+template[2]+"Log")).value.add_attribute("layers",[dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer")],datamodel.Element).value[0]
 				val_arr.add_attribute("times",[],datamodel.Time)
 				val_arr.add_attribute("values",[],template[3])
-				bone_channels[bone].append(val_arr)
+				if bone: bone_channels[bone].append(val_arr)
 				channels.append(cur)
 		
+		for bone in smd.a.pose.bones:
+			makeChannel(bone)
 		num_frames = int(action.frame_range[1] + 1)
 		bench("Animation setup")
 		prev_pos = {}
