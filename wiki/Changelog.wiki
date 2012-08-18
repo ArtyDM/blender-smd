@@ -1,4 +1,19 @@
 #labels Featured
+== SMD Tools 1.4.1 - August 18th, 2012 ==
+
+Exporter:
+
+  * DMX: added support for bone parents/constraints, bone envelopes, and implicit motionless bones
+  * DMX: added simple wrinkle map export (make a vertex group called "wrinkle <shape name>")
+  * DMX: enabled export for Source MP and Alien Swarm
+  * Fixed Blender crash when exporting a scene containing shapes to SMD
+  * Worked around Blender remembering the path and group index properties between executions
+  * Fixed exporting 2D curves
+  * Fixed exporting multi-user meshes
+  * Fixed SMD implicit bones
+  * Fixed bone envelope export from scaled armatures
+  * Fixed SMD export of objects with subsurf
+
 == SMD Tools 1.4 - August 13th, 2012 ==
 
 A problem with official builds of Blender leads to a "runtime error" the first time you export a DMX file. The error is harmless and can be ignored. See issue 43.
