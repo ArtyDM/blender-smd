@@ -3841,6 +3841,9 @@ class SmdExporter(bpy.types.Operator):
 		# Clean everything up
 		bpy.ops.ed.undo_push(message=self.bl_label)
 		bpy.ops.ed.undo()
+		
+		props.directory = ""
+		props.groupIndex = -1
 
 		return {'FINISHED'}
 
