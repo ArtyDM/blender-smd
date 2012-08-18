@@ -2504,6 +2504,7 @@ def writeShapes():
 		if shape != smd.m:
 			removeObject(shape)
 	
+	removeObject(smd.m)
 	smd.file.write("end\n")
 	print("- Exported {} flex shapes ({} verts)".format(cur_shape,total_verts))
 	return
@@ -3803,11 +3804,11 @@ class SmdExporter(bpy.types.Operator):
 					self.exportObject(context,object)
 
 		elif props.exportMode == 'SCENE':
-			objects = bpy.context.scene.objects[:] # avoid pollution from the baking process
 			for group in bpy.data.groups:
+				group_objects = group.objects[:] # avoid pollution from the baking process
 				if shouldExportGroup(group):
-					for object in group.objects:
-						if object.smd_export and object.type in exportable_types and object.type != 'ARMATURE' and bpy.context.scene in object.users_scene:
+					for object in group_objects:
+						if object.smd_export and object in self.validObs and object.type != 'ARMATURE':
 							g_index = -1
 							for i in range(len(object.users_group)):
 								if object.users_group[i] == group:
@@ -3815,7 +3816,7 @@ class SmdExporter(bpy.types.Operator):
 									break
 							self.exportObject(context,object,groupIndex=g_index)
 							break # only export the first valid object
-			for object in objects:
+			for object in getValidObs():
 				if object.smd_export:
 					should_export = True
 					if object.users_group and object.type != 'ARMATURE':
@@ -3878,7 +3879,6 @@ class SmdExporter(bpy.types.Operator):
 				path += getObExportName(object)
 			else:
 				path += object.users_group[groupIndex].name
-
 			if writeSMD(context, object, groupIndex, path + getFileExt()):
 				self.countSMDs += 1
 			if bpy.context.scene.smd_format == 'SMD' and hasShapes(object,groupIndex): # DMX will export mesh and shapes to the same file
