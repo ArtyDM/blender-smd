@@ -30,7 +30,7 @@ bl_info = {
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Source Engine. Supports SMD\VTA, DMX and QC."}
 
-import math, os, time, bpy, bmesh, random, mathutils, re, struct, subprocess, io
+import math, os, time, bpy, bmesh, random, mathutils, re, struct, subprocess, io, datamodel
 from bpy import ops
 from bpy.props import *
 from struct import unpack,calcsize
@@ -83,11 +83,11 @@ src_branches = (
 dmx_versions = {
 'ep1':[0,0],
 'source2007':[2,1],
-'orangebox':[2,1],
 'source2009':[2,1],
 'left 4 dead':[5,15],
 'left 4 dead 2':[5,15],
-'alien swarm':[5,15],
+'alien swarm':[5,18],
+'orangebox':[5,18], # aka Source MP
 'portal 2':[5,18],
 'SourceFilmmaker':[5,18]
 }
@@ -97,7 +97,7 @@ class smd_info:
 	def __init__(self):
 		self.isDMX = 0 # version number, or 0 for SMD
 		self.a = None # Armature object
-		self.amod = None # Original armature modifier
+		self.amod = {} # Armature modifiers
 		self.m = None # Mesh datablock
 		self.shapes = None
 		self.g = None # Group being exported
@@ -2156,9 +2156,12 @@ def writeBones(quiet=False):
 		smd.file.write("0 \"root\" -1\nend\n")
 		if not quiet: print("- No skeleton to export")
 		return
-		
-	curID = 1 if smd.a.data.smd_implicit_zero_bone else 0
-
+	
+	curID = 0
+	if smd.a.data.smd_implicit_zero_bone:
+		smd.file.write("0 \"blender_implicit\" -1\n")
+		curID += 1
+	
 	# Write to file
 	for bone in smd.a.data.bones:		
 		if not bone.use_deform:
@@ -2291,37 +2294,55 @@ def writeFrames():
 	
 def getWeightmap(ob):
 	out = []
-	if not smd.amod: return out
+	amod = smd.amod.get(ob['src_name'])
+	if not amod: return out
 	
-	def boneIndex(name):
-		if smd.isDMX: return bone_list.index(name)
-		else: return 
-		
+	amod_vg = ob.vertex_groups.get(amod.vertex_group)
+	
 	for v in ob.data.vertices:
 		weights = []
-		if smd.amod.use_vertex_groups:
-			for j in range(len(v.groups)):
-				group_index = v.groups[j].group
-				if group_index < len(ob.vertex_groups):
-					# Vertex group might not exist on object if it's re-using a datablock
-					group_name = ob.vertex_groups[group_index].name
-					group_weight = v.groups[j].weight
+		total_weight = 0
+		
+		if amod.use_vertex_groups:			
+			for v_group in v.groups:
+				if v_group.group < len(ob.vertex_groups):
+					ob_group = ob.vertex_groups[v_group.group]
+					group_name = ob_group.name
+					group_weight = v_group.weight					
 				else:
-					continue
+					continue # Vertex group might not exist on object if it's re-using a datablock				
 
-				if group_name == smd.amod.vertex_group:
-					am_vertex_group_weight = group_weight
-
-				bone = smd.amod.object.data.bones.get(group_name)
+				bone = amod.object.data.bones.get(group_name)
 				if bone and bone.use_deform:
 					weights.append([ smd.boneNameToID[bone.name], group_weight ])
-
-		if smd.amod.use_bone_envelopes: # vertex groups completely override envelopes
-			for pose_bone in smd.amod.object.pose.bones:
+					total_weight += group_weight			
+				
+		if amod.use_bone_envelopes and total_weight == 0: # vertex groups completely override envelopes
+			for pose_bone in amod.object.pose.bones:
 				if not pose_bone.bone.use_deform:
 					continue
-				weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( ob.matrix_world * v.co )
-				if weight: weights.append([ smd.boneNameToID[pose_bone.name], weight ])
+				weight = pose_bone.bone.envelope_weight * pose_bone.evaluate_envelope( ob.matrix_world * amod.object.matrix_world.inverted() * v.co )
+				if weight:
+					weights.append([ smd.boneNameToID[pose_bone.name], weight ])
+					total_weight += weight
+			
+		# normalise weights, like Blender does. Otherwise Studiomdl puts anything left over onto the root bone.
+		if total_weight not in [0,1]:
+			for link in weights:
+				link[1] *= 1/total_weight
+		
+		# apply armature modifier vertex group
+		if amod_vg and total_weight > 0:
+			amod_vg_weight = 0
+			for v_group in v.groups:
+				if v_group.group == amod_vg.index:
+					amod_vg_weight = v_group.weight
+					break
+			if amod.invert_vertex_group:
+				amod_vg_weight = 1 - amod_vg_weight
+			for link in weights:
+				link[1] *= amod_vg_weight
+
 		out.append(weights)
 	return out
 
@@ -2349,10 +2370,10 @@ def writePolys(internal=False):
 					log.error("Object {} has no faces, cannot export".format(smd.jobName))
 					continue
 
-				if smd.amod and not have_cleared_pose:
+				if smd.amod[smd.m['src_name']] and not have_cleared_pose:
 					# This is needed due to a Blender bug. Setting the armature to Rest mode doesn't actually
 					# change the pose bones' data!
-					for posebone in smd.amod.object.pose.bones:
+					for posebone in smd.amod[smd.m['src_name']].object.pose.bones:
 						posebone.matrix_basis.identity()
 					bpy.context.scene.update()
 					have_cleared_pose = True
@@ -2410,33 +2431,16 @@ def writePolys(internal=False):
 				uv += " " + getSmdFloat(uv_loop[poly.loop_start + i].uv[j])
 
 			# Weightmaps
+			weight_string = ""
 			if ob_weight_str:
 				weight_string = ob_weight_str
-			elif smd.amod:
-				am_vertex_group_weight = 0
-			
-			total_weight = 0
-			if smd.amod:
-				for link in weights[i]:
-					total_weight += link[1]
-
-			if not smd.amod or total_weight == 0:
-				if not ob_weight_str: weight_string = " 0"
-				# In Source, unlike in Blender, verts HAVE to be attached to bones. This means that if you have only one bone,
-				# all verts will be 100% attached to it. To transform only some verts you need a second bone that stays put.
 			else:
-				# Shares out unused weight between extant bones, like Blender does, otherwise Studiomdl puts it onto the root		
-				for link in weights[i]:
-					link[1] *= 1/total_weight # This also handles weights totalling more than 100%
-
-				weight_string = " " + str(len(weights[i]))
-				for link in weights[i]: # one link on one vertex
-					if smd.amod.vertex_group: # strength modifier
-						link[1] *= am_vertex_group_weight
-						if smd.amod.invert_vertex_group:
-							link[1] = 1 - link[1]
-
-					weight_string += " " + str(link[0]) + " " + getSmdFloat(link[1])
+				valid_weights = 0
+				for link in weights[v.index]:
+					if link[1] > 0:
+						weight_string += " {} {}".format(link[0], getSmdFloat(link[1]))
+						valid_weights += 1
+				weight_string = " {}{}".format(valid_weights,weight_string)
 
 			# Finally, write it all to file
 			smd.file.write("0" + loc + norms + uv + weight_string + "\n")
@@ -2532,7 +2536,7 @@ def bakeObj(in_object):
 		bpy.context.scene.objects.active = obj
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent (potentially the object itself)
-		bpy.ops.object.transform_apply(location=True)	
+		bpy.ops.object.transform_apply(location=not smd.isDMX)	
 
 	if in_object.type == 'ARMATURE':
 		_ApplyVisualTransform(in_object)
@@ -2590,21 +2594,50 @@ def bakeObj(in_object):
 			obj.data.dimensions = '3D'
 
 		if smd.jobType != FLEX: # we've already messed about with this object during ref export
+			found_envelope = False
+			
+			# Bone parent
+			if obj.parent_bone and obj.parent_type == 'BONE':
+				smd.a = obj.parent
+				obj['bp'] = obj.parent_bone
+				found_envelope = True				
+				
+			# Bone constraint
+			for con in obj.constraints:
+				if con.mute:
+					continue
+				con.mute = True
+				if con.type in ['CHILD_OF','COPY_TRANSFORMS'] and con.target.type == 'ARMATURE' and con.subtarget:
+					if found_envelope:
+						log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj.name))
+					else:
+						smd.a = con.target
+						obj['bp'] = con.subtarget
+						found_envelope = True
+			
+			# Armature modifier
+			for mod in obj.modifiers:
+				if mod.type == 'ARMATURE' and mod.object:
+					if found_envelope:
+						log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
+					else:
+						smd.a = mod.object
+						smd.amod[obj.name] = mod
+						found_envelope = True
+		
 			if obj.type == "MESH":
 				bpy.ops.object.mode_set(mode='EDIT')
 				bpy.ops.mesh.reveal()
 				bpy.ops.mesh.select_all(action="SELECT")
 				if obj.matrix_world.is_negative:
 					bpy.ops.mesh.flip_normals()
-				if not smd.isDMX:
-					bpy.ops.mesh.quads_convert_to_tris()
 				bpy.ops.object.mode_set(mode='OBJECT')
 			
 			_ApplyVisualTransform(obj)
 			
 			if obj.type != 'ARMATURE': # don't apply transforms to armatures until/unless actions are baked too
 				obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
-				bpy.ops.object.transform_apply(location=not smd.isDMX,scale=True,rotation=not smd.isDMX)
+				bpy.ops.object.transform_apply(scale=True,rotation=not smd.isDMX)
 		
 		# Apply modifiers; need to do this per shape key
 		bpy.ops.object.mode_set(mode='OBJECT')
@@ -2645,6 +2678,10 @@ def bakeObj(in_object):
 				if smd.isDMX:
 					if x == 0: smd.dmxShapes[obj.name] = []
 					else: smd.dmxShapes[obj.name].append(baked)
+				else:
+					bpy.ops.object.mode_set(mode='EDIT')
+					bpy.ops.mesh.quads_convert_to_tris()
+					bpy.ops.object.mode_set(mode='OBJECT')
 					
 				for mod in baked.modifiers:
 					if mod.type == 'ARMATURE':
@@ -2653,45 +2690,7 @@ def bakeObj(in_object):
 				if smd.jobType == FLEX or (smd.isDMX and x > 0):
 					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
 					if not smd.isDMX:
-						bakes_out.append(baked)
-				else:	
-					# Handle bone parents / armature modifiers, and warn of multiple associations
-					baked['bp'] = ""
-					envelope_described = False
-					if obj.parent_bone and obj.parent_type == 'BONE':
-						baked['bp'] = obj.parent_bone
-						smd.a = obj.parent
-					for con in obj.constraints:
-						if con.mute:
-							continue
-						if con.type in ['CHILD_OF','COPY_TRANSFORMS'] and con.target.type == 'ARMATURE' and con.subtarget:
-							if baked['bp']:
-								if not envelope_described:
-									print(" - Enveloped to bone \"{}\"".format(baked['bp']))
-								log.warning("Bone constraint \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(con.name,obj.name))
-							else:
-								baked['bp'] = con.subtarget
-								smd.a = con.target
-					for mod in obj.modifiers:
-						if mod.type == 'ARMATURE' and mod.object:
-							mod.show_viewport = False
-							if (smd.a and mod.object != smd.a) or baked['bp']:
-								if not envelope_described:
-									msg = " - Enveloped to {} \"{}\""
-									if baked['bp']: print( msg.format("bone",baked['bp']) )
-									else: print( msg.format("armature",smd.a.name) )
-								log.warning("Armature modifier \"{}\" found on \"{}\", which already has an envelope. Ignoring.".format(mod.name,obj.name))
-							else:
-								smd.a = mod.object
-								smd.amod = mod
-								#if obj.type == 'MESH':
-								#	smd.amod = mod
-								#else:
-								#	dupe_amod = baked.modifiers.new(type="ARMATURE",name="Armature")
-								#	smd.amod = dupe_amod
-								#	props = ['invert_vertex_group', 'object', 'use_bone_envelopes','use_vertex_groups','vertex_group' ]
-								#	for prop in props:
-								#		exec ("dupe_amod.{0} = mod.{0}".format(prop))
+						bakes_out.append(baked)				
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
@@ -2800,7 +2799,6 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 
 	return True
 
-import datamodel
 def getDatamodelQuat(blender_quat):
 	return datamodel.Quaternion([blender_quat[1], blender_quat[2], blender_quat[3], blender_quat[0]])
 
@@ -2814,10 +2812,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		trfm = dm.add_element(name,"DmeTransform")
 		pos = matrix.to_translation()
 		rot = matrix.to_quaternion()
-		
-		#if pos != Vector([0,0,0]): trfm.add_attribute("position",datamodel.Vector3(pos))
+				
 		trfm.add_attribute("position",datamodel.Vector3(pos))
-		#if rot != Quaternion([1,0,0,0]): trfm.add_attribute("orientation",getDatamodelQuat(rot))
 		trfm.add_attribute("orientation",getDatamodelQuat(rot))
 		return trfm
 	
@@ -2850,6 +2846,12 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
 			
 			trfm = makeTransform(bone_name,relMat)
+			
+			# Apply armature scale
+			scale = smd.a.matrix_world.to_scale()
+			for j in range(3):
+				trfm.get_attribute("position").value[j] *= scale[j]
+			
 			jointTransforms.value.append(trfm)
 			if bone:
 				bone_transforms[bone] = trfm
@@ -2904,25 +2906,31 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			DmeDag.add_attribute("shape",DmeMesh)
 			dags.append(DmeDag)
 			
-			ob_weights = []
+			ob_weights = getWeightmap(ob)
 			
 			jointCount = 0
-			if ob['bp']:
+			badJointCounts = 0
+			if ob.get('bp'):
 				jointCount = 1
-				smd.a = ob['bp'].id_data
-			elif smd.amod:
-				ob_weights = getWeightmap(ob)
-				for vert_weight in ob_weights:
-					jointCount = max(jointCount,len(vert_weight))
+			elif smd.amod[ob['src_name']]:
+				for vert_weights in ob_weights:
+					count = len(vert_weights)
+					if count > 3: badJointCounts += 1
+					jointCount = max(jointCount,count)
+				if smd.a.data.smd_implicit_zero_bone:
+					jointCount += 1
+					
+			if badJointCounts:
+				log.warning("{} verts on \"{}\" have over 3 weight links. Studiomdl does not support this!".format(badJointCounts,ob['src_name']))
+			elif jointCount > 3: # due to implicit bone
+				log.warning("Implicit motionless bone is pushing \"{}\" over the weight link limit.".format(ob['src_name']))
 			
-			if smd.a.data.smd_implicit_zero_bone:
-				jointCount += 1
-			print(jointCount)
 			format = [ "positions", "normals", "textureCoordinates" ]
 			if jointCount: format.extend( [ "jointWeights", "jointIndices" ] )
 			vertex_data.add_attribute("vertexFormat", format, str)
 			
 			vertex_data.add_attribute("flipVCoordinates",True)
+			vertex_data.add_attribute("jointCount",jointCount)
 			
 			pos = []
 			posIndices = []
@@ -2942,28 +2950,26 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				norms.append(datamodel.Vector3(vert.normal))
 				vert.select = False
 				
-				if ob['bp']:
-					jointWeights.extend( 1.0 )
-					jointIndices.extend( smd.boneNameToID[ob['bp'].name] )
+				if ob.get('bp'):
+					jointWeights.append( 1.0 )
+					jointIndices.append( smd.boneNameToID[ob['bp']] )
 				elif jointCount:
 					weights = [0.0] * jointCount
 					indices = [0] * jointCount
 					i = 0
 					total_weight = 0
-					vert_weight = ob_weights[vert.index]
-					for i in range(len(vert_weight)):
-						indices[i] = vert_weight[i][0]
-						weights[i] = vert_weight[i][1]
+					vert_weights = ob_weights[vert.index]
+					for i in range(len(vert_weights)):
+						indices[i] = vert_weights[i][0]
+						weights[i] = vert_weights[i][1]
 						total_weight += weights[i]
 						i+=1
 					if smd.a.data.smd_implicit_zero_bone and total_weight < 1:
 						weights[-1] = float(1 - total_weight)
-					#print(weights,indices)
 					
 					jointWeights.extend(weights)
 					jointIndices.extend(indices)
 				
-			vertex_data.add_attribute("jointCount",jointCount)
 			bench("verts")
 			for poly in ob.data.polygons:
 				i=0
@@ -3181,6 +3187,12 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
 				
 				pos = relMat.to_translation()
+				
+				# Apply armature scale
+				scale = smd.a.matrix_world.to_scale()
+				for j in range(3):
+					pos[j] *= scale[j]
+				
 				if not prev_pos.get(bone) or pos - prev_pos[bone] > epsilon:
 					bone_channels[bone][0].get_attribute("times").value.append(keyframe_time)
 					bone_channels[bone][0].get_attribute("values").value.append(datamodel.Vector3(pos))
@@ -3199,7 +3211,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	dm.write(filepath,"binary",DatamodelEncodingVersion())
 	bench("Writing")
 	
-	print("DMX export took",time.time() - start)
+	print("DMX export took",time.time() - start,"\n")
 	
 	return True
 		
@@ -4173,7 +4185,7 @@ def register():
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 
-	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Start bone IDs at one, allowing Studiomdl to put any unweighted vertices on bone zero. Emulates Blender's behaviour, but may break compatibility with existing SMDs")
+	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour, but may break compatibility with existing SMDs")
 	arm_modes = (
 	('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
 	('FILTERED',"Action Filter","All actions that match the armature's filter term")
