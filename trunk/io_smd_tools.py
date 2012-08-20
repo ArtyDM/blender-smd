@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 4, 1),
+	"version": (1, 4, 2),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -36,6 +36,7 @@ from bpy.props import *
 from struct import unpack,calcsize
 from mathutils import *
 from math import *
+from bpy.app.handlers import persistent
 
 intsize = calcsize("i")
 floatsize = calcsize("f")
@@ -153,6 +154,21 @@ class qc_info:
 
 	def cd(self):
 		return self.root_filedir + "".join(self.dir_stack)
+		
+def export_enabled_update(self, context):
+	name = self.name.rsplit(" ",1)[1]
+	item = None
+	if self.type == 'GROUP':
+		item = bpy.data.groups[self.item_name]
+	if self.type in ['ACTION', 'OBJECT']:
+		item = bpy.data.objects[self.item_name]
+	item.smd_export = self.enabled
+
+class SMD_CT_ObjectExportProps(bpy.types.PropertyGroup):
+	type = StringProperty()
+	item_name = StringProperty()
+	enabled = BoolProperty(name="",description="Export this item with the scene",default=True,update=export_enabled_update)
+	prop_list = StringProperty(default="enabled")
 
 class SMD_MT_GetDMXModel(bpy.types.Menu):
 	bl_label = "DMX support unavailable"
@@ -2370,7 +2386,7 @@ def writePolys(internal=False):
 					log.error("Object {} has no faces, cannot export".format(smd.jobName))
 					continue
 
-				if smd.amod[smd.m['src_name']] and not have_cleared_pose:
+				if smd.amod.get(smd.m['src_name']) and not have_cleared_pose:
 					# This is needed due to a Blender bug. Setting the armature to Rest mode doesn't actually
 					# change the pose bones' data!
 					for posebone in smd.amod[smd.m['src_name']].object.pose.bones:
@@ -2388,13 +2404,17 @@ def writePolys(internal=False):
 
 	md = smd.m.data
 	face_index = 0
-	# bone parent?
-	ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m['bp']]) if smd.m.get('bp') else None
 
 	uv_loop = md.uv_layers.active.data
 	uv_tex = md.uv_textures.active.data
 	
 	weights = getWeightmap(smd.m)
+	
+	ob_weight_str = None
+	if smd.m.get('bp'):
+		ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m['bp']])
+	if len(weights) == 0:
+		ob_weight_str = " 0"
 	
 	bad_face_mats = 0
 	for poly in md.polygons:
@@ -2913,7 +2933,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			badJointCounts = 0
 			if ob.get('bp'):
 				jointCount = 1
-			elif smd.amod[ob['src_name']]:
+			elif smd.amod.get(ob['src_name']):
 				for vert_weights in ob_weights:
 					count = len(vert_weights)
 					if count > 3: badJointCounts += 1
@@ -3052,7 +3072,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					control_elems.append(DmeCombinationInputControl)
 					
 					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
-					DmeCombinationInputControl.add_attribute("stereo",False)
+					DmeCombinationInputControl.add_attribute("stereo",True)
 					DmeCombinationInputControl.add_attribute("eyelid",False)
 					
 					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
@@ -3460,7 +3480,7 @@ def getValidObs():
 
 qc_path = qc_paths = qc_path_last_update = 0
 class SMD_PT_Scene(bpy.types.Panel):
-	bl_label = "SMD/DMX Export"
+	bl_label = "Source Engine Export"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
@@ -3491,122 +3511,96 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row()
 		row.prop(scene,"smd_material_path",text="Material Path")
 		row.enabled = shouldExportDMX(scene)
+		row = l.row()
+		row.prop(scene,"smd_layer_filter",text="Visible layer(s) only")
+		row.prop(scene,"smd_use_image_names",text="Ignore Blender materials")
 
-		validObs = getValidObs()
-		l.row()
-		scene_config_row = l.row()
-
-		if len(validObs):
-			validObs.sort(key=lambda ob: ob.name.lower())
-			box = l.box()
-			columns = box.column()
-			header = columns.split(0.6)
-			header.label(text="Object / Group:")
-			header.label(text="Subfolder:")
-
-			had_groups = False
-			groups_sorted = []
-			for group in bpy.data.groups:
-				groups_sorted.append(group)
-			groups_sorted.sort(key=lambda g: g.name.lower())
-			want_sep = False
-			for group in groups_sorted:
-				if want_sep: columns.separator()
-				want_sep = False
-				for object in group.objects:
-					if object in validObs:
-						had_groups = True
-						def _drawMuteButton(layout_button,layout_text):
-							layout_button.prop(group,"smd_mute",emboss=False,text="",icon='MUTE_IPO_ON' if group.smd_mute else 'MUTE_IPO_OFF')
-							if layout_text:
-								layout_text.label(text="{} is ignored".format(group.name))
-						
-						if not group.smd_mute:	
-							row = columns.split(0.6)
-							row.prop(group,"smd_export",icon="GROUP",emboss=True,text=group.name)
-							row.prop(group,"smd_subdir",text="")
-							row.enabled = not group.smd_mute
-
-							if shouldExportGroup(group):
-								num_to_export += 1
-								group_objects = []
-								group_active= 0									
-								for object in group.objects:
-									if object in validObs and object.type != 'ARMATURE':
-										group_objects.append(object)
-										if object.smd_export: group_active += 1
-								
-								row = columns.row(align=not group.smd_expand)
-								button_column = row.column()
-								button_column.prop(group,"smd_expand",emboss=False,icon='ZOOMOUT' if group.smd_expand else 'ZOOMIN',text="")
-									
-								if group.smd_expand:
-									rows = row.column_flow(0) # in theory automatic columns, in practice always 2
-									for object in group_objects:
-										rows.prop(object,"smd_export",icon=MakeObjectIcon(object,suffix="_DATA"),emboss=False,text=object.name)
-								else:
-									row.label(text="({} of {} objects active)".format(group_active,len(group_objects)))
-								want_sep = True
-						break # we've found an object in the scene and drawn the list
-
-			if had_groups:
-				columns.separator()
 		
-			had_obs = False
-			for object in validObs: # meshes
-				in_active_group = False
-				if object.type in mesh_compatible:
-					for group in object.users_group:
-						if not group.smd_mute:
-							in_active_group = True
-				if not in_active_group:
-					if object.type == 'ARMATURE':
-						continue
-
-					row = columns.split(0.6)
-					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=getObExportName(object))
-					row.prop(object,"smd_subdir",text="")
-					had_obs = True
-					if object.smd_export: num_to_export += 1
+		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
+		row = l.row(align=True)
+		row.operator("wm.url_open",text="Help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Exporting"
+		row.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')		
+		
+class SMD_PT_Object_Config(bpy.types.Panel):
+	bl_label = "Source Engine Objects"
+	bl_space_type = "PROPERTIES"
+	bl_region_type = "WINDOW"
+	bl_context = "scene"
+	bl_default_closed = True
+	
+	def draw(self,context):
+		l = self.layout
+		scene = context.scene
+		
+		l.template_list(scene,"smd_export_list",scene,"smd_export_list_active",rows=3,maxrows=8,prop_list="prop_list")
+		
+		if not len(scene.smd_export_list):
+			return
 			
-			if had_obs:
-				columns.separator()
+		active_item = scene.smd_export_list[scene.smd_export_list_active]
+		item = (bpy.data.groups if active_item.type == 'GROUP' else bpy.data.objects)[active_item.item_name]
+		
+		validObs = getValidObs()
+		
+		col = l.column()
+		col.prop(item,"smd_subdir",text="Subfolder",icon='FILE_FOLDER')
+		col.prop(item,"smd_name",text="Filename",icon='FILE_TEXT')
+		
+		col = l.box().column()
+		title_row = col.row()
+		title_row.alignment = 'CENTER'
+		col.separator()
+		want_shapes = False
+		
+		if type(item) == bpy.types.Group:
+			title_row.label(text="Group properties",icon='GROUP')
+			group_items = col.box().column_flow(2)
+			for g_ob in item.objects:
+				if g_ob in validObs:
+					group_items.prop(g_ob,"smd_export",icon=MakeObjectIcon(g_ob,suffix="_DATA"),text=g_ob.name,emboss=False)
+					if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
+		elif item:
+			if item.type == 'ARMATURE':
+				title_row.label(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
+				col.prop(item.data,"smd_action_selection")
+				if item.data.smd_action_selection == 'FILTERED':
+					col.prop(item,"smd_action_filter",text="Action Filter")
 
-			had_armatures = False
-			want_sep = False
-			for object in validObs:
-				if object.type == 'ARMATURE' and object.animation_data:
-					if want_sep: columns.separator()
-					want_sep = False
-					had_armatures = True
-					row = columns.split(0.6)
-					row.prop(object,"smd_export",icon=MakeObjectIcon(object,prefix="OUTLINER_OB_"),emboss=True,text=object.name)
-					row.prop(object,"smd_subdir",text="")
-					if object.smd_export:
-						row = columns.split(0.6)
-						if object.data.smd_action_selection == 'CURRENT':
-							text,icon,count = SMD_MT_ExportChoice.getActionSingleTextIcon(self,context,object)
-							if object.smd_export: num_to_export += 1
-						elif object.data.smd_action_selection == 'FILTERED':
-							text, num = SMD_MT_ExportChoice.getActionFilterText(self,context)
-							if object.smd_export: num_to_export += num
-							icon = "ACTION"
-						row.prop(object,"smd_export",text=text,icon=icon,emboss=False)
-						row.prop(object.data,"smd_action_selection",text="")
-						want_sep = True
+				col.prop(item.data,"smd_implicit_zero_bone")
+				if not shouldExportDMX(scene):
+					col.prop(item.data,"smd_legacy_rotation")
+					
+				if item.animation_data and not 'ActLib' in dir(bpy.types):
+					col.template_ID(item.animation_data, "action", new="action.new")
 
-		scene_config_row.label(text=" Scene Exports ({} file{})".format(num_to_export,"" if num_to_export == 1 else "s"),icon='SCENE_DATA')
-	
-		r = l.row()
-		r.prop(scene,"smd_use_image_names",text="Ignore materials")
-		r.prop(scene,"smd_layer_filter",text="Visible layer(s) only")
-		l.row()
-	
+				col.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
+			if item.type == 'CURVE':
+				title_row.label(text="Curve properties",icon='OUTLINER_OB_CURVE')
+				col.label(text="Generate polygons on:")
+				row = col.row()
+				row.prop(item.data,"smd_faces",expand=True)
+		
+			if hasShapes(item,-1): want_shapes = item
+		
+		if want_shapes:
+			l.template_list(want_shapes.data.shape_keys,"key_blocks",want_shapes,"active_shape_key_index",rows=3,maxrows=5)
+
+class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
+	bl_label = "Source Engine QC Complies"
+	bl_space_type = "PROPERTIES"
+	bl_region_type = "WINDOW"
+	bl_context = "scene"
+	bl_default_closed = True				
+		
+	def draw(self,context):
+		l = self.layout
+		scene = context.scene
+		
 		# QCs
 		global qc_path
 		global qc_paths
 		global qc_path_last_update
-		qc_label_row = l.row()
+		
 		qc_path_row = l.row()
 		if scene.smd_qc_path != qc_path or not qc_paths or time.time() > qc_path_last_update + 2:
 			qc_paths = getQCs()
@@ -3623,7 +3617,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 			vproj = getFilename(os.getenv('vproject'))
 		except:
 			vproj = "no game"
-		qc_label_row.label(text=" QC Compiles ({}; {} file{})".format(vproj, len(qc_paths),"" if len(qc_paths) == 1 else "s"),icon='FILE_SCRIPT')
+		
 		error_row = l.row()
 		compile_row = l.row()
 		compile_row.prop(scene,"smd_qc_compile")
@@ -3634,61 +3628,9 @@ class SMD_PT_Scene(bpy.types.Panel):
 				qc_path_row.alert = True
 			compile_row.enabled = False
 		qc_path_row.prop(scene,"smd_qc_path",text="QC file path") # can't add this until the above test completes!
-		
-		l.separator()
-		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
-		row = l.row(align=True)
-		row.operator("wm.url_open",text="Help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Exporting"
-		row.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')
-
-class SMD_PT_Data(bpy.types.Panel):
-	bl_label = "SMD Export"
-	bl_space_type = "PROPERTIES"
-	bl_region_type = "WINDOW"
-	bl_context = "data"
-
-	@classmethod
-	def poll(self,context):
-		return context.active_object.type in ['ARMATURE','CURVE'] # the panel isn't displayed unless there is an active object
-
-	def draw(self, context):
-		if context.active_object.type == 'ARMATURE':
-			self.draw_Armature(context)
-		elif context.active_object.type == 'CURVE':
-			self.draw_Curve(context)
-
-	def draw_Curve(self, context):
-		c = context.active_object
-
-		self.layout.label(text="Generate polygons on:")
-
-		row = self.layout.row()
-		row.prop(c.data,"smd_faces",expand=True)
-
-	def draw_Armature(self, context):
-		l = self.layout
-		arm = context.active_object
-		anim_data = arm.animation_data
-
-		l.prop(arm,"smd_subdir",text="Export Subfolder")
-
-		l.prop(arm.data,"smd_action_selection")
-		l.prop(arm,"smd_action_filter",text="Action Filter")
-
-		l.prop(arm.data,"smd_implicit_zero_bone")
-		if not shouldExportDMX(scene): row.prop(arm.data,"smd_legacy_rotation")
-
-		self.embed_arm = l.row()
-		SMD_MT_ExportChoice.draw(self,context)
-
-		if anim_data:
-			l.template_ID(anim_data, "action", new="action.new")
-
-		l.separator()
-		l.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
 
 class SmdExporter(bpy.types.Operator):
-	'''Export Studiomdl Data or Datamodel Exchange files and compile them with QC scripts'''
+	'''Export SMD or DMX files and compile them with QC scripts'''
 	bl_idname = "export_scene.smd"
 	bl_label = "Export SMD/VTA/DMX"
 
@@ -3744,107 +3686,108 @@ class SmdExporter(bpy.types.Operator):
 		global log
 		log = logger()
 		
-		bpy.ops.ed.undo_push(message=self.bl_label)
-				
-		bpy.context.tool_settings.use_keyframe_insert_auto = False
-		bpy.context.tool_settings.use_keyframe_insert_keyingset = False
-		
-		if props.exportMode == 'SINGLE_ANIM': # really hacky, hopefully this will stay a one-off!
-			if context.active_object.type == 'ARMATURE':
-				context.active_object.data.smd_action_selection = 'CURRENT'
-			props.exportMode = 'SINGLE'
+		try:
+			bpy.ops.ed.undo_push(message=self.bl_label)
+					
+			bpy.context.tool_settings.use_keyframe_insert_auto = False
+			bpy.context.tool_settings.use_keyframe_insert_keyingset = False
+			
+			if props.exportMode == 'SINGLE_ANIM': # really hacky, hopefully this will stay a one-off!
+				if context.active_object.type == 'ARMATURE':
+					context.active_object.data.smd_action_selection = 'CURRENT'
+				props.exportMode = 'SINGLE'
 
-		print("\nSMD EXPORTER RUNNING")
+			print("\nSMD EXPORTER RUNNING")
 
-		self.validObs = getValidObs()
-		
-		# lots of operators only work on visible objects
-		for object in bpy.context.scene.objects:
-			object.hide = False
-		bpy.context.scene.layers = [True] * len(bpy.context.scene.layers)
+			self.validObs = getValidObs()
+			
+			# lots of operators only work on visible objects
+			for object in bpy.context.scene.objects:
+				object.hide = False
+			bpy.context.scene.layers = [True] * len(bpy.context.scene.layers)
 
-		# check export mode and perform appropriate jobs
-		self.countSMDs = 0
-		if props.exportMode == 'SINGLE':
-			ob = context.active_object
-			group_name = None
-			if props.groupIndex != -1:
-				# handle the selected object being in a group, but disabled
-				try:
-					group_name = ob.users_group[props.groupIndex].name
-					for g_ob in ob.users_group[props.groupIndex].objects:
-						if g_ob.smd_export:
-							ob = g_ob
-							break
-						else:
-							ob = None
-				except IndexError:
-					pass # Blender saved settings from a previous run, doh!
-
-			if ob:
-				self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
-			else:
-				log.error("The group \"" + group_name + "\" has no active objects")
-				return {'CANCELLED'}
-
-
-		elif props.exportMode == 'MULTI':
-			exported_groups = []
-			for object in context.selected_objects:
-				if object.type in mesh_compatible:
-					if object.users_group:
-						if object.smd_export:
-							for i in range(len(object.users_group)):
-								if object.users_group[i] not in exported_groups:
-									exported_groups.append(object.users_group[i])
-									self.exportObject(context,object,groupIndex=i)
-					else:
-						self.exportObject(context,object)
-				elif object.type == 'ARMATURE':
-					self.exportObject(context,object)
-
-		elif props.exportMode == 'SCENE':
-			for group in bpy.data.groups:
-				group_objects = group.objects[:] # avoid pollution from the baking process
-				if shouldExportGroup(group):
-					for object in group_objects:
-						if object.smd_export and object in self.validObs and object.type != 'ARMATURE':
-							g_index = -1
-							for i in range(len(object.users_group)):
-								if object.users_group[i] == group:
-									g_index = i
-									break
-							self.exportObject(context,object,groupIndex=g_index)
-							break # only export the first valid object
-			for object in getValidObs():
-				if object.smd_export:
-					should_export = True
-					if object.users_group and object.type != 'ARMATURE':
-						for group in object.users_group:
-							if not group.smd_mute:
-								should_export = False
+			# check export mode and perform appropriate jobs
+			self.countSMDs = 0
+			if props.exportMode == 'SINGLE':
+				ob = context.active_object
+				group_name = None
+				if props.groupIndex != -1:
+					# handle the selected object being in a group, but disabled
+					try:
+						group_name = ob.users_group[props.groupIndex].name
+						for g_ob in ob.users_group[props.groupIndex].objects:
+							if g_ob.smd_export:
+								ob = g_ob
 								break
-					if should_export:
+							else:
+								ob = None
+					except IndexError:
+						pass # Blender saved settings from a previous run, doh!
+
+				if ob:
+					self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
+				else:
+					log.error("The group \"" + group_name + "\" has no active objects")
+					return {'CANCELLED'}
+
+
+			elif props.exportMode == 'MULTI':
+				exported_groups = []
+				for object in context.selected_objects:
+					if object.type in mesh_compatible:
+						if object.users_group:
+							if object.smd_export:
+								for i in range(len(object.users_group)):
+									if object.users_group[i] not in exported_groups:
+										exported_groups.append(object.users_group[i])
+										self.exportObject(context,object,groupIndex=i)
+						else:
+							self.exportObject(context,object)
+					elif object.type == 'ARMATURE':
 						self.exportObject(context,object)
 
-		jobMessage = "exported"
+			elif props.exportMode == 'SCENE':
+				for group in bpy.data.groups:
+					group_objects = group.objects[:] # avoid pollution from the baking process
+					if shouldExportGroup(group):
+						for object in group_objects:
+							if object.smd_export and object in self.validObs and object.type != 'ARMATURE':
+								g_index = -1
+								for i in range(len(object.users_group)):
+									if object.users_group[i] == group:
+										g_index = i
+										break
+								self.exportObject(context,object,groupIndex=g_index)
+								break # only export the first valid object
+				for object in getValidObs():
+					if object.smd_export:
+						should_export = True
+						if object.users_group and object.type != 'ARMATURE':
+							for group in object.users_group:
+								if not group.smd_mute:
+									should_export = False
+									break
+						if should_export:
+							self.exportObject(context,object)
 
-		if self.countSMDs == 0:
-			log.error("Found no valid objects for export")
-		elif context.scene.smd_qc_compile and context.scene.smd_qc_path:
-			# ...and compile the QC
-			num_good_compiles = compileQCs()
-			jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
-			print("\n")
+			jobMessage = "exported"
+
+			if self.countSMDs == 0:
+				log.error("Found no valid objects for export")
+			elif context.scene.smd_qc_compile and context.scene.smd_qc_path:
+				# ...and compile the QC
+				num_good_compiles = compileQCs()
+				jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
+				print("\n")
+				
+			log.errorReport(jobMessage,"file",self,self.countSMDs)
+		finally:
+			# Clean everything up
+			bpy.ops.ed.undo_push(message=self.bl_label)
+			bpy.ops.ed.undo()
 			
-		log.errorReport(jobMessage,"file",self,self.countSMDs)
-			
-		# Clean everything up
-		bpy.ops.ed.undo_push(message=self.bl_label)
-		bpy.ops.ed.undo()
-		
-		props.directory = ""
-		props.groupIndex = -1
+			props.directory = ""
+			props.groupIndex = -1
 
 		return {'FINISHED'}
 
@@ -4157,12 +4100,73 @@ def panel_func_group_mute(self,context):
 		cols = self.layout.box().column_flow(0)
 		for group in context.active_object.users_group:
 			cols.prop(group,"smd_mute",text=group.name)
+
+@persistent
+def scene_update(scene):
+	if not (bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated):
+		return
+	
+	scene.smd_export_list.clear()
+	validObs = getValidObs()
+	
+	def makeDisplayName(item,action = None):
+		out = item.smd_subdir + (getDirSep() if item.smd_subdir else "") + getObExportName(action if action else item) + getFileExt()
+		if type(item) == bpy.types.Group:
+			return out + " (Group)"
+		if item.type == 'ARMATURE':
+			return out + " (Action)"
+		else:
+			return out + " (Object)"
+	
+	if len(validObs):
+		validObs.sort(key=lambda ob: ob.name.lower())
+		
+		groups_sorted = []
+		for group in bpy.data.groups:
+			groups_sorted.append(group)
+		groups_sorted.sort(key=lambda g: g.name.lower())
+		
+		scene_groups = []
+		for group in groups_sorted:
+			valid = False
+			for object in group.objects:
+				if object in validObs:
+					validObs.remove(object)
+					valid = True
+			if valid:
+				scene_groups.append(group)
+				
+		for g in scene_groups:
+			i = scene.smd_export_list.add()
+			i.name = makeDisplayName(g)
+			i.item_name = g.name
+			i.type = "GROUP"
+			i.enabled = g.smd_export
+			
+			
+		for ob in validObs:
+			i_name = i_type = None
+			if ob.type == 'ARMATURE':
+				if ob.animation_data and ob.animation_data.action:
+					i_name = makeDisplayName(ob,ob.animation_data.action)
+					i_type = "ACTION"
+			else:
+				i_name = makeDisplayName(ob) 
+				i_type = "OBJECT"
+			if i_name:
+				i = scene.smd_export_list.add()
+				i.name = i_name
+				i.type = i_type
+				i.item_name = ob.name
+				i.enabled = ob.smd_export
+	
 	
 def register():
 	bpy.utils.register_module(__name__)
 	bpy.types.INFO_MT_file_import.append(menu_func_import)
 	bpy.types.INFO_MT_file_export.append(menu_func_export)
 	bpy.types.OBJECT_PT_groups.append(panel_func_group_mute)
+	bpy.app.handlers.scene_update_post.append(scene_update)
 
 	global cached_action_filter_list
 	cached_action_filter_list = 0
@@ -4183,12 +4187,15 @@ def register():
 	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Ignore Materials",description="Only export face-assigned image filenames",default=False)
 	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Only consider objects in active viewport layers for export",default=False)
 	bpy.types.Scene.smd_material_path = StringProperty(name="DMX material path",description="Folder relative to game root containing VMTs referenced in this scene (DMX only)")
-	
-	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this object with the scene",default=True)
-	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this object")
+	bpy.types.Scene.smd_export_list_active = IntProperty(name="SMD active object",default=0)
+	bpy.types.Scene.smd_export_list = CollectionProperty(type=SMD_CT_ObjectExportProps,options={'SKIP_SAVE'})	
+		
+	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this item with the scene",default=True)
+	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Optional path relative to scene output folder")
+	bpy.types.Object.smd_name = StringProperty(name="SMD Name",description="Optional filename override")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 
-	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour, but may break compatibility with existing SMDs")
+	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour, but may break compatibility with existing files")
 	arm_modes = (
 	('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
 	('FILTERED',"Action Filter","All actions that match the armature's filter term")
@@ -4196,10 +4203,13 @@ def register():
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
 	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports (SMD only)",default=False)
 
-	bpy.types.Group.smd_export = BoolProperty(name="SMD Export Combined",description="Export this group with the scene",default=True)
-	bpy.types.Group.smd_subdir = StringProperty(name="SMD Subfolder",description="Location, relative to scene root, for SMDs from this group")
+	bpy.types.Group.smd_export = bpy.types.Object.smd_export
+	bpy.types.Group.smd_subdir = bpy.types.Object.smd_subdir
 	bpy.types.Group.smd_expand = BoolProperty(name="SMD show expanded",description="Show the contents of this group in the Scene Exports panel",default=False)
 	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Prevents the SMD exporter from merging the objects in this group together",default=False)
+	bpy.types.Group.smd_name = bpy.types.Object.smd_name
+	
+	bpy.types.Action.smd_name = bpy.types.Object.smd_name
 	
 	bpy.types.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=(
 	('LEFT', 'Left side', 'Generate polygons on the left side'),
@@ -4212,6 +4222,7 @@ def unregister():
 	bpy.types.INFO_MT_file_import.remove(menu_func_import)
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 	bpy.types.OBJECT_PT_groups.remove(panel_func_group_mute)
+	bpy.app.handlers.scene_update_post.remove(scene_update)
 
 	Scene = bpy.types.Scene
 	del Scene.smd_path
@@ -4231,6 +4242,7 @@ def unregister():
 	del Object.smd_export
 	del Object.smd_subdir
 	del Object.smd_action_filter
+	del Object.smd_name
 
 	del bpy.types.Armature.smd_implicit_zero_bone
 	del bpy.types.Armature.smd_action_selection
@@ -4240,6 +4252,7 @@ def unregister():
 	del bpy.types.Group.smd_subdir
 	del bpy.types.Group.smd_expand
 	del bpy.types.Group.smd_mute
+	del bpy.types.Group.smd_name
 
 	del bpy.types.Curve.smd_faces
 
