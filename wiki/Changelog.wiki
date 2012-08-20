@@ -1,4 +1,11 @@
 #labels Featured
+== SMD Tools 1.4.2 - August 20th, 2012 ==
+
+Exporter
+
+  * Fixed exporting objects without armatures
+  * The exporter no longer leaves the scene in a huge mess if it fails
+
 == SMD Tools 1.4.1 - August 18th, 2012 ==
 
 Exporter:
