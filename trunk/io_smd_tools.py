@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 4, 2),
+	"version": (1, 5, 0),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -2413,7 +2413,7 @@ def writePolys(internal=False):
 	ob_weight_str = None
 	if smd.m.get('bp'):
 		ob_weight_str = " 1 {} 1".format(smd.boneNameToID[smd.m['bp']])
-	if len(weights) == 0:
+	elif len(weights) == 0:
 		ob_weight_str = " 0"
 	
 	bad_face_mats = 0
@@ -2954,27 +2954,36 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			vertex_data.add_attribute("jointCount",jointCount)
 			
 			pos = []
-			posIndices = []
 			norms = []
-			normIndices = []
 			texco = []
 			texcoIndices = []
 			jointWeights = []
 			jointIndices = []
+			balance = []
+			
+			Indices = []
 			
 			uv_layer = ob.data.uv_layers.active.data
 			
 			bench("setup")
+			
+			if ob.get('bp'):
+				jointWeights = [ 1.0 ] * len(ob.data.vertices)
+				jointIndices = [ smd.boneNameToID[ob['bp']] ] * len(ob.data.vertices)
 			
 			for vert in ob.data.vertices:				
 				pos.append(datamodel.Vector3(vert.co))
 				norms.append(datamodel.Vector3(vert.normal))
 				vert.select = False
 				
-				if ob.get('bp'):
-					jointWeights.append( 1.0 )
-					jointIndices.append( smd.boneNameToID[ob['bp']] )
-				elif jointCount:
+				'''if ob.dimensions.x == 0:
+					balance.append(0)
+				else:
+					balance.append(vert.co.x / ob.dimensions.x / 2)'''
+					
+				balance.append(1.0 if vert.co.y > 0 else 0.0)
+				
+				if jointCount:
 					weights = [0.0] * jointCount
 					indices = [0] * jointCount
 					i = 0
@@ -2997,8 +3006,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				for vert_index in poly.vertices:
 					vert = ob.data.vertices[vert_index]
 					
-					posIndices.append(vert_index)
-					normIndices.append(vert_index)
+					Indices.append(vert_index)
 					
 					uv = datamodel.Vector2(uv_layer[poly.loop_start + i].uv)					
 					try:
@@ -3010,10 +3018,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					i+=1
 			bench("polys")
 			vertex_data.add_attribute("positions",pos,datamodel.Vector3)
-			vertex_data.add_attribute("positionsIndices",posIndices,int)
+			vertex_data.add_attribute("positionsIndices",Indices,int)
 			
 			vertex_data.add_attribute("normals",norms,datamodel.Vector3)
-			vertex_data.add_attribute("normalsIndices",normIndices,int)
+			vertex_data.add_attribute("normalsIndices",Indices,int)
 			
 			vertex_data.add_attribute("textureCoordinates",texco,datamodel.Vector2)
 			vertex_data.add_attribute("textureCoordinatesIndices",texcoIndices,int)
@@ -3022,8 +3030,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				vertex_data.add_attribute("jointWeights",jointWeights,float)
 				vertex_data.add_attribute("jointIndices",jointIndices,int)
 			
-			#vertex_data.add_attribute("balance",[0.0] * len(posIndices),float)
-			#vertex_data.add_attribute("balanceIndices",[0] * len(posIndices),int)
+			vertex_data.add_attribute("balance",balance,float)
+			vertex_data.add_attribute("balanceIndices",Indices,int)
 			bench("insert")
 			face_sets = {}
 			bad_face_mats = 0
@@ -3073,14 +3081,14 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					
 					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
 					DmeCombinationInputControl.add_attribute("stereo",True)
-					DmeCombinationInputControl.add_attribute("eyelid",False)
+					#DmeCombinationInputControl.add_attribute("eyelid",False)
 					
 					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
 					if wrinkle_vg:
 						DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)
 					
-					control_values.append(datamodel.Vector3([0.0,0.0,0.5]))
-					delta_state_weights.append(datamodel.Vector2([0.0,0.0]))
+					control_values.append(datamodel.Vector3([0.5,0.5,0.5])) # ??
+					delta_state_weights.append(datamodel.Vector2([0.0,0.0])) # ??
 					
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
@@ -3096,9 +3104,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					
 					if wrinkle_vg: vertexFormat.value.append("wrinkle")
 					
-					DmeVertexDeltaData.add_attribute("jointCount",0)
-					DmeVertexDeltaData.add_attribute("flipVCoordinates",True)
-					DmeVertexDeltaData.add_attribute("corrected",True)
+					# what do these do?
+					#DmeVertexDeltaData.add_attribute("flipVCoordinates",False)
+					#DmeVertexDeltaData.add_attribute("corrected",True)
 					
 					shape_pos = []
 					shape_posIndices = []
@@ -3547,13 +3555,17 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		col.prop(item,"smd_name",text="Filename",icon='FILE_TEXT')
 		
 		col = l.box().column()
-		title_row = col.row()
-		title_row.alignment = 'CENTER'
-		col.separator()
+		
+		def makeTitleRow(layout):
+			out = layout.row()
+			out.alignment = 'CENTER'
+			layout.separator()
+			return out
+			
 		want_shapes = False
 		
 		if type(item) == bpy.types.Group:
-			title_row.label(text="Group properties",icon='GROUP')
+			makeTitleRow(col).label(text="Group properties",icon='GROUP')
 			group_items = col.box().column_flow(2)
 			for g_ob in item.objects:
 				if g_ob in validObs:
@@ -3561,7 +3573,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 					if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
 		elif item:
 			if item.type == 'ARMATURE':
-				title_row.label(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
+				makeTitleRow(col).label(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
 				col.prop(item.data,"smd_action_selection")
 				if item.data.smd_action_selection == 'FILTERED':
 					col.prop(item,"smd_action_filter",text="Action Filter")
@@ -3575,7 +3587,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 
 				col.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
 			if item.type == 'CURVE':
-				title_row.label(text="Curve properties",icon='OUTLINER_OB_CURVE')
+				makeTitleRow(col).label(text="Curve properties",icon='OUTLINER_OB_CURVE')
 				col.label(text="Generate polygons on:")
 				row = col.row()
 				row.prop(item.data,"smd_faces",expand=True)
@@ -3583,7 +3595,9 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			if hasShapes(item,-1): want_shapes = item
 		
 		if want_shapes:
-			l.template_list(want_shapes.data.shape_keys,"key_blocks",want_shapes,"active_shape_key_index",rows=3,maxrows=5)
+			col = l.box().column()
+			makeTitleRow(col).label(text="Flex properties",icon='SHAPEKEY_DATA')
+			col.template_list(want_shapes.data.shape_keys,"key_blocks",want_shapes,"active_shape_key_index",rows=2,maxrows=2)
 
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 	bl_label = "Source Engine QC Complies"
@@ -3686,8 +3700,9 @@ class SmdExporter(bpy.types.Operator):
 		global log
 		log = logger()
 		
+		bpy.ops.ed.undo_push(message=self.bl_label)
+		
 		try:
-			bpy.ops.ed.undo_push(message=self.bl_label)
 					
 			bpy.context.tool_settings.use_keyframe_insert_auto = False
 			bpy.context.tool_settings.use_keyframe_insert_keyingset = False

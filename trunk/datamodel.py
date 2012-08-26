@@ -22,10 +22,13 @@ def _validate_array_list(list,array_type):
 	for item in list:
 		if type(item) != array_type:
 			raise TypeError("Sequence must contain only {} values".format(array_type))
+			
+def _quote(str):
+	return "\"{}\"".format(str)
 
 class _Array(list):
 	type = None
-	type_str = ""
+	type_str = ""	
 	
 	def __init__(self,list=None):
 		_validate_array_list(list,self.type)
@@ -33,6 +36,12 @@ class _Array(list):
 	
 	def tobytes(self, datamodel, elem):
 		return array.array(self.type_str,self).tobytes()
+	def to_kv2(self,datamodel,elem,indent):
+		out = "\n{}[\n{}".format('\t' * indent, '\t' * (indent+1))
+		for i,item in enumerate(self):
+			if i > 0: out += ", "
+			out += item.to_kv2(self,datamodel,elem,0)
+		out += "\n{}]\n".format('\t' * indent)
 
 class _BoolArray(_Array):
 	type = bool
@@ -47,7 +56,7 @@ class _StrArray(_Array):
 	type = str	
 	def tobytes(self, datamodel, elem):
 		out = bytes()
-		for item in self: out += _get_string(datamodel,item,use_str_dict=False)
+		for item in self:out += _get_string(datamodel,item,use_str_dict=False)
 		return out
 	
 class _Vector(list):
@@ -62,6 +71,13 @@ class _Vector(list):
 		out = bytes()
 		for ord in self: out += struct.pack("f",ord)
 		return out		
+	def to_kv2(self):
+		out = ""
+		for i,ord in enumerate(self):
+			if i > 0: out += " "
+			out += "{:.10f}".format(ord)
+		return _quote(out)
+		
 class Vector2(_Vector):
 	type_str = "ff"
 class Vector3(_Vector):
@@ -110,6 +126,8 @@ class _ColorArray(_Vector4Array):
 class Time(float):
 	def tobytes(self):
 		return struct.pack("i",int(self * 10000))
+	def to_kv2(self):
+		return _quote(self)
 class _TimeArray(_Array):
 	type = Time
 	def tobytes(self, datamodel, elem):
@@ -219,6 +237,7 @@ def _get_dmx_type_id(encoding,version,type):
 class DataModel:
 	elements = []
 	root = None
+	indent = 0
 	
 	def __init__(self,format,format_ver):
 		if type(format) != str or type(format_ver) != int:
@@ -299,10 +318,19 @@ class DataModel:
 					self._write(self.elem_chain.index(prop.value),elem)
 				else:
 					self._write(prop.value,elem)
+	
+	def _write_kv2_indented(str):
+		self.out.write( ('\t' * self.indent) + str )
+		
+	def _write_element_kv2(self,elem):
+		self._write_kv2_indented(_quote(elem.name))
 		
 	def _write_element(self,elem):
-		self._write_element_index(elem)
-		self._write_element_props()
+		if self.encoding == 'binary':
+			self._write_element_index(elem)
+			self._write_element_props()
+		elif self.encoding == 'keyvalues2':
+			self.write_element_kv2(elem)
 		
 	def _build_str_dict(self,elem):
 		self.str_dict.add(elem.name)
@@ -331,18 +359,16 @@ class DataModel:
 		# header
 		self._write("<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver),use_str_dict = False)
 		
-		# string dictionary
-		self.str_dict = set()
-		self.str_dict_checked = []
-		self._build_str_dict(self.root)
-		self.str_dict = list(self.str_dict)
-		
-		self._write(len(self.str_dict))
-		x=0
-		for i in self.str_dict:
-			self._write(i,use_str_dict = False)
-			#print(x,i)
-			x+=1
+		if encoding == 'binary':
+			# string dictionary
+			self.str_dict = set()
+			self.str_dict_checked = []
+			self._build_str_dict(self.root)
+			self.str_dict = list(self.str_dict)
+			
+			self._write(len(self.str_dict))
+			for i in self.str_dict:
+				self._write(i,use_str_dict = False)
 			
 		# count elements
 		out_elems = set()
@@ -358,7 +384,8 @@ class DataModel:
 						if i not in out_elems:
 							_count_child_elems(i)
 		_count_child_elems(self.root)
-		self._write(len(out_elems))
+		if encoding == 'binary':
+			self._write(len(out_elems))
 		
 		self.elem_chain = []
 		self._write_element(self.root) # only write stuff referenced by the root element
