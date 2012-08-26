@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.4.2 - August 26th, 2012 ==
+
+Exporter:
+
+  * SMD: fixed bone parent export when there is more than one bone
+
 == SMD Tools 1.4.2 - August 20th, 2012 ==
 
 Exporter
