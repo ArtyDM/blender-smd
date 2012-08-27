@@ -41,9 +41,7 @@ def _get_kv2_repr(var):
 		return "1" if var else "0"
 	elif t == float:
 		out = "{:.10f}".format(var)
-		out.rstrip("0")
-		out.rstrip(".")
-		return out
+		return out.rstrip("0").rstrip(".")
 	elif t == Element:
 		return str(var.id)
 	else:
