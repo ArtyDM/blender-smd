@@ -1,9 +1,15 @@
 import struct, array
 
+global _kv2_indent
+_kv2_indent = 0
+
 def check_support(encoding,encoding_ver):
 	if encoding == 'binary':
 		if encoding_ver not in [5]:
 			raise ValueError("Version {} of binary DMX is not supported".format(encoding_ver))
+	elif encoding == 'keyvalues2':
+		if encoding_ver not in [1]:
+			raise ValueError("Version {} of keyvalues2 DMX is not supported".format(encoding_ver))
 	else:
 		raise ValueError("DMX encoding \"{}\" is not supported".format(encoding))
 
@@ -17,6 +23,9 @@ def _get_string(datamodel,string,use_str_dict = True):
 	else:
 		return bytes(string,'ASCII') + bytes(1)
 
+def _get_kv2_indent():
+	return '\t' * _kv2_indent
+
 def _validate_array_list(list,array_type):
 	if not list: return
 	for item in list:
@@ -26,6 +35,20 @@ def _validate_array_list(list,array_type):
 def _quote(str):
 	return "\"{}\"".format(str)
 
+def _get_kv2_repr(var):
+	t = type(var)
+	if t == bool:
+		return "1" if var else "0"
+	elif t == float:
+		out = "{:.10f}".format(var)
+		out.rstrip("0")
+		out.rstrip(".")
+		return out
+	elif t == Element:
+		return str(var.id)
+	else:
+		return str(var)
+
 class _Array(list):
 	type = None
 	type_str = ""	
@@ -33,15 +56,37 @@ class _Array(list):
 	def __init__(self,list=None):
 		_validate_array_list(list,self.type)
 		return super().__init__(list)
+		
+	def __repr__(self):
+		global _kv2_indent
+		
+		if len(self) == 0:
+			return "[ ]"
+		if self.type == Element:
+			out = "\n{}[\n".format(_get_kv2_indent())
+			_kv2_indent += 1
+		else:
+			out = "[ "
+		
+		for i,item in enumerate(self):
+			if i > 0: out += ", "
+			if self.type == Element:				
+				if i > 0: out += "\n"
+				if item._users == 1:
+					out += _get_kv2_indent() + item._get_kv2_str()
+				else:
+					out += "{}{} {}".format(_get_kv2_indent(),_quote("element"),_quote(item.id))				
+			else:
+				out += _quote(_get_kv2_repr(item))
+		
+		if self.type == Element:
+			_kv2_indent -= 1
+			return "{}\n{}]".format(out,_get_kv2_indent())
+		else:
+			return "{} ]".format(out)
 	
 	def tobytes(self, datamodel, elem):
 		return array.array(self.type_str,self).tobytes()
-	def to_kv2(self,datamodel,elem,indent):
-		out = "\n{}[\n{}".format('\t' * indent, '\t' * (indent+1))
-		for i,item in enumerate(self):
-			if i > 0: out += ", "
-			out += item.to_kv2(self,datamodel,elem,0)
-		out += "\n{}]\n".format('\t' * indent)
 
 class _BoolArray(_Array):
 	type = bool
@@ -58,7 +103,7 @@ class _StrArray(_Array):
 		out = bytes()
 		for item in self:out += _get_string(datamodel,item,use_str_dict=False)
 		return out
-	
+
 class _Vector(list):
 	type_str = ""
 	def __init__(self,list):
@@ -66,17 +111,19 @@ class _Vector(list):
 		if len(list) != len(self.type_str):
 			raise TypeError("Expected {} values".format(len(self.type_str)))
 		super().__init__(list)
+		
+	def __repr__(self):
+		out = ""
+		for i,ord in enumerate(self):
+			if i > 0: out += " "
+			out += _get_kv2_repr(ord)
+			
+		return out
 	
 	def tobytes(self):
 		out = bytes()
 		for ord in self: out += struct.pack("f",ord)
-		return out		
-	def to_kv2(self):
-		out = ""
-		for i,ord in enumerate(self):
-			if i > 0: out += " "
-			out += "{:.10f}".format(ord)
-		return _quote(out)
+		return out
 		
 class Vector2(_Vector):
 	type_str = "ff"
@@ -126,8 +173,6 @@ class _ColorArray(_Vector4Array):
 class Time(float):
 	def tobytes(self):
 		return struct.pack("i",int(self * 10000))
-	def to_kv2(self):
-		return _quote(self)
 class _TimeArray(_Array):
 	type = Time
 	def tobytes(self, datamodel, elem):
@@ -153,7 +198,7 @@ class Attribute:
 
 _array_types = [list,set,tuple,array.array]
 class Element:
-	properties = {}
+	attributes = {}
 	
 	def __init__(self,name,elemtype="DmElement",id=None):
 		# Blender bug: importing uuid causes a runtime exception. The return value is not affected, thankfully.
@@ -167,7 +212,7 @@ class Element:
 		self.type = elemtype
 		self.id = id if id else uuid.uuid4()
 		
-		self.properties = {}
+		self.attributes = {}
 		self.attribute_order = []
 		
 	def __repr__(self):
@@ -175,7 +220,7 @@ class Element:
 		
 	def add_attribute(self,name,value,prop_type = None):
 		t = type(value)
-		if self.properties.get(name):
+		if self.attributes.get(name):
 			raise ValueError("Attribute \"{}\" already exists".format(name))
 		if t in _array_types and not prop_type:
 			raise ValueError("A datamodel type must be specified for arrays")
@@ -185,13 +230,63 @@ class Element:
 			prop_type = _get_array_type(prop_type)
 			value = prop_type(value)
 		prop = Attribute(name,value)
-		self.properties[name] = prop
+		self.attributes[name] = prop
 		self.attribute_order.append(name)
 		
 		return prop
 		
 	def get_attribute(self,name):
-		return self.properties[name]
+		return self.attributes[name]
+		
+	def _get_kv2_str(self):
+		global _kv2_indent
+		out = ""
+		out += _quote(self.type)
+		out += "\n" + _get_kv2_indent() + "{\n"
+		_kv2_indent += 1
+		
+		def _make_attr_str(attr, is_array = False):
+			attr_str = _get_kv2_indent()
+			
+			for i,item in enumerate(attr):
+				if i > 0: attr_str += " "
+				
+				if is_array and i == 2:
+					attr_str += str(item)
+				else:
+					attr_str += _quote(item)
+			
+			return attr_str + "\n"
+		
+		out += _make_attr_str([ "id", "elementid", self.id ])
+		out += _make_attr_str([ "name", "string", self.name ])
+		
+		for attr_name in self.attribute_order:
+			attr = self.attributes[attr_name]
+			t = type(attr.value)
+			
+			if t == Element and attr.value._users == 1:
+				out += _get_kv2_indent()
+				out += _quote(attr.name)
+				out += " {}".format( attr.value._get_kv2_str() )
+				out += "\n"
+			else:				
+				if issubclass(t,_Array):
+					if t == _ElementArray:
+						type_str = "element_array"
+					else:
+						type_str = _dmxtypes_str[_dmxtypes_array.index(t)] + "_array"
+				else:
+					type_str = _dmxtypes_str[_dmxtypes.index(t)]
+				
+				out += _make_attr_str( [
+					attr.name,
+					type_str,
+					_get_kv2_repr(attr.value)
+				], issubclass(t,_Array) )
+		_kv2_indent -= 1
+		out += _get_kv2_indent() + "}"
+		return out
 
 class _ElementArray(_Array):
 	type = Element
@@ -203,6 +298,7 @@ class _ElementArray(_Array):
 
 _dmxtypes = [Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix]
 _dmxtypes_array = [_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray]
+_dmxtypes_str = ["element","int","float","bool","string","binary","time","color","vector2","vector3","vector4","angle","quaternion","matrix"]
 
 def _get_array_type(single_type):
 	if single_type in _dmxtypes_array: raise ValueError("Argument is already an array type")
@@ -237,7 +333,6 @@ def _get_dmx_type_id(encoding,version,type):
 class DataModel:
 	elements = []
 	root = None
-	indent = 0
 	
 	def __init__(self,format,format_ver):
 		if type(format) != str or type(format_ver) != int:
@@ -273,7 +368,7 @@ class DataModel:
 		elif t == uuid.UUID:
 			self.out.write(value.bytes)
 		elif t == Element:
-			raise Error("Don't write elements as properties")
+			raise Error("Don't write elements as attributes")
 		elif t == str:
 			self.out.write( _get_string(self,value,use_str_dict) )
 				
@@ -298,7 +393,7 @@ class DataModel:
 		self.elem_chain.append(elem)
 		
 		for name in elem.attribute_order:
-			prop = elem.properties[name]
+			prop = elem.attributes[name]
 			t = type(prop.value)
 			if t == Element and prop.value not in self.elem_chain:
 				self._write_element_index(prop.value)
@@ -307,37 +402,24 @@ class DataModel:
 					if i not in self.elem_chain:
 						self._write_element_index(i)
 		
-	def _write_element_props(self):
+	def _write_element_props(self):		
 		for elem in self.elem_chain:
-			self._write(len(elem.properties))
+			self._write(len(elem.attributes))
 			for prop_name in elem.attribute_order:
-				prop = elem.properties[prop_name]
+				prop = elem.attributes[prop_name]
 				self._write(prop_name)
 				self._write(struct.pack("b", prop.typeid(self.encoding,self.encoding_ver) ))
 				if type(prop.value) == Element:
 					self._write(self.elem_chain.index(prop.value),elem)
 				else:
 					self._write(prop.value,elem)
-	
-	def _write_kv2_indented(str):
-		self.out.write( ('\t' * self.indent) + str )
-		
-	def _write_element_kv2(self,elem):
-		self._write_kv2_indented(_quote(elem.name))
-		
-	def _write_element(self,elem):
-		if self.encoding == 'binary':
-			self._write_element_index(elem)
-			self._write_element_props()
-		elif self.encoding == 'keyvalues2':
-			self.write_element_kv2(elem)
 		
 	def _build_str_dict(self,elem):
 		self.str_dict.add(elem.name)
 		self.str_dict_checked.append(elem)
 		self.str_dict.add(elem.type)
 		for name in elem.attribute_order:
-			prop = elem.properties[name]
+			prop = elem.attributes[name]
 			self.str_dict.add(name)
 			if type(prop.value) == str:
 				self.str_dict.add(prop.value)
@@ -352,12 +434,15 @@ class DataModel:
 	def write(self,path,encoding,encoding_ver):
 		check_support(encoding, encoding_ver)
 		
-		self.out = open(path,'wb')
+		self.out = open(path,'wb' if encoding == "binary" else 'w')
 		self.encoding = encoding
 		self.encoding_ver = encoding_ver
 		
-		# header
-		self._write("<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver),use_str_dict = False)
+		header = "<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver)
+		if self.encoding == 'binary':
+			self.out.write( bytes(header,'ASCII') + bytes(1))
+		elif self.encoding == 'keyvalues2':
+			self.out.write(header)
 		
 		if encoding == 'binary':
 			# string dictionary
@@ -372,22 +457,33 @@ class DataModel:
 			
 		# count elements
 		out_elems = set()
+		for elem in self.elements:
+			elem._users = 0
 		def _count_child_elems(elem):
 			out_elems.add(elem)
 			for name in elem.attribute_order:
-				prop = elem.properties[name]
+				prop = elem.attributes[name]
 				t = type(prop.value)
-				if t == Element and prop.value not in out_elems:
-					_count_child_elems(prop.value)
-				if t == _ElementArray:
+				if t == Element:
+					if prop.value not in out_elems:
+						_count_child_elems(prop.value)
+					prop.value._users += 1
+				elif t == _ElementArray:
 					for i in prop.value:
 						if i not in out_elems:
 							_count_child_elems(i)
+						i._users += 1
 		_count_child_elems(self.root)
-		if encoding == 'binary':
-			self._write(len(out_elems))
 		
-		self.elem_chain = []
-		self._write_element(self.root) # only write stuff referenced by the root element
+		if self.encoding == 'binary':
+			self._write(len(out_elems))
+			self.elem_chain = []
+			self._write_element_index(self.root)
+			self._write_element_props()
+		elif self.encoding == 'keyvalues2':
+			self.out.write(self.root._get_kv2_str() + "\n\n")
+			for elem in out_elems:
+				if elem._users > 1:
+					self.out.write(elem._get_kv2_str() + "\n\n")
 				
 		self.out.close()
