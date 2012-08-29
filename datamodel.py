@@ -1,7 +1,13 @@
 import struct, array
+from struct import unpack,calcsize
 
 global _kv2_indent
 _kv2_indent = 0
+global header_format
+header_format = "<!-- dmx encoding {:s} {:d} format {:s} {:d} -->\n"
+
+intsize = calcsize("i")
+floatsize = calcsize("f")
 
 def check_support(encoding,encoding_ver):
 	if encoding == 'binary':
@@ -34,6 +40,15 @@ def _validate_array_list(list,array_type):
 			
 def _quote(str):
 	return "\"{}\"".format(str)
+	
+def get_bool(file):
+	return file.read(1) != b'\x00'
+def get_int(file):
+	return int( unpack("i",file.read(intsize))[0] )
+def get_float(file):
+	return float( unpack("f",file.read(floatsize))[0] )
+def get_vec(file,dim):
+	return Vector( unpack("{}f".format(dim),file.read(floatsize*dim)) )
 
 def _get_kv2_repr(var):
 	t = type(var)
@@ -85,6 +100,10 @@ class _Array(list):
 	
 	def tobytes(self, datamodel, elem):
 		return array.array(self.type_str,self).tobytes()
+		
+	def frombytes(self,file):
+		length = get_int(file)		
+		self.extend( unpack( typestr*length, file.read( calcsize(typestr) * length) ) )
 
 class _BoolArray(_Array):
 	type = bool
@@ -436,7 +455,8 @@ class DataModel:
 		self.encoding = encoding
 		self.encoding_ver = encoding_ver
 		
-		header = "<!-- dmx encoding {} {} format {} {} -->\n".format(encoding,encoding_ver,self.format,self.format_ver)
+		global header_format
+		header = header_format.format(encoding,encoding_ver,self.format,self.format_ver)
 		if self.encoding == 'binary':
 			self.out.write( bytes(header,'ASCII') + bytes(1))
 		elif self.encoding == 'keyvalues2':
@@ -454,11 +474,11 @@ class DataModel:
 				self._write(i,use_str_dict = False)
 			
 		# count elements
-		out_elems = set()
+		out_elems = []
 		for elem in self.elements:
 			elem._users = 0
 		def _count_child_elems(elem):
-			out_elems.add(elem)
+			out_elems.append(elem)
 			for name in elem.attribute_order:
 				prop = elem.attributes[name]
 				t = type(prop.value)
@@ -485,3 +505,95 @@ class DataModel:
 					self.out.write(elem._get_kv2_str() + "\n\n")
 				
 		self.out.close()
+		
+def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_test_0.dmx"):
+	in_file = open(path,'r')
+	
+	try:
+		import re, uuid
+		global header_format
+		pattern = header_format[:]
+		pattern = pattern.replace("{:d}","([0-9]+)")
+		pattern = pattern.replace("{:s}","(\S+)")
+		
+		header = in_file.readline()
+		
+		encoding,encoding_ver, format,format_ver = re.findall(pattern,header)[0]
+		encoding_ver = int(encoding_ver)
+		format_ver = int(format_ver)
+		
+		check_support(encoding,encoding_ver)		
+		dm = DataModel(format,format_ver)
+		
+		if encoding == 'keyvalues2':
+			def parse_line(line):
+				return re.findall("\"(.*?)\"",line.strip("\n\t ") )
+				
+			def read_element(elem_type):
+				id = None
+				name = None
+				cur = None
+				indent = '\t' * len(element_chain)
+				for line in in_file:
+					if line.endswith("}\n"):
+						element_chain.pop()
+						print("{}- {}\t\t{}".format(indent,cur,line.replace("\t",".")))
+						return cur
+					line = parse_line(line)
+					if len(line) == 0:
+						continue
+					
+					if line[0] == 'id': id = uuid.UUID(hex=line[2])
+					elif line[0] == 'name': name = line[2]
+					
+					if not cur:
+						if id and name:
+							cur = dm.add_element(name,elem_type,id)
+							element_chain.append(cur)
+							print("{}+ {}\t\t{}".format(indent,cur,line))
+						continue
+					
+					if len(line) >= 2:
+						if line[1].endswith("_array"):
+							num_arrays = 0
+							for line in in_file:
+								if "[" in line: num_arrays += 1
+								if "]" in line: num_arrays -= 1
+								if num_arrays == 0: break
+							continue
+						elif len(line) == 2:
+							cur.add_attribute(line[0],read_element(line[1]))
+						elif len(line) == 3:
+							attr_name = line[0]
+							attr_value = None
+							
+							if line[1] == 'string': attr_value = line[2]
+							elif line[1] == 'int': attr_value = int(line[2])
+							elif line[1] == 'float': attr_value = float(line[2])
+							elif line[1] == 'bool': attr_value = bool(int(line[2]))
+							elif line[1] == 'time': attr_value = Time(line[2])
+							
+							if attr_value != None:
+								cur.add_attribute(attr_name,attr_value)
+
+				raise IOError("Unexpected EOF")					
+			
+			element_chain = []
+			for line in in_file:
+				line = parse_line(line)
+				if len(line) == 0: continue
+								
+				if len(element_chain) == 0 and len(line) == 1:
+					read_element(line[0])
+				
+		elif encoding == 'binary':
+			in_file.close()
+			in_file = open(path,'rb')
+			in_file.seek(len(header) + 1)			
+		
+		dm.write(path + "_out.dmx","keyvalues2",1)
+		return dm
+	finally:
+		in_file.close()
+		
+			

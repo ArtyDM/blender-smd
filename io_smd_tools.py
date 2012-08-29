@@ -77,6 +77,7 @@ src_branches = (
 ('left 4 dead','Left 4 Dead',''),
 ('alien swarm','Alien Swarm',''),
 ('portal 2','Portal 2',''),
+('Counter-Strike Global Offensive','Counter-Strike: GO',''),
 ('SourceFilmmaker', 'Source Filmmaker', '')
 )
 
@@ -90,6 +91,7 @@ dmx_versions = {
 'alien swarm':[5,18],
 'orangebox':[5,18], # aka Source MP
 'portal 2':[5,18],
+'Counter-Strike Global Offensive':[5,18],
 'SourceFilmmaker':[5,18]
 }
 
@@ -1580,7 +1582,12 @@ def readSMD( context, filepath, upAxis, rotMode, newscene = False, smd_type = No
 		bpy.context.scene.name = smd.jobName
 
 	print("\nSMD IMPORTER: now working on",smd.jobName)
-	if file.readline() != "version 1\n":
+	
+	while True:
+		header = parseQuoteBlockedLine(file.readline())
+		if len(header): break
+	
+	if header != ["version" ,"1"]:
 		log.warning ("Unrecognised/invalid SMD file. Import will proceed, but may fail!")
 
 	if smd.jobType == None:
@@ -2929,6 +2936,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			
 			ob_weights = getWeightmap(ob)
 			
+			has_shapes = smd.dmxShapes.get(ob['src_name'])
+			
 			jointCount = 0
 			badJointCounts = 0
 			if ob.get('bp'):
@@ -2948,6 +2957,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			
 			format = [ "positions", "normals", "textureCoordinates" ]
 			if jointCount: format.extend( [ "jointWeights", "jointIndices" ] )
+			if has_shapes: format.append("balance")
 			vertex_data.add_attribute("vertexFormat", format, str)
 			
 			vertex_data.add_attribute("flipVCoordinates",True)
@@ -2971,17 +2981,21 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				jointWeights = [ 1.0 ] * len(ob.data.vertices)
 				jointIndices = [ smd.boneNameToID[ob['bp']] ] * len(ob.data.vertices)
 			
+			width = ob.dimensions.x * ( 1 - (bpy.data.objects[ob['src_name']].data.smd_flex_stereo_sharpness / 100) )
 			for vert in ob.data.vertices:				
 				pos.append(datamodel.Vector3(vert.co))
 				norms.append(datamodel.Vector3(vert.normal))
 				vert.select = False
 				
-				'''if ob.dimensions.x == 0:
-					balance.append(0)
-				else:
-					balance.append(vert.co.x / ob.dimensions.x / 2)'''
-					
-				balance.append(1.0 if vert.co.y > 0 else 0.0)
+				if has_shapes:
+					if width == 0:
+						if vert.co.x == 0: balance_out = 0.5
+						elif vert.co.x > 0: balance_out = 1
+						else: balance_out = 0
+					else:
+						balance_out = (-vert.co.x / width / 2) + 0.5
+						balance_out = min(1,max(0, balance_out))
+					balance.append( float(balance_out) )
 				
 				if jointCount:
 					weights = [0.0] * jointCount
@@ -3030,8 +3044,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				vertex_data.add_attribute("jointWeights",jointWeights,float)
 				vertex_data.add_attribute("jointIndices",jointIndices,int)
 			
-			vertex_data.add_attribute("balance",balance,float)
-			vertex_data.add_attribute("balanceIndices",Indices,int)
+			if has_shapes:
+				vertex_data.add_attribute("balance",balance,float)
+				vertex_data.add_attribute("balanceIndices",Indices,int)
 			bench("insert")
 			face_sets = {}
 			bad_face_mats = 0
@@ -3070,7 +3085,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bench("faces")
 			
 			# shapes
-			if smd.dmxShapes.get(ob['src_name']):
+			if has_shapes:
 				shape_elems = []
 				control_elems = []
 				control_values = []
@@ -3080,7 +3095,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					control_elems.append(DmeCombinationInputControl)
 					
 					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
-					DmeCombinationInputControl.add_attribute("stereo",True)
+					DmeCombinationInputControl.add_attribute("stereo",False)
 					#DmeCombinationInputControl.add_attribute("eyelid",False)
 					
 					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
@@ -3237,7 +3252,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			bench("frame {}".format(frame+1))
 	
 	benchReset()
-	dm.write(filepath,"binary",DatamodelEncodingVersion())
+	if bpy.context.scene.smd_use_kv2:
+		dm.write(filepath,"keyvalues2",1)
+	else:
+		dm.write(filepath,"binary",DatamodelEncodingVersion())
 	bench("Writing")
 	
 	print("DMX export took",time.time() - start,"\n")
@@ -3270,7 +3288,6 @@ def compileQCs(path=None):
 	if sdk_path:
 		ncf_path = sdk_path + "\\..\\..\\common\\"
 	else:
-		# Python vanilla can't access the registry! (I will use the DMX bytecode to work around this)
 		for path in [ os.getenv('PROGRAMFILES(X86)'), os.getenv('PROGRAMFILES') ]:
 			path += "\\steam\\steamapps\\common"
 			if os.path.exists(path):
@@ -3279,7 +3296,7 @@ def compileQCs(path=None):
 	studiomdl_path = None
 	if branch in ['ep1','source2007','source2009', 'orangebox'] and sdk_path:
 		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2'] and ncf_path:
+	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2', 'Counter-Strike Global Offensive'] and ncf_path:
 		studiomdl_path = ncf_path + branch + "\\bin\\"
 	elif branch in ['SourceFilmmaker']:
 		studiomdl_path = ncf_path + branch + "\\game\\bin\\"
@@ -3594,11 +3611,13 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		
 			if hasShapes(item,-1): want_shapes = item
 		
-		if want_shapes:
+		if want_shapes and context.active_object.active_shape_key:
 			col = l.box().column()
 			makeTitleRow(col).label(text="Flex properties",icon='SHAPEKEY_DATA')
-			col.template_list(want_shapes.data.shape_keys,"key_blocks",want_shapes,"active_shape_key_index",rows=2,maxrows=2)
-
+			
+			col.prop(context.active_object.data,"smd_flex_stereo_sharpness",text="Stereo split sharpness")
+				
+				
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 	bl_label = "Source Engine QC Complies"
 	bl_space_type = "PROPERTIES"
@@ -4204,6 +4223,7 @@ def register():
 	bpy.types.Scene.smd_material_path = StringProperty(name="DMX material path",description="Folder relative to game root containing VMTs referenced in this scene (DMX only)")
 	bpy.types.Scene.smd_export_list_active = IntProperty(name="SMD active object",default=0)
 	bpy.types.Scene.smd_export_list = CollectionProperty(type=SMD_CT_ObjectExportProps,options={'SKIP_SAVE'})	
+	bpy.types.Scene.smd_use_kv2 = BoolProperty(name="SMD Write KeyValues2",description="Write ASCII DMX files",default=False)
 		
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this item with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Optional path relative to scene output folder")
@@ -4225,6 +4245,8 @@ def register():
 	bpy.types.Group.smd_name = bpy.types.Object.smd_name
 	
 	bpy.types.Action.smd_name = bpy.types.Object.smd_name
+	
+	bpy.types.Mesh.smd_flex_stereo_sharpness = FloatProperty(name="DMX stereo split sharpness",description="How sharply stereo flex shapes should transition from left to right",default=90,min=0,max=100,subtype='PERCENTAGE')
 	
 	bpy.types.Curve.smd_faces = EnumProperty(name="SMD export which faces",items=(
 	('LEFT', 'Left side', 'Generate polygons on the left side'),
@@ -4252,6 +4274,7 @@ def unregister():
 	del Scene.smd_use_image_names
 	del Scene.smd_layer_filter
 	del Scene.smd_material_path
+	del Scene.smd_use_kv2
 
 	Object = bpy.types.Object
 	del Object.smd_export
@@ -4270,6 +4293,10 @@ def unregister():
 	del bpy.types.Group.smd_name
 
 	del bpy.types.Curve.smd_faces
+	
+	del bpy.types.Action.smd_name
+	
+	del bpy.types.Mesh.smd_flex_stereo_sharpness
 
 if __name__ == "__main__":
 	register()
