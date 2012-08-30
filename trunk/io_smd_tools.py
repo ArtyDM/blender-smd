@@ -3095,8 +3095,6 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					control_elems.append(DmeCombinationInputControl)
 					
 					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
-					DmeCombinationInputControl.add_attribute("stereo",False)
-					#DmeCombinationInputControl.add_attribute("eyelid",False)
 					
 					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
 					if wrinkle_vg:
@@ -3108,11 +3106,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
 					
-					vertexFormat = DmeVertexDeltaData.add_attribute("vertexFormat",[
-						"positions",
-						"normals"
-						]
-					,str)
+					vertexFormat = DmeVertexDeltaData.add_attribute("vertexFormat",[ "positions", "normals" ],str)
 					
 					wrinkle = []
 					wrinkleIndices = []
@@ -3615,7 +3609,13 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			col = l.box().column()
 			makeTitleRow(col).label(text="Flex properties",icon='SHAPEKEY_DATA')
 			
-			col.prop(context.active_object.data,"smd_flex_stereo_sharpness",text="Stereo split sharpness")
+			col.row().prop(want_shapes,"smd_flex_controller_mode",expand=True)
+			
+			if want_shapes.smd_flex_controller_mode == 'ADVANCED':
+				col.prop(context.active_object.data,"smd_flex_stereo_sharpness",text="Stereo sharpness ({})".format(context.active_object.data.name))
+				col.separator()
+				col.prop(want_shapes,"smd_flex_controller_source",text="Controller source")
+				col.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT')
 				
 				
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
@@ -3661,6 +3661,54 @@ class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 				qc_path_row.alert = True
 			compile_row.enabled = False
 		qc_path_row.prop(scene,"smd_qc_path",text="QC file path") # can't add this until the above test completes!
+
+class DmxWriteFlexControllers(bpy.types.Operator):
+	'''Generate a simple Flex Controller DMX block'''
+	bl_idname = "export_scene.dmx_flex_controller"
+	bl_label = "Generate DMX Flex Controller block"
+	
+	@classmethod
+	def poll(self, context):
+		return context.active_object and hasShapes(context.active_object)
+	
+	def execute(self, context):
+		dm = datamodel.DataModel("model",18)
+		root = dm.add_element("root")				
+		DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
+		root.add_attribute("combinationOperator",DmeCombinationOperator)
+		controls = DmeCombinationOperator.add_attribute("controls",[],datamodel.Element).value
+		
+		ob = bpy.context.active_object
+		shapes = ob.data.shape_keys.key_blocks
+		
+		for shape in shapes:
+			DmeCombinationInputControl = dm.add_element(shape.name,"DmeCombinationInputControl")
+			controls.append(DmeCombinationInputControl)
+			
+			DmeCombinationInputControl.add_attribute("rawControlNames",[shape.name],str)
+			DmeCombinationInputControl.add_attribute("stereo",False)
+			DmeCombinationInputControl.add_attribute("eyelid",False)
+			
+			DmeCombinationInputControl.add_attribute("flexMax",1.0)
+			DmeCombinationInputControl.add_attribute("flexMin",0.0)
+			
+			DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)
+				
+		controlValues = DmeCombinationOperator.add_attribute("controlValues", [ datamodel.Vector3([0.0,0.0,0.5]) ] * len(shapes), datamodel.Vector3)
+		DmeCombinationOperator.add_attribute("controlValuesLagged", controlValues.value, datamodel.Vector3)
+		DmeCombinationOperator.add_attribute("usesLaggedValues",False)
+		
+		DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)
+		DmeCombinationOperator.add_attribute("targets",[],datamodel.Element)
+		
+		text = bpy.data.texts.new( "flex_{}".format(context.active_object.name) )
+		text.use_tabs_as_spaces = False
+		
+		text.from_string(dm.echo("keyvalues2",1))
+		
+		self.report({'INFO'},"DMX written to text block \"{}\"".format(text.name))		
+		
+		return {'FINISHED'}
 
 class SmdExporter(bpy.types.Operator):
 	'''Export SMD or DMX files and compile them with QC scripts'''
@@ -4229,11 +4277,17 @@ def register():
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Optional path relative to scene output folder")
 	bpy.types.Object.smd_name = StringProperty(name="SMD Name",description="Optional filename override")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
-
+	flex_controller_modes = (
+		('SIMPLE',"Simple","Generate one controller per shape key"),
+		('ADVANCED',"Advanced","Insert the controllers of another DMX file")
+	)
+	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",items=flex_controller_modes,default='SIMPLE')
+	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",subtype='FILE_PATH')
+	
 	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour, but may break compatibility with existing files")
 	arm_modes = (
-	('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
-	('FILTERED',"Action Filter","All actions that match the armature's filter term")
+		('CURRENT',"Current / NLA","The armature's assigned action, or everything in an NLA track"),
+		('FILTERED',"Action Filter","All actions that match the armature's filter term")
 	)
 	bpy.types.Armature.smd_action_selection = EnumProperty(name="Action Selection", items=arm_modes,description="How actions are selected for export",default='CURRENT')
 	bpy.types.Armature.smd_legacy_rotation = BoolProperty(name="Legacy rotation",description="Remaps the Y axis of bones in this armature to Z, for backwards compatibility with old imports (SMD only)",default=False)
@@ -4243,6 +4297,7 @@ def register():
 	bpy.types.Group.smd_expand = BoolProperty(name="SMD show expanded",description="Show the contents of this group in the Scene Exports panel",default=False)
 	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Prevents the SMD exporter from merging the objects in this group together",default=False)
 	bpy.types.Group.smd_name = bpy.types.Object.smd_name
+	bpy.types.Group.smd_flex_controller_mode = bpy.types.Object.smd_flex_controller_mode
 	
 	bpy.types.Action.smd_name = bpy.types.Object.smd_name
 	
@@ -4281,16 +4336,21 @@ def unregister():
 	del Object.smd_subdir
 	del Object.smd_action_filter
 	del Object.smd_name
+	del Object.smd_flex_controller_mode
+	del Object.smd_flex_controller_source
 
 	del bpy.types.Armature.smd_implicit_zero_bone
 	del bpy.types.Armature.smd_action_selection
 	del bpy.types.Armature.smd_legacy_rotation
 
-	del bpy.types.Group.smd_export
-	del bpy.types.Group.smd_subdir
-	del bpy.types.Group.smd_expand
-	del bpy.types.Group.smd_mute
-	del bpy.types.Group.smd_name
+	Group = bpy.types.Group
+	del Group.smd_export
+	del Group.smd_subdir
+	del Group.smd_expand
+	del Group.smd_mute
+	del Group.smd_name
+	del Group.smd_flex_controller_mode
+	del Group.smd_flex_controller_source
 
 	del bpy.types.Curve.smd_faces
 	
