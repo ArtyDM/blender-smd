@@ -1,4 +1,4 @@
-import struct, array
+import struct, array, io
 from struct import unpack,calcsize
 
 global _kv2_indent
@@ -239,14 +239,15 @@ class Element:
 		t = type(value)
 		if self.attributes.get(name):
 			raise ValueError("Attribute \"{}\" already exists".format(name))
-		if t in _array_types and not prop_type:
-			raise ValueError("A datamodel type must be specified for arrays")
-		if t not in _dmxtypes:
-			if t in _array_types:
-				prop_type = _get_array_type(prop_type)
-				value = prop_type(value)
-			else:
-				raise ValueError("Unsupported data type ({})".format(t))
+		if not t in _dmxtypes_array:
+			if t in _array_types and not prop_type:
+				raise ValueError("A datamodel type must be specified for arrays")
+			if t not in _dmxtypes:
+				if t in _array_types:
+					prop_type = _get_array_type(prop_type)
+					value = prop_type(value)
+				else:
+					raise ValueError("Unsupported data type ({})".format(t))
 		prop = Attribute(name,value)
 		self.attributes[name] = prop
 		self.attribute_order.append(name)
@@ -450,11 +451,15 @@ class DataModel:
 				for i in prop.value:
 					if i not in self.str_dict_checked:
 						self._build_str_dict(i)
-		
-	def write(self,path,encoding,encoding_ver):
+	
+	def echo(self,encoding,encoding_ver):
 		check_support(encoding, encoding_ver)
 		
-		self.out = open(path,'wb' if encoding == "binary" else 'w')
+		if encoding == "binary":
+			self.out = io.BytesIO()
+		else:
+			self.out = io.StringIO()
+		
 		self.encoding = encoding
 		self.encoding_ver = encoding_ver
 		
@@ -507,9 +512,16 @@ class DataModel:
 				if elem._users > 1:
 					self.out.write(elem._get_kv2_str() + "\n\n")
 				
-		self.out.close()
+		return self.out.getvalue()
 		
-def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_test_0.dmx"):
+	def write(self,path,encoding,encoding_ver):		
+		file = open(path,'wb' if encoding == "binary" else 'w')
+		try:		
+			file.write(self.echo(encoding,encoding_ver))
+		finally:
+			file.close()
+		
+def load():
 	in_file = open(path,'r')
 	
 	try:
@@ -557,7 +569,7 @@ def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_te
 				
 				for line_raw in in_file:
 					if line_raw.strip("\n\t, ").endswith("}"):
-						print("{}- {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
+						#print("{}- {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
 						return element_chain.pop()
 					
 					line = parse_line(line_raw)
@@ -569,7 +581,7 @@ def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_te
 					
 					if id and name:
 						element_chain.append(dm.add_element(name,elem_type,id))
-						print("{}+ {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
+						#print("{}+ {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
 						users = element_users.get(str(id))
 						if users:
 							for user_info in users:
@@ -645,4 +657,3 @@ def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_te
 		return dm
 	finally:
 		in_file.close()
-		dm.write(path + "_out.dmx","keyvalues2",1)
