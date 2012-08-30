@@ -241,11 +241,12 @@ class Element:
 			raise ValueError("Attribute \"{}\" already exists".format(name))
 		if t in _array_types and not prop_type:
 			raise ValueError("A datamodel type must be specified for arrays")
-		if t not in _dmxtypes and t not in _array_types:
-			raise ValueError("Unsupported data type ({})".format(t))
-		if t in _array_types:
-			prop_type = _get_array_type(prop_type)
-			value = prop_type(value)
+		if t not in _dmxtypes:
+			if t in _array_types:
+				prop_type = _get_array_type(prop_type)
+				value = prop_type(value)
+			else:
+				raise ValueError("Unsupported data type ({})".format(t))
 		prop = Attribute(name,value)
 		self.attributes[name] = prop
 		self.attribute_order.append(name)
@@ -317,6 +318,8 @@ _dmxtypes = [Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector
 _dmxtypes_array = [_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray]
 _dmxtypes_str = ["element","int","float","bool","string","binary","time","color","vector2","vector3","vector4","angle","quaternion","matrix"]
 
+def _get_type_from_string(type_str):
+	return _dmxtypes[_dmxtypes_str.index(type_str)]
 def _get_array_type(single_type):
 	if single_type in _dmxtypes_array: raise ValueError("Argument is already an array type")
 	return _dmxtypes_array[ _dmxtypes.index(single_type) ]
@@ -532,57 +535,105 @@ def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_te
 			def read_element(elem_type):
 				id = None
 				name = None
-				cur = None
-				indent = '\t' * len(element_chain)
-				for line in in_file:
-					if line.endswith("}\n"):
-						element_chain.pop()
-						print("{}- {}\t\t{}".format(indent,cur,line.replace("\t",".")))
-						return cur
-					line = parse_line(line)
+				
+				def read_value(name,type_str,kv2_text, index=-1):
+					if type_str == 'element':
+						if not kv2_text:
+							return None
+						user_info = [element_chain[-1], name, index]
+						if not element_users.get(kv2_text):
+							element_users[kv2_text] = [user_info]
+						else:
+							element_users[kv2_text].append(user_info)
+						return dm.add_element("Placeholder")
+					
+					if type_str == 'string': return kv2_text
+					elif type_str == 'int': return int(kv2_text)
+					elif type_str == 'float': return float(kv2_text)
+					elif type_str == 'bool': return bool(int(kv2_text))
+					elif type_str == 'time': return Time(kv2_text)
+					elif type_str.startswith('vector') or type_str in ['color','quaternion','angle']:
+						return _get_type_from_string(type_str)( [float(i) for i in kv2_text.split(" ")] )
+				
+				for line_raw in in_file:
+					if line_raw.strip("\n\t, ").endswith("}"):
+						print("{}- {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
+						return element_chain.pop()
+					
+					line = parse_line(line_raw)
 					if len(line) == 0:
 						continue
 					
 					if line[0] == 'id': id = uuid.UUID(hex=line[2])
 					elif line[0] == 'name': name = line[2]
 					
-					if not cur:
-						if id and name:
-							cur = dm.add_element(name,elem_type,id)
-							element_chain.append(cur)
-							print("{}+ {}\t\t{}".format(indent,cur,line))
+					if id and name:
+						element_chain.append(dm.add_element(name,elem_type,id))
+						print("{}+ {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
+						users = element_users.get(str(id))
+						if users:
+							for user_info in users:
+								user_info[0].get_attribute(user_info[1]).value = element_chain[-1]
+						id = name = None
 						continue
 					
 					if len(line) >= 2:
-						if line[1].endswith("_array"):
-							num_arrays = 0
-							for line in in_file:
-								if "[" in line: num_arrays += 1
-								if "]" in line: num_arrays -= 1
-								if num_arrays == 0: break
+						if line[1] == "element_array":
+							arr_name = line[0]
+							arr = []
+							
+							if "[" not in line_raw: # immediate "[" means and empty array; elements must be on separate lines
+								for line in in_file:
+									if "[" in line: continue
+									if "]" in line: break
+									line = parse_line(line)
+									
+									if len(line) == 1:
+										arr.append( read_element(line[0]) )
+									elif len(line) == 2:
+										arr.append( read_value(arr_name,"element",line[1],index=len(arr)) )								
+							
+							element_chain[-1].add_attribute(arr_name,arr,Element)
 							continue
-						elif len(line) == 2:
-							cur.add_attribute(line[0],read_element(line[1]))
-						elif len(line) == 3:
-							attr_name = line[0]
-							attr_value = None
+						
+						elif line[1].endswith("_array"):
+							arr_name = line[0]
+							arr_type_str = line[1].split("_")[0]
+							arr_type = _get_type_from_string(arr_type_str)
+							arr = []
 							
-							if line[1] == 'string': attr_value = line[2]
-							elif line[1] == 'int': attr_value = int(line[2])
-							elif line[1] == 'float': attr_value = float(line[2])
-							elif line[1] == 'bool': attr_value = bool(int(line[2]))
-							elif line[1] == 'time': attr_value = Time(line[2])
-							
+							if "[" in line_raw: # one-line array
+								for item in line[2:]:
+									arr.append(read_value(arr_name,arr_type_str,item))
+								element_chain[-1].add_attribute(arr_name,arr,arr_type)
+								
+							else: # multi-line array
+								for line in in_file:
+									if "[" in line:
+										continue
+									if "]" in line:
+										element_chain[-1].add_attribute(arr_name,arr,arr_type)
+										break
+										
+									line = parse_line(line)									
+									arr.append(read_value(arr_name,arr_type_str,line[0]))
+						
+						elif len(line) == 2: # inline element
+							element_chain[-1].add_attribute(line[0],read_element(line[1]))
+						elif len(line) == 3: # ordinary attribute or element ID
+							attr_value = read_value(line[0],line[1],line[2])
 							if attr_value != None:
-								cur.add_attribute(attr_name,attr_value)
+								element_chain[-1].add_attribute(line[0],attr_value)
 
 				raise IOError("Unexpected EOF")					
 			
 			element_chain = []
+			element_users = {}
 			for line in in_file:
 				line = parse_line(line)
+				
 				if len(line) == 0: continue
-								
+				
 				if len(element_chain) == 0 and len(line) == 1:
 					read_element(line[0])
 				
@@ -591,9 +642,7 @@ def load(path="C:/Users/Tom/Documents/Mods/blender-smd/dmx/samples/Jeff/morph_te
 			in_file = open(path,'rb')
 			in_file.seek(len(header) + 1)			
 		
-		dm.write(path + "_out.dmx","keyvalues2",1)
 		return dm
 	finally:
 		in_file.close()
-		
-			
+		dm.write(path + "_out.dmx","keyvalues2",1)
