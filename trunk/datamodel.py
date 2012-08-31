@@ -59,6 +59,8 @@ def _get_kv2_repr(var):
 		return out.rstrip("0").rstrip(".")
 	elif t == Element:
 		return str(var.id)
+	elif issubclass(t, _Array):
+		return var.to_kv2()
 	else:
 		return str(var)
 
@@ -70,7 +72,7 @@ class _Array(list):
 		_validate_array_list(list,self.type)
 		return super().__init__(list)
 		
-	def __repr__(self):
+	def to_kv2(self):
 		global _kv2_indent
 		
 		if len(self) == 0:
@@ -216,8 +218,9 @@ class Attribute:
 _array_types = [list,set,tuple,array.array]
 class Element:
 	attributes = {}
+	datamodel = None
 	
-	def __init__(self,name,elemtype="DmElement",id=None):
+	def __init__(self,datamodel,name,elemtype="DmElement",id=None):
 		# Blender bug: importing uuid causes a runtime exception. The return value is not affected, thankfully.
 		# http://projects.blender.org/tracker/index.php?func=detail&aid=28732&group_id=9&atid=498
 		import uuid
@@ -252,10 +255,30 @@ class Element:
 		self.attributes[name] = prop
 		self.attribute_order.append(name)
 		
+		def _import_element(elem):
+			if elem.datamodel != self.datamodel:
+				elem.datamodel = self.datamodel
+				self.datamodel.elements.append(elem)
+				for attr in elem.attributes.values():
+					t = type(attr.value)
+					if t == Element:
+						_import_element(attr.value)
+					if t == _ElementArray:
+						for arr_elem in attr.value:
+							_import_element(arr_elem)
+		
+		if t == Element:
+			_import_element(value)
+		elif prop_type == Element:
+			for _arr_elem in value:
+				_import_element(_arr_elem)
+		
 		return prop
 		
 	def get_attribute(self,name):
 		return self.attributes[name]
+	def remove_attribute(self,name):
+		del self.attributes[name]
 		
 	def _get_kv2_str(self):
 		global _kv2_indent
@@ -365,7 +388,7 @@ class DataModel:
 		self.elements = []
 		
 	def add_element(self,name,elemtype="DmElement",id=None):
-		elem = Element(name,elemtype,id)
+		elem = Element(self,name,elemtype,id)
 		self.elements.append(elem)
 		elem.datamodel = self
 		if len(self.elements) == 1: self.root = elem
@@ -520,9 +543,17 @@ class DataModel:
 			file.write(self.echo(encoding,encoding_ver))
 		finally:
 			file.close()
-		
-def load():
-	in_file = open(path,'r')
+
+def parse(parse_string, element_path=None):
+	return load(in_file=io.StringIO(parse_string),element_path=element_path)
+
+def load(path = None, in_file = None, element_path = None):
+	if not (path or in_file):
+		raise ArgumentError("A path or a file must be provided")
+	if type(element_path) != list:
+		raise ArugementError("element_path must be a list containing element names")
+	if not in_file:
+		in_file = open(path,'r')
 	
 	try:
 		import re, uuid
@@ -539,6 +570,9 @@ def load():
 		
 		check_support(encoding,encoding_ver)		
 		dm = DataModel(format,format_ver)
+		
+		global max_elem_path
+		max_elem_path = len(element_path) + 1 if element_path else 0
 		
 		if encoding == 'keyvalues2':
 			def parse_line(line):
@@ -557,7 +591,7 @@ def load():
 							element_users[kv2_text] = [user_info]
 						else:
 							element_users[kv2_text].append(user_info)
-						return dm.add_element("Placeholder")
+						return dm.add_element("Missing element",id=uuid.UUID(hex=kv2_text))
 					
 					if type_str == 'string': return kv2_text
 					elif type_str == 'int': return int(kv2_text)
@@ -579,13 +613,33 @@ def load():
 					if line[0] == 'id': id = uuid.UUID(hex=line[2])
 					elif line[0] == 'name': name = line[2]
 					
+					# don't read elements outside the element path
+					if max_elem_path and name and len(dm.elements):
+						if len(element_path):
+							skip = name.lower() != element_path[0].lower()
+						else:
+							skip = len(element_chain) < max_elem_path
+						if skip:
+							child_level = 0
+							for line_raw in in_file:
+								if "{" in line_raw: child_level += 1
+								if "}" in line_raw:
+									if child_level == 0: return
+									else: child_level -= 1
+							return
+						elif len(element_path):
+							del element_path[0]
+					
 					if id and name:
 						element_chain.append(dm.add_element(name,elem_type,id))
 						#print("{}+ {}".format('\t' * (len(element_chain)-1),element_chain[-1].name))
 						users = element_users.get(str(id))
 						if users:
 							for user_info in users:
-								user_info[0].get_attribute(user_info[1]).value = element_chain[-1]
+								value = user_info[0].get_attribute(user_info[1]).value
+								if user_info[2] != -1:
+									value = value[ user_info[2] ]
+								value = element_chain[-1]
 						id = name = None
 						continue
 					
@@ -605,7 +659,7 @@ def load():
 									elif len(line) == 2:
 										arr.append( read_value(arr_name,"element",line[1],index=len(arr)) )								
 							
-							element_chain[-1].add_attribute(arr_name,arr,Element)
+							element_chain[-1].add_attribute(arr_name,arr,Element)							
 							continue
 						
 						elif line[1].endswith("_array"):
@@ -631,13 +685,15 @@ def load():
 									arr.append(read_value(arr_name,arr_type_str,line[0]))
 						
 						elif len(line) == 2: # inline element
-							element_chain[-1].add_attribute(line[0],read_element(line[1]))
+							elem = read_element(line[1])
+							if elem:
+								element_chain[-1].add_attribute(line[0],elem)
 						elif len(line) == 3: # ordinary attribute or element ID
 							attr_value = read_value(line[0],line[1],line[2])
 							if attr_value != None:
 								element_chain[-1].add_attribute(line[0],attr_value)
 
-				raise IOError("Unexpected EOF")					
+				raise IOError("Unexpected EOF")
 			
 			element_chain = []
 			element_users = {}
@@ -650,9 +706,10 @@ def load():
 					read_element(line[0])
 				
 		elif encoding == 'binary':
+			raise Error("Binary DMX can't be read yet")
 			in_file.close()
 			in_file = open(path,'rb')
-			in_file.seek(len(header) + 1)			
+			in_file.seek(len(header) + 1)
 		
 		return dm
 	finally:

@@ -2706,6 +2706,9 @@ def bakeObj(in_object):
 				if smd.isDMX:
 					if x == 0: smd.dmxShapes[obj.name] = []
 					else: smd.dmxShapes[obj.name].append(baked)
+					if smd.g:
+						baked.smd_flex_controller_source = smd.g.smd_flex_controller_source
+						baked.smd_flex_controller_mode = smd.g.smd_flex_controller_mode
 				else:
 					bpy.ops.object.mode_set(mode='EDIT')
 					bpy.ops.mesh.quads_convert_to_tris()
@@ -2915,6 +2918,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		materials = {}
 		dags = []
 		for ob in smd.bakeInfo:
+			src_ob = bpy.data.objects[ob['src_name']]
 			if ob.type != 'MESH': continue
 			print("\n" + ob['src_name'])
 			vertex_data = dm.add_element("bind","DmeVertexData")
@@ -2981,7 +2985,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				jointWeights = [ 1.0 ] * len(ob.data.vertices)
 				jointIndices = [ smd.boneNameToID[ob['bp']] ] * len(ob.data.vertices)
 			
-			width = ob.dimensions.x * ( 1 - (bpy.data.objects[ob['src_name']].data.smd_flex_stereo_sharpness / 100) )
+			width = ob.dimensions.x * ( 1 - (src_ob.data.smd_flex_stereo_sharpness / 100) )
 			for vert in ob.data.vertices:				
 				pos.append(datamodel.Vector3(vert.co))
 				norms.append(datamodel.Vector3(vert.normal))
@@ -3091,16 +3095,17 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				control_values = []
 				delta_state_weights = []
 				for shape in smd.dmxShapes[ob['src_name']]:
-					DmeCombinationInputControl = dm.add_element(shape['shape_name'],"DmeCombinationInputControl")
-					control_elems.append(DmeCombinationInputControl)
-					
-					DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)
-					
 					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
-					if wrinkle_vg:
-						DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)
 					
-					control_values.append(datamodel.Vector3([0.5,0.5,0.5])) # ??
+					if src_ob.smd_flex_controller_mode == 'SIMPLE':
+						DmeCombinationInputControl = dm.add_element(shape['shape_name'],"DmeCombinationInputControl")
+						control_elems.append(DmeCombinationInputControl)
+					
+						DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)					
+						if wrinkle_vg:
+							DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)					
+						control_values.append(datamodel.Vector3([0.5,0.5,0.5])) # ??
+					
 					delta_state_weights.append(datamodel.Vector2([0.0,0.0])) # ??
 					
 					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
@@ -3155,13 +3160,36 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				DmeMesh.add_attribute("deltaStateWeights",delta_state_weights,datamodel.Vector2)
 				DmeMesh.add_attribute("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
 				
-				DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
-				DmeCombinationOperator.add_attribute("controls",control_elems,datamodel.Element)
-				DmeCombinationOperator.add_attribute("controlValues",control_values,datamodel.Vector3)
-				DmeCombinationOperator.add_attribute("controlValuesLagged",control_values,datamodel.Vector3)
-				DmeCombinationOperator.add_attribute("usesLaggedValues",False)
-				DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)				
-				DmeCombinationOperator.add_attribute("targets",[DmeMesh],datamodel.Element)
+				if ob.smd_flex_controller_mode == 'ADVANCED':
+					text = bpy.data.texts.get(ob.smd_flex_controller_source)
+					msg = "- Loading flex controllers from "
+					element_path = [ "combinationOperator" ]
+					if text:
+						print(msg + "text block \"{}\"".format(text.name))
+						controller_dm = datamodel.parse(text.as_string(),element_path=element_path)
+					else:
+						path = bpy.path.abspath(ob.smd_flex_controller_source)
+						print(msg + path)
+						controller_dm = datamodel.load(path=path,element_path=element_path)
+					DmeCombinationOperator = controller_dm.root.get_attribute("combinationOperator").value
+					
+					# replace target meshes
+					targets = DmeCombinationOperator.get_attribute("targets").value
+					for elem in targets:
+						if elem.type == "DmeFlexRules":
+							elem.get_attribute("target").value = DmeMesh
+						else:
+							targets.remove(elem)
+					if len(targets) == 0:
+						targets.append(DmeMesh)
+				else:
+					DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
+					DmeCombinationOperator.add_attribute("controls",control_elems,datamodel.Element)
+					DmeCombinationOperator.add_attribute("controlValues",control_values,datamodel.Vector3)
+					DmeCombinationOperator.add_attribute("controlValuesLagged",control_values,datamodel.Vector3)
+					DmeCombinationOperator.add_attribute("usesLaggedValues",False)
+					DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)				
+					DmeCombinationOperator.add_attribute("targets",[DmeMesh],datamodel.Element)
 				root.add_attribute("combinationOperator",DmeCombinationOperator)				
 				
 				bench("shapes")			
@@ -3562,21 +3590,23 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		validObs = getValidObs()
 		
 		col = l.column()
-		col.prop(item,"smd_subdir",text="Subfolder",icon='FILE_FOLDER')
-		col.prop(item,"smd_name",text="Filename",icon='FILE_TEXT')
+		col.prop(item,"smd_subdir",text="Custom subfolder",icon='FILE_FOLDER')
+		col.prop(item,"smd_name",text="Custom filename",icon='FILE_TEXT')
 		
-		col = l.box().column()
-		
-		def makeTitleRow(layout):
-			out = layout.row()
-			out.alignment = 'CENTER'
-			layout.separator()
-			return out
+		def makeSettingsBox(text,icon=None):
+			box = l.box()
+			col = box.column()
+			title_row = col.row()
+			title_row.alignment = 'CENTER'
+			title_row.label(text=text,icon=icon)
+			col.separator()
+			return col
 			
 		want_shapes = False
+		is_group = type(item) == bpy.types.Group
 		
-		if type(item) == bpy.types.Group:
-			makeTitleRow(col).label(text="Group properties",icon='GROUP')
+		if is_group:
+			col = makeSettingsBox(text="Group properties",icon='GROUP')
 			group_items = col.box().column_flow(2)
 			for g_ob in item.objects:
 				if g_ob in validObs:
@@ -3584,7 +3614,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 					if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
 		elif item:
 			if item.type == 'ARMATURE':
-				makeTitleRow(col).label(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
+				col = makeSettingsBox(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
 				col.prop(item.data,"smd_action_selection")
 				if item.data.smd_action_selection == 'FILTERED':
 					col.prop(item,"smd_action_filter",text="Action Filter")
@@ -3598,24 +3628,35 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 
 				col.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
 			if item.type == 'CURVE':
-				makeTitleRow(col).label(text="Curve properties",icon='OUTLINER_OB_CURVE')
+				col = makeSettingsBox(text="Curve properties",icon='OUTLINER_OB_CURVE')
 				col.label(text="Generate polygons on:")
 				row = col.row()
 				row.prop(item.data,"smd_faces",expand=True)
 		
 			if hasShapes(item,-1): want_shapes = item
 		
-		if want_shapes and context.active_object.active_shape_key:
-			col = l.box().column()
-			makeTitleRow(col).label(text="Flex properties",icon='SHAPEKEY_DATA')
+		if want_shapes and bpy.context.scene.smd_format == 'DMX':
+			col = makeSettingsBox(text="Flex properties",icon='SHAPEKEY_DATA')
 			
-			col.row().prop(want_shapes,"smd_flex_controller_mode",expand=True)
+			col.row().prop(item,"smd_flex_controller_mode",expand=True)
 			
-			if want_shapes.smd_flex_controller_mode == 'ADVANCED':
-				col.prop(context.active_object.data,"smd_flex_stereo_sharpness",text="Stereo sharpness ({})".format(context.active_object.data.name))
-				col.separator()
-				col.prop(want_shapes,"smd_flex_controller_source",text="Controller source")
+			if item.smd_flex_controller_mode == 'ADVANCED':
+				if item.smd_flex_controller_source in bpy.data.texts:
+					icon = 'TEXT'
+				else:
+					icon = 'NONE'
+				
+				col.prop(item,"smd_flex_controller_source",text="Controller source",icon=icon)
 				col.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT')
+				
+				objects = item.objects if is_group else [item]
+				datablocks_dispayed = []
+				
+				for ob in objects:
+					if ob.smd_export and ob.type in shape_types and ob.active_shape_key and ob.data not in datablocks_dispayed:
+						if not len(datablocks_dispayed): col.separator()
+						col.prop(ob.data,"smd_flex_stereo_sharpness",text="Stereo sharpness ({})".format(ob.data.name))
+						datablocks_dispayed.append(ob.data)
 				
 				
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
@@ -3679,7 +3720,7 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 		controls = DmeCombinationOperator.add_attribute("controls",[],datamodel.Element).value
 		
 		ob = bpy.context.active_object
-		shapes = ob.data.shape_keys.key_blocks
+		shapes = ob.data.shape_keys.key_blocks[1:] # skip basis
 		
 		for shape in shapes:
 			DmeCombinationInputControl = dm.add_element(shape.name,"DmeCombinationInputControl")
@@ -3699,7 +3740,20 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 		DmeCombinationOperator.add_attribute("usesLaggedValues",False)
 		
 		DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)
-		DmeCombinationOperator.add_attribute("targets",[],datamodel.Element)
+		targets = DmeCombinationOperator.add_attribute("targets",[],datamodel.Element)
+		
+		DmeFlexRules = dm.add_element("flexRules","DmeFlexRules")
+		targets.value.append(DmeFlexRules)
+		
+		delta_states = DmeFlexRules.add_attribute("deltaStates",[],datamodel.Element)
+		DmeFlexRules.add_attribute("deltaStateWeights",[ datamodel.Vector2([0.0,0.0]) ] * len(shapes),datamodel.Vector2)
+		DmeFlexRules.add_attribute("target",[],datamodel.Element)
+		
+		for shape in shapes:
+			DmeFlexRule = dm.add_element(shape.name,"DmeFlexRulePassThrough")
+			DmeFlexRule.add_attribute("result",0.0)
+			DmeFlexRule.add_attribute("expr","") # ignored unless element type is "DmeFlexRule"
+			delta_states.value.append(DmeFlexRule)
 		
 		text = bpy.data.texts.new( "flex_{}".format(context.active_object.name) )
 		text.use_tabs_as_spaces = False
@@ -4198,7 +4252,7 @@ def scene_update(scene):
 		if item.type == 'ARMATURE':
 			return out + " (Action)"
 		else:
-			return out + " (Object)"
+			return out + " (Object{})".format("; Shapes" if hasShapes(item) else "")
 	
 	if len(validObs):
 		validObs.sort(key=lambda ob: ob.name.lower())
@@ -4211,10 +4265,11 @@ def scene_update(scene):
 		scene_groups = []
 		for group in groups_sorted:
 			valid = False
-			for object in group.objects:
-				if object in validObs:
-					validObs.remove(object)
-					valid = True
+			if not group.smd_mute:
+				for object in group.objects:
+					if object in validObs:
+						validObs.remove(object)
+						valid = True
 			if valid:
 				scene_groups.append(group)
 				
@@ -4278,8 +4333,8 @@ def register():
 	bpy.types.Object.smd_name = StringProperty(name="SMD Name",description="Optional filename override")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 	flex_controller_modes = (
-		('SIMPLE',"Simple","Generate one controller per shape key"),
-		('ADVANCED',"Advanced","Insert the controllers of another DMX file")
+		('SIMPLE',"Simple","Generate one flex controller per shape key"),
+		('ADVANCED',"Advanced","Insert the flex controllers of another DMX file")
 	)
 	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",items=flex_controller_modes,default='SIMPLE')
 	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",subtype='FILE_PATH')
@@ -4298,6 +4353,7 @@ def register():
 	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Prevents the SMD exporter from merging the objects in this group together",default=False)
 	bpy.types.Group.smd_name = bpy.types.Object.smd_name
 	bpy.types.Group.smd_flex_controller_mode = bpy.types.Object.smd_flex_controller_mode
+	bpy.types.Group.smd_flex_controller_source = bpy.types.Object.smd_flex_controller_source
 	
 	bpy.types.Action.smd_name = bpy.types.Object.smd_name
 	
