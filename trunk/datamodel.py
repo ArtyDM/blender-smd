@@ -274,9 +274,9 @@ class Element:
 				_import_element(_arr_elem)
 		
 		return prop
-		
+	
 	def get_attribute(self,name):
-		return self.attributes[name]
+		return self.attributes.get(name)
 	def remove_attribute(self,name):
 		del self.attributes[name]
 		
