@@ -3564,15 +3564,13 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row = l.row().split(0.33)
 		row.label(text="Target Up Axis:")
 		row.row().prop(scene,"smd_up_axis", expand=True)
+		if shouldExportDMX(scene):
+			l.prop(scene,"smd_material_path",text="Material Path")
 		row = l.row()
-		row.prop(scene,"smd_material_path",text="Material Path")
-		row.enabled = shouldExportDMX(scene)
-		row = l.row()
+		row.alignment = 'CENTER'
 		row.prop(scene,"smd_layer_filter",text="Visible layer(s) only")
 		row.prop(scene,"smd_use_image_names",text="Ignore Blender materials")
 
-		
-		l.operator(SmdClean.bl_idname,text="Clean all SMD data from scene and objects",icon='RADIO')
 		row = l.row(align=True)
 		row.operator("wm.url_open",text="Help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Exporting"
 		row.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')		
@@ -3616,11 +3614,15 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		
 		if is_group:
 			col = makeSettingsBox(text="Group properties",icon='GROUP')
-			group_items = col.box().column_flow(2)
+			items = 0
 			for g_ob in item.objects:
 				if g_ob in validObs:
-					group_items.prop(g_ob,"smd_export",icon=MakeObjectIcon(g_ob,suffix="_DATA"),text=g_ob.name,emboss=False)
+					if items % 2 == 0:
+						row = col.row()
+					row.prop(g_ob,"smd_export",icon=MakeObjectIcon(g_ob,suffix="_DATA"),text=g_ob.name)
 					if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
+					items += 1
+			if items % 2 != 0: row.label(text="")
 		elif item:
 			if item.type == 'ARMATURE':
 				col = makeSettingsBox(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
@@ -3647,6 +3649,8 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		if want_shapes and bpy.context.scene.smd_format == 'DMX':
 			col = makeSettingsBox(text="Flex properties",icon='SHAPEKEY_DATA')
 			
+			objects = item.objects if is_group else [item]
+			
 			col.row().prop(item,"smd_flex_controller_mode",expand=True)
 			
 			if item.smd_flex_controller_mode == 'ADVANCED':
@@ -3655,7 +3659,6 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 				row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text="Generate controllers")
 				row.operator("wm.url_open",text="Flex controller help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_Controllers"
 				
-				objects = item.objects if is_group else [item]
 				datablocks_dispayed = []
 				
 				for ob in objects:
@@ -3663,6 +3666,21 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 						if not len(datablocks_dispayed): col.separator()
 						col.prop(ob.data,"smd_flex_stereo_sharpness",text="Stereo sharpness ({})".format(ob.data.name))
 						datablocks_dispayed.append(ob.data)
+			
+			num_shapes = 0
+			num_wrinkle_maps = 0
+			for ob in objects:
+				if hasShapes(ob):
+					for shape in ob.data.shape_keys.key_blocks[1:]:
+						num_shapes += 1
+						if ob.vertex_groups.get("wrinkle " + shape.name):
+							num_wrinkle_maps += 1
+			
+			col.separator()
+			row = col.row()
+			row.alignment = 'CENTER'
+			row.label(icon='SHAPEKEY_DATA',text = "{} shape{}".format(num_shapes,"s" if num_shapes != 1 else ""))
+			row.label(icon='GROUP_VERTEX',text="{} wrinkle map{}".format(num_wrinkle_maps,"s" if num_wrinkle_maps != 1 else ""))
 				
 				
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
@@ -4073,8 +4091,9 @@ class SmdClean(bpy.types.Operator):
 		if active_obj:
 			bpy.ops.object.mode_set(mode=active_mode)
 
+		bpy.data.objects.is_updated = True
 		self.report({'INFO'},"Deleted {} SMD properties".format(self.numPropsRemoved))
-		return {'FINISHED'}
+		return {'FINISHED'}		
 
 ########################
 #        Update        #
@@ -4328,8 +4347,8 @@ def register():
 
 	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
-	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s). Unix wildcards supported", subtype="FILE_PATH")
-	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Defines toolchain used for compiles",default='source2009')
+	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s); Unix wildcards supported", subtype="FILE_PATH")
+	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Determines DMX version and Studiomdl path",default='source2009')
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Custom Studiomdl Path",description="Location of studiomdl.exe for a custom compile", subtype="FILE_PATH")
 	bpy.types.Scene.smd_studiomdl_custom_path_dmx_encoding = IntProperty(name="SMD Custom DMX encoding",description="Version of the binary DMX encoding to export",subtype='UNSIGNED')
 	bpy.types.Scene.smd_studiomdl_custom_path_dmx_format = IntProperty(name="SMD Custom DMX format",description="Version of the DMX model format to export",subtype='UNSIGNED')
@@ -4352,7 +4371,7 @@ def register():
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 	flex_controller_modes = (
 		('SIMPLE',"Simple","Generate one flex controller per shape key"),
-		('ADVANCED',"Advanced","Insert the flex controllers of another DMX file")
+		('ADVANCED',"Advanced","Insert the flex controllers of an existing DMX file")
 	)
 	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",items=flex_controller_modes,default='SIMPLE')
 	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",description="A DMX file (or Text datablock) containing flex controllers",subtype='FILE_PATH')
