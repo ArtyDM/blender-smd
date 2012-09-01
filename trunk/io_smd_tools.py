@@ -3656,6 +3656,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			if item.smd_flex_controller_mode == 'ADVANCED':
 				col.prop(item,"smd_flex_controller_source",text="Controller source",icon = 'TEXT' if item.smd_flex_controller_source in bpy.data.texts else 'NONE')
 				row = col.row(align=True)
+				row.context_pointer_set("active_object",objects[0])
 				row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text="Generate controllers")
 				row.operator("wm.url_open",text="Flex controller help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_Controllers"
 				
@@ -3734,7 +3735,15 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 	
 	@classmethod
 	def poll(self, context):
-		return context.active_object and hasShapes(context.active_object)
+		group_index = -1
+		if context.active_object:
+			for i,g in enumerate(context.active_object.users_group):
+				if not g.smd_mute:
+					group_index = i
+					break
+			return hasShapes(context.active_object,group_index)
+		else:
+			return False
 	
 	def execute(self, context):
 		dm = datamodel.DataModel("model",18)
