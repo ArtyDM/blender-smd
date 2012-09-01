@@ -3091,24 +3091,27 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			# shapes
 			if has_shapes:
 				shape_elems = []
+				shape_names = []
 				control_elems = []
 				control_values = []
 				delta_state_weights = []
 				for shape in smd.dmxShapes[ob['src_name']]:
-					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape['shape_name'])
+					shape_name = shape['shape_name']
+					shape_names.append(shape_name)
+					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape_name)
 					
 					if src_ob.smd_flex_controller_mode == 'SIMPLE':
-						DmeCombinationInputControl = dm.add_element(shape['shape_name'],"DmeCombinationInputControl")
+						DmeCombinationInputControl = dm.add_element(shape_name,"DmeCombinationInputControl")
 						control_elems.append(DmeCombinationInputControl)
 					
-						DmeCombinationInputControl.add_attribute("rawControlNames",[shape['shape_name']],str)					
+						DmeCombinationInputControl.add_attribute("rawControlNames",[shape_name],str)					
 						if wrinkle_vg:
 							DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)					
 						control_values.append(datamodel.Vector3([0.5,0.5,0.5])) # ??
 					
 					delta_state_weights.append(datamodel.Vector2([0.0,0.0])) # ??
 					
-					DmeVertexDeltaData = dm.add_element(shape['shape_name'],"DmeVertexDeltaData")					
+					DmeVertexDeltaData = dm.add_element(shape_name,"DmeVertexDeltaData")					
 					shape_elems.append(DmeVertexDeltaData)
 					
 					vertexFormat = DmeVertexDeltaData.add_attribute("vertexFormat",[ "positions", "normals" ],str)
@@ -3161,26 +3164,31 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				DmeMesh.add_attribute("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
 				
 				if ob.smd_flex_controller_mode == 'ADVANCED':
-					text = bpy.data.texts.get(ob.smd_flex_controller_source)
-					msg = "- Loading flex controllers from "
-					element_path = [ "combinationOperator" ]
-					if text:
-						print(msg + "text block \"{}\"".format(text.name))
-						controller_dm = datamodel.parse(text.as_string(),element_path=element_path)
-					else:
-						path = bpy.path.abspath(ob.smd_flex_controller_source)
-						print(msg + path)
-						controller_dm = datamodel.load(path=path,element_path=element_path)
+					if not root.get_attribute("combinationOperator"):
+						text = bpy.data.texts.get(ob.smd_flex_controller_source)
+						msg = "- Loading flex controllers from "
+						element_path = [ "combinationOperator" ]
+						if text:
+							print(msg + "text block \"{}\"".format(text.name))
+							controller_dm = datamodel.parse(text.as_string(),element_path=element_path)
+						else:
+							path = bpy.path.abspath(ob.smd_flex_controller_source)
+							print(msg + path)
+							controller_dm = datamodel.load(path=path,element_path=element_path)
+					
 					DmeCombinationOperator = controller_dm.root.get_attribute("combinationOperator").value
 					
 					# replace target meshes
 					targets = DmeCombinationOperator.get_attribute("targets").value
+					added = False
 					for elem in targets:
 						if elem.type == "DmeFlexRules":
-							elem.get_attribute("target").value = DmeMesh
+							if elem.get_attribute("deltaStates").value[0].name in shape_names: # can't have the same delta name on multiple objects
+								elem.get_attribute("target").value = DmeMesh
+								added = True
 						else:
 							targets.remove(elem)
-					if len(targets) == 0:
+					if not added:
 						targets.append(DmeMesh)
 				else:
 					DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
@@ -3190,7 +3198,8 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					DmeCombinationOperator.add_attribute("usesLaggedValues",False)
 					DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)				
 					DmeCombinationOperator.add_attribute("targets",[DmeMesh],datamodel.Element)
-				root.add_attribute("combinationOperator",DmeCombinationOperator)				
+				if not root.get_attribute("combinationOperator"):
+					root.add_attribute("combinationOperator",DmeCombinationOperator)				
 				
 				bench("shapes")			
 		
@@ -3641,13 +3650,10 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			col.row().prop(item,"smd_flex_controller_mode",expand=True)
 			
 			if item.smd_flex_controller_mode == 'ADVANCED':
-				if item.smd_flex_controller_source in bpy.data.texts:
-					icon = 'TEXT'
-				else:
-					icon = 'NONE'
-				
-				col.prop(item,"smd_flex_controller_source",text="Controller source",icon=icon)
-				col.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT')
+				col.prop(item,"smd_flex_controller_source",text="Controller source",icon = 'TEXT' if item.smd_flex_controller_source in bpy.data.texts else 'NONE')
+				row = col.row(align=True)
+				row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text="Generate controllers")
+				row.operator("wm.url_open",text="Flex controller help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_Controllers"
 				
 				objects = item.objects if is_group else [item]
 				datablocks_dispayed = []
@@ -3720,42 +3726,54 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 		controls = DmeCombinationOperator.add_attribute("controls",[],datamodel.Element).value
 		
 		ob = bpy.context.active_object
-		shapes = ob.data.shape_keys.key_blocks[1:] # skip basis
+		text_name = ob.name
+		objects = []
+		shapes = []
+		for g in ob.users_group:
+			if not g.smd_mute:
+				text_name = g.name
+				for g_ob in g.objects:
+					if g_ob.smd_export and hasShapes(g_ob):
+						objects.append(g_ob)
+				break
 		
-		for shape in shapes:
-			DmeCombinationInputControl = dm.add_element(shape.name,"DmeCombinationInputControl")
-			controls.append(DmeCombinationInputControl)
-			
-			DmeCombinationInputControl.add_attribute("rawControlNames",[shape.name],str)
-			DmeCombinationInputControl.add_attribute("stereo",False)
-			DmeCombinationInputControl.add_attribute("eyelid",False)
-			
-			DmeCombinationInputControl.add_attribute("flexMax",1.0)
-			DmeCombinationInputControl.add_attribute("flexMin",0.0)
-			
-			DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)
+		for ob in objects:
+			for shape in ob.data.shape_keys.key_blocks[1:]:
+				DmeCombinationInputControl = dm.add_element(shape.name,"DmeCombinationInputControl")
+				controls.append(DmeCombinationInputControl)
 				
-		controlValues = DmeCombinationOperator.add_attribute("controlValues", [ datamodel.Vector3([0.0,0.0,0.5]) ] * len(shapes), datamodel.Vector3)
+				DmeCombinationInputControl.add_attribute("rawControlNames",[shape.name],str)
+				DmeCombinationInputControl.add_attribute("stereo",False)
+				DmeCombinationInputControl.add_attribute("eyelid",False)
+				
+				DmeCombinationInputControl.add_attribute("flexMax",1.0)
+				DmeCombinationInputControl.add_attribute("flexMin",0.0)
+				
+				DmeCombinationInputControl.add_attribute("wrinkleScales",[1.0],float)
+				
+		controlValues = DmeCombinationOperator.add_attribute("controlValues", [ datamodel.Vector3([0.0,0.0,0.5]) ] * len(controls), datamodel.Vector3)
 		DmeCombinationOperator.add_attribute("controlValuesLagged", controlValues.value, datamodel.Vector3)
 		DmeCombinationOperator.add_attribute("usesLaggedValues",False)
 		
 		DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)
 		targets = DmeCombinationOperator.add_attribute("targets",[],datamodel.Element)
 		
-		DmeFlexRules = dm.add_element("flexRules","DmeFlexRules")
-		targets.value.append(DmeFlexRules)
+		for ob in objects:
+			DmeFlexRules = dm.add_element("flexRules","DmeFlexRules")
+			targets.value.append(DmeFlexRules)
+			
+			delta_states = DmeFlexRules.add_attribute("deltaStates",[],datamodel.Element)
 		
-		delta_states = DmeFlexRules.add_attribute("deltaStates",[],datamodel.Element)
-		DmeFlexRules.add_attribute("deltaStateWeights",[ datamodel.Vector2([0.0,0.0]) ] * len(shapes),datamodel.Vector2)
-		DmeFlexRules.add_attribute("target",[],datamodel.Element)
+			for shape in ob.data.shape_keys.key_blocks[1:]:
+				DmeFlexRule = dm.add_element(shape.name,"DmeFlexRulePassThrough")
+				DmeFlexRule.add_attribute("result",0.0)
+				DmeFlexRule.add_attribute("expr","") # ignored unless element type is "DmeFlexRule"
+				delta_states.value.append(DmeFlexRule)
+				
+			DmeFlexRules.add_attribute("deltaStateWeights",[ datamodel.Vector2([0.0,0.0]) ] * len(delta_states.value),datamodel.Vector2)
+			DmeFlexRules.add_attribute("target",[],datamodel.Element)
 		
-		for shape in shapes:
-			DmeFlexRule = dm.add_element(shape.name,"DmeFlexRulePassThrough")
-			DmeFlexRule.add_attribute("result",0.0)
-			DmeFlexRule.add_attribute("expr","") # ignored unless element type is "DmeFlexRule"
-			delta_states.value.append(DmeFlexRule)
-		
-		text = bpy.data.texts.new( "flex_{}".format(context.active_object.name) )
+		text = bpy.data.texts.new( "flex_{}".format(text_name) )
 		text.use_tabs_as_spaces = False
 		
 		text.from_string(dm.echo("keyvalues2",1))
@@ -4239,7 +4257,7 @@ def panel_func_group_mute(self,context):
 
 @persistent
 def scene_update(scene):
-	if not (bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated):
+	if not (bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated or bpy.data.groups.is_updated):
 		return
 	
 	scene.smd_export_list.clear()
@@ -4337,7 +4355,7 @@ def register():
 		('ADVANCED',"Advanced","Insert the flex controllers of another DMX file")
 	)
 	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",items=flex_controller_modes,default='SIMPLE')
-	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",subtype='FILE_PATH')
+	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",description="A DMX file (or Text datablock) containing flex controllers",subtype='FILE_PATH')
 	
 	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour, but may break compatibility with existing files")
 	arm_modes = (
