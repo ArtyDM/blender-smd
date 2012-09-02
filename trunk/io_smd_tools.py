@@ -25,7 +25,7 @@ bl_info = {
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
-	"location": "File > Import/Export, Scene properties, Armature properties",
+	"location": "File > Import/Export, Scene properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
 	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
 	"description": "Importer and exporter for Valve Software's Source Engine. Supports SMD\VTA, DMX and QC."}
@@ -165,6 +165,15 @@ def export_enabled_update(self, context):
 	if self.type in ['ACTION', 'OBJECT']:
 		item = bpy.data.objects[self.item_name]
 	item.smd_export = self.enabled
+	
+def makeSettingsBox(layout, text,icon='NONE'):
+	box = layout.box()
+	col = box.column()
+	title_row = col.row()
+	title_row.alignment = 'CENTER'
+	title_row.label(text=text,icon=icon)
+	col.separator()
+	return col
 
 class SMD_CT_ObjectExportProps(bpy.types.PropertyGroup):
 	type = StringProperty()
@@ -2817,7 +2826,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	global log
 	
 	if smd.bakeInfo[0].smd_flex_controller_mode == 'ADVANCED' and not hasFlexControllerSource(smd.bakeInfo[0]):
-		log.error( "Could not find flex controllers for \"{}\"".format(object.name if groupIndex == -1 else object.users_group[groupIndex].name) )
+		log.error( "Could not find flex controllers for \"{}\"".format(smd.jobName) )
 		return
 	
 	def makeTransform(name,matrix):
@@ -3577,36 +3586,36 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		
 		validObs = getValidObs()
 		
-		col = l.column()
-		col.prop(item,"smd_subdir",text="Subfolder",icon='FILE_FOLDER')
-				
-		def makeSettingsBox(text,icon=None):
-			box = l.box()
-			col = box.column()
-			title_row = col.row()
-			title_row.alignment = 'CENTER'
-			title_row.label(text=text,icon=icon)
-			col.separator()
-			return col
-			
 		want_shapes = False
 		is_group = type(item) == bpy.types.Group
 		
+		col = l.column()
+		
+		if not (is_group and item.smd_mute):
+			col.prop(item,"smd_subdir",text="Subfolder",icon='FILE_FOLDER')
+		
 		if is_group:
-			col = makeSettingsBox(text="Group properties",icon='GROUP')
-			items = 0
-			item_list = col.column(align=True)
-			for g_ob in item.objects:
-				if g_ob in validObs:
-					if items % 2 == 0:
-						row = item_list.row(align=True)
-					row.prop(g_ob,"smd_export",icon=MakeObjectIcon(g_ob,suffix="_DATA"),text=g_ob.name)
-					if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
-					items += 1
-			if items % 2 != 0: row.label(text="")
+			col = makeSettingsBox(l,text="Group properties",icon='GROUP')
+			if not item.smd_mute:				
+				items = 0
+				item_list = col.column(align=True)
+				for g_ob in item.objects:
+					if g_ob in validObs:
+						if items % 2 == 0:
+							row = item_list.row(align=True)
+						row.prop(g_ob,"smd_export",icon=MakeObjectIcon(g_ob,suffix="_DATA"),text=g_ob.name)
+						if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
+						items += 1
+				if items % 2 != 0: row.label(text="")
+			
+			suppress_row = col.row()
+			suppress_row.alignment = 'CENTER'
+			suppress_row.prop(item,"smd_mute",text="Suppress")
+			if item.smd_mute:
+				return
 		elif item:
 			if item.type == 'ARMATURE':
-				col = makeSettingsBox(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
+				col = makeSettingsBox(l,text="Armature properties ({})".format(item.name),icon='OUTLINER_OB_ARMATURE')
 				col.row().prop(item.data,"smd_action_selection",expand=True)
 				if item.data.smd_action_selection == 'FILTERED':
 					col.prop(item,"smd_action_filter",text="Action Filter")
@@ -3618,7 +3627,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 				if item.animation_data and not 'ActLib' in dir(bpy.types):
 					col.template_ID(item.animation_data, "action", new="action.new")
 			if item.type == 'CURVE':
-				col = makeSettingsBox(text="Curve properties",icon='OUTLINER_OB_CURVE')
+				col = makeSettingsBox(l,text="Curve properties",icon='OUTLINER_OB_CURVE')
 				col.label(text="Generate polygons on:")
 				row = col.row()
 				row.prop(item.data,"smd_faces",expand=True)
@@ -3626,7 +3635,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			if hasShapes(item,-1): want_shapes = item
 		
 		if want_shapes and bpy.context.scene.smd_format == 'DMX':
-			col = makeSettingsBox(text="Flex properties",icon='SHAPEKEY_DATA')
+			col = makeSettingsBox(l,text="Flex properties",icon='SHAPEKEY_DATA')
 			
 			objects = item.objects if is_group else [item]
 			
@@ -3640,7 +3649,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 				row = col.row(align=True)
 				row.context_pointer_set("active_object",objects[0])
 				row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text="Generate controllers")
-				row.operator("wm.url_open",text="Flex controller help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_Controllers"
+				row.operator("wm.url_open",text="Flex controller help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_properties"
 				
 				datablocks_dispayed = []
 				
@@ -4260,15 +4269,6 @@ def menu_func_import(self, context):
 def menu_func_export(self, context):
 	self.layout.operator(SmdExporter.bl_idname, text="Source Engine (.smd, .vta, .dmx)")
 
-def panel_func_group_mute(self,context):
-	# This is crap
-	if len(context.active_object.users_group):
-		self.layout.separator()
-		self.layout.label(text="SMD export ignored groups")
-		cols = self.layout.box().column_flow(0)
-		for group in context.active_object.users_group:
-			cols.prop(group,"smd_mute",text=group.name)
-
 @persistent
 def scene_update(scene):
 	if not (bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated or bpy.data.groups.is_updated):
@@ -4284,7 +4284,7 @@ def scene_update(scene):
 		if item.type == 'ARMATURE':
 			return out + " (Action)"
 		else:
-			return out + " (Object{})".format("; Shapes" if hasShapes(item) else "")
+			return out + " (Object{})".format(" with shapes" if hasShapes(item) else "")
 	
 	if len(validObs):
 		validObs.sort(key=lambda ob: ob.name.lower())
@@ -4297,17 +4297,21 @@ def scene_update(scene):
 		scene_groups = []
 		for group in groups_sorted:
 			valid = False
-			if not group.smd_mute:
-				for object in group.objects:
-					if object in validObs:
+			for object in group.objects:
+				if object in validObs:
+					if not group.smd_mute:
 						validObs.remove(object)
-						valid = True
+					valid = True
 			if valid:
 				scene_groups.append(group)
 				
 		for g in scene_groups:
 			i = scene.smd_export_list.add()
-			i.name = makeDisplayName(g)
+			if g.smd_mute:
+				i.name = g.name + " (Suppressed Group)"
+				i.prop_list = ""
+			else:
+				i.name = makeDisplayName(g)
 			i.item_name = g.name
 			i.type = "GROUP"
 			i.enabled = g.smd_export
@@ -4334,7 +4338,6 @@ def register():
 	bpy.utils.register_module(__name__)
 	bpy.types.INFO_MT_file_import.append(menu_func_import)
 	bpy.types.INFO_MT_file_export.append(menu_func_export)
-	bpy.types.OBJECT_PT_groups.append(panel_func_group_mute)
 	bpy.app.handlers.scene_update_post.append(scene_update)
 
 	global cached_action_filter_list
@@ -4381,7 +4384,7 @@ def register():
 	bpy.types.Group.smd_export = bpy.types.Object.smd_export
 	bpy.types.Group.smd_subdir = bpy.types.Object.smd_subdir
 	bpy.types.Group.smd_expand = BoolProperty(name="SMD show expanded",description="Show the contents of this group in the Scene Exports panel",default=False)
-	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Prevents the SMD exporter from merging the objects in this group together",default=False)
+	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Export this group's objects individually",default=False)
 	bpy.types.Group.smd_flex_controller_mode = bpy.types.Object.smd_flex_controller_mode
 	bpy.types.Group.smd_flex_controller_source = bpy.types.Object.smd_flex_controller_source
 	
@@ -4397,7 +4400,6 @@ def unregister():
 	bpy.utils.unregister_module(__name__)
 	bpy.types.INFO_MT_file_import.remove(menu_func_import)
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
-	bpy.types.OBJECT_PT_groups.remove(panel_func_group_mute)
 	bpy.app.handlers.scene_update_post.remove(scene_update)
 
 	Scene = bpy.types.Scene
