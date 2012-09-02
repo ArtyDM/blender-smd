@@ -563,8 +563,10 @@ def load(path = None, in_file = None, element_path = None):
 		pattern = pattern.replace("{:s}","(\S+)")
 		
 		header = in_file.readline()
-		
-		encoding,encoding_ver, format,format_ver = re.findall(pattern,header)[0]
+		matches = re.findall(pattern,header)
+		if len(matches) != 1 or len(matches[0]) != 4:
+			raise Exception("Could not read DMX header")
+		encoding,encoding_ver, format,format_ver = matches[0]
 		encoding_ver = int(encoding_ver)
 		format_ver = int(format_ver)
 		
