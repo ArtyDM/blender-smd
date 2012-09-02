@@ -550,8 +550,8 @@ def parse(parse_string, element_path=None):
 def load(path = None, in_file = None, element_path = None):
 	if not (path or in_file):
 		raise ArgumentError("A path or a file must be provided")
-	if type(element_path) != list:
-		raise ArugementError("element_path must be a list containing element names")
+	if element_path != None and type(element_path) != list:
+		raise TypeError("element_path must be a list containing element names")
 	if not in_file:
 		in_file = open(path,'r')
 	
@@ -638,10 +638,11 @@ def load(path = None, in_file = None, element_path = None):
 						users = element_users.get(str(id))
 						if users:
 							for user_info in users:
-								value = user_info[0].get_attribute(user_info[1]).value
-								if user_info[2] != -1:
-									value = value[ user_info[2] ]
-								value = element_chain[-1]
+								attr = user_info[0].get_attribute(user_info[1])
+								if user_info[2] == -1:
+									attr.value = element_chain[-1]
+								else:
+									attr.value[ user_info[2] ] = element_chain[-1]
 						id = name = None
 						continue
 					
