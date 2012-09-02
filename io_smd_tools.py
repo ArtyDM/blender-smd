@@ -91,8 +91,8 @@ dmx_versions = {
 'alien swarm':[5,18],
 'orangebox':[5,18], # aka Source MP
 'portal 2':[5,18],
-'Counter-Strike Global Offensive':[5,18],
-'SourceFilmmaker':[5,18]
+'SourceFilmmaker':[5,18],
+'Counter-Strike Global Offensive':[5,18]
 }
 
 # I hate Python's var redefinition habits
@@ -522,6 +522,9 @@ def DatamodelFormatVersion():
 		return bpy.context.scene.smd_studiomdl_custom_path_dmx_format
 	else:
 		return dmx_versions[bpy.context.scene.smd_studiomdl_branch][1]
+		
+def hasFlexControllerSource(item):
+	return bpy.data.texts.get(item.smd_flex_controller_source) or os.path.exists(bpy.path.abspath(item.smd_flex_controller_source))
 
 ########################
 #        Import        #
@@ -2839,6 +2842,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	benchReset()
 	global log
 	
+	if smd.bakeInfo[0].smd_flex_controller_mode == 'ADVANCED' and not hasFlexControllerSource(smd.bakeInfo[0]):
+		log.error( "Could not find flex controllers for \"{}\"".format(object.name if groupIndex == -1 else object.users_group[groupIndex].name) )
+		return
+	
 	def makeTransform(name,matrix):
 		trfm = dm.add_element(name,"DmeTransform")
 		pos = matrix.to_translation()
@@ -3098,7 +3105,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				for shape in smd.dmxShapes[ob['src_name']]:
 					shape_name = shape['shape_name']
 					shape_names.append(shape_name)
-					wrinkle_vg = ob.vertex_groups.get("wrinkle " + shape_name)
+					wrinkle_vg = ob.vertex_groups.get(shape_name)
 					
 					if src_ob.smd_flex_controller_mode == 'SIMPLE':
 						DmeCombinationInputControl = dm.add_element(shape_name,"DmeCombinationInputControl")
@@ -3615,10 +3622,11 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		if is_group:
 			col = makeSettingsBox(text="Group properties",icon='GROUP')
 			items = 0
+			item_list = col.column(align=True)
 			for g_ob in item.objects:
 				if g_ob in validObs:
 					if items % 2 == 0:
-						row = col.row()
+						row = item_list.row(align=True)
 					row.prop(g_ob,"smd_export",icon=MakeObjectIcon(g_ob,suffix="_DATA"),text=g_ob.name)
 					if hasShapes(g_ob,-1) and g_ob.smd_export: want_shapes = g_ob
 					items += 1
@@ -3626,7 +3634,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		elif item:
 			if item.type == 'ARMATURE':
 				col = makeSettingsBox(text="Armature properties",icon='OUTLINER_OB_ARMATURE')
-				col.prop(item.data,"smd_action_selection")
+				col.row().prop(item.data,"smd_action_selection",expand=True)
 				if item.data.smd_action_selection == 'FILTERED':
 					col.prop(item,"smd_action_filter",text="Action Filter")
 
@@ -3654,7 +3662,10 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			col.row().prop(item,"smd_flex_controller_mode",expand=True)
 			
 			if item.smd_flex_controller_mode == 'ADVANCED':
-				col.prop(item,"smd_flex_controller_source",text="Controller source",icon = 'TEXT' if item.smd_flex_controller_source in bpy.data.texts else 'NONE')
+				controller_source = col.row()
+				controller_source.alert = hasFlexControllerSource(item) == False
+				controller_source.prop(item,"smd_flex_controller_source",text="Controller source",icon = 'TEXT' if item.smd_flex_controller_source in bpy.data.texts else 'NONE')
+				
 				row = col.row(align=True)
 				row.context_pointer_set("active_object",objects[0])
 				row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text="Generate controllers")
@@ -3674,7 +3685,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 				if hasShapes(ob):
 					for shape in ob.data.shape_keys.key_blocks[1:]:
 						num_shapes += 1
-						if ob.vertex_groups.get("wrinkle " + shape.name):
+						if ob.vertex_groups.get(shape.name):
 							num_wrinkle_maps += 1
 			
 			col.separator()
@@ -3735,8 +3746,8 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 	
 	@classmethod
 	def poll(self, context):
-		group_index = -1
 		if context.active_object:
+			group_index = -1
 			for i,g in enumerate(context.active_object.users_group):
 				if not g.smd_mute:
 					group_index = i
@@ -3756,9 +3767,11 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 		text_name = ob.name
 		objects = []
 		shapes = []
+		target = ob
 		for g in ob.users_group:
 			if not g.smd_mute:
 				text_name = g.name
+				target = g
 				for g_ob in g.objects:
 					if g_ob.smd_export and hasShapes(g_ob):
 						objects.append(g_ob)
@@ -3801,9 +3814,11 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 			DmeFlexRules.add_attribute("target",[],datamodel.Element)
 		
 		text = bpy.data.texts.new( "flex_{}".format(text_name) )
-		text.use_tabs_as_spaces = False
-		
+		text.use_tabs_as_spaces = False		
 		text.from_string(dm.echo("keyvalues2",1))
+		
+		if not target.smd_flex_controller_source:
+			target.smd_flex_controller_source = text.name
 		
 		self.report({'INFO'},"DMX written to text block \"{}\"".format(text.name))		
 		
@@ -4382,7 +4397,7 @@ def register():
 		('SIMPLE',"Simple","Generate one flex controller per shape key"),
 		('ADVANCED',"Advanced","Insert the flex controllers of an existing DMX file")
 	)
-	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",items=flex_controller_modes,default='SIMPLE')
+	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",description="How flex controllers are defined",items=flex_controller_modes,default='SIMPLE')
 	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",description="A DMX file (or Text datablock) containing flex controllers",subtype='FILE_PATH')
 	
 	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour, but may break compatibility with existing files")
