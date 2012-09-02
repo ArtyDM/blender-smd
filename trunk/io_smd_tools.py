@@ -583,7 +583,7 @@ def validateBones(target):
 		targetBone = target.data.bones.get(values[1]) # names, not IDs, are the key
 		if not targetBone:
 			for bone in target.data.bones:
-				if bone.get("smd_name") == values[1]:
+				if getObExportName(bone) == values[1]:
 					targetBone = bone
 		
 		if targetBone:
@@ -633,13 +633,8 @@ def readNodes():
 
 		values = parseQuoteBlockedLine(line,lower=False)
 	
-		safeName = values[1].replace("ValveBiped.","")
-		bone = smd.a.data.edit_bones.new(safeName[:29]) # avoid Blender hang
+		bone = smd.a.data.edit_bones.new(values[1])
 		bone.tail = 0,5,0 # Blender removes zero-length bones
-
-		if bone.name != values[1]:
-			bone['smd_name'] = values[1]
-			renamedBones.append(bone)
 
 		smd.boneIDs[int(values[0])] = bone.name
 		boneParents[bone.name] = int(values[2])
@@ -649,11 +644,6 @@ def readNodes():
 		parentID = boneParents[bone.name]
 		if parentID != -1:	
 			bone.parent = smd.a.data.edit_bones[ smd.boneIDs[parentID] ]
-	numRenamed = len(renamedBones)
-	if numRenamed > 0:
-		log.warning("{} bone name{} were changed".format(numRenamed,'s were' if numRenamed > 1 else ' was'))
-		for bone in renamedBones:
-			print('  {} -> {}'.format(bone['smd_name'],bone.name))
 
 	bpy.ops.object.mode_set(mode='OBJECT')
 	print("- Imported {} new bones".format(len(smd.a.data.bones)) )
@@ -965,10 +955,9 @@ def getMeshMaterial(in_name):
 	if in_name == "": # buggered SMD
 		in_name = "Material"
 	md = smd.m.data
-	long_name = len(in_name) > 21
 	mat = None
 	for candidate in bpy.data.materials: # Do we have this material already?
-		if candidate.name == in_name or candidate.get('smd_name') == in_name:
+		if candidate.name == in_name:
 			mat = candidate
 	if mat:
 		if md.materials.get(mat.name): # Look for it on this mesh
@@ -993,10 +982,6 @@ def getMeshMaterial(in_name):
 		else:
 			smd.m.draw_type = 'SOLID'
 		mat_ind = len(md.materials) - 1
-		if long_name: # Save the original name as a custom property.
-			mat['smd_name'] = in_name
-			if not in_name in smd.truncMaterialNames:
-				smd.truncMaterialNames.append(in_name)
 
 	return mat, mat_ind
 
@@ -1075,9 +1060,7 @@ def readPolys():
 	else:
 		meshName = smd.jobName
 
-	smd.m = bpy.data.objects.new(meshName,bpy.data.meshes.new(meshName))	
-	if smd.m.name != smd.jobName:
-		smd.m['smd_name'] = smd.jobName
+	smd.m = bpy.data.objects.new(meshName,bpy.data.meshes.new(meshName))
 	smd.m.data.show_double_sided = False
 	smd.m.parent = smd.a
 	bpy.context.scene.objects.link(smd.m)
@@ -1106,12 +1089,6 @@ def readPolys():
 	# Face values
 	uvs = []
 	mats = []
-
-	smd.smdNameToMatName = {}
-	mat = None
-	for mat in bpy.data.materials:
-		smd_name = getObExportName(mat)
-		smd.smdNameToMatName[smd_name] = mat.name
 
 	bm = bmesh.new()
 	bm.from_mesh(md)
@@ -1618,7 +1595,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 	global smd
 	initSMD(filepath,smd_type,append,upAxis,rotMode,from_qc,target_layer)
 	smd.isDMX = 16
-	smd.smdNameToMatName = {}
 	target_arm = findArmature() if append else None
 	if target_arm:
 		smd.a = target_arm
@@ -2068,9 +2044,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			name = get_name()
 			id = get_int()
 		
-			bone = smd.a.data.edit_bones.new(name=name[:29]) # Blender hang avoidance
-			if bone.name != name:
-				bone['smd_name'] = name
+			bone = smd.a.data.edit_bones.new(name)
 			smd.boneIDs[id] = name
 			max_bone_id = max(max_bone_id,id)
 			bone.tail = (0,5,0)
@@ -3604,9 +3578,8 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		validObs = getValidObs()
 		
 		col = l.column()
-		col.prop(item,"smd_subdir",text="Custom subfolder",icon='FILE_FOLDER')
-		col.prop(item,"smd_name",text="Custom filename",icon='FILE_TEXT')
-		
+		col.prop(item,"smd_subdir",text="Subfolder",icon='FILE_FOLDER')
+				
 		def makeSettingsBox(text,icon=None):
 			box = l.box()
 			col = box.column()
@@ -3644,8 +3617,6 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 					
 				if item.animation_data and not 'ActLib' in dir(bpy.types):
 					col.template_ID(item.animation_data, "action", new="action.new")
-
-				col.operator(SmdClean.bl_idname,text="Clean SMD names/IDs from bones",icon='BONE_DATA').mode = 'ARMATURE'
 			if item.type == 'CURVE':
 				col = makeSettingsBox(text="Curve properties",icon='OUTLINER_OB_CURVE')
 				col.label(text="Generate polygons on:")
@@ -4391,7 +4362,6 @@ def register():
 		
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this item with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Optional path relative to scene output folder")
-	bpy.types.Object.smd_name = StringProperty(name="SMD Name",description="Optional filename override")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
 	flex_controller_modes = (
 		('SIMPLE',"Simple","Generate one flex controller per shape key"),
@@ -4412,11 +4382,8 @@ def register():
 	bpy.types.Group.smd_subdir = bpy.types.Object.smd_subdir
 	bpy.types.Group.smd_expand = BoolProperty(name="SMD show expanded",description="Show the contents of this group in the Scene Exports panel",default=False)
 	bpy.types.Group.smd_mute = BoolProperty(name="SMD ignore",description="Prevents the SMD exporter from merging the objects in this group together",default=False)
-	bpy.types.Group.smd_name = bpy.types.Object.smd_name
 	bpy.types.Group.smd_flex_controller_mode = bpy.types.Object.smd_flex_controller_mode
 	bpy.types.Group.smd_flex_controller_source = bpy.types.Object.smd_flex_controller_source
-	
-	bpy.types.Action.smd_name = bpy.types.Object.smd_name
 	
 	bpy.types.Mesh.smd_flex_stereo_sharpness = FloatProperty(name="DMX stereo split sharpness",description="How sharply stereo flex shapes should transition from left to right",default=90,min=0,max=100,subtype='PERCENTAGE')
 	
@@ -4452,7 +4419,6 @@ def unregister():
 	del Object.smd_export
 	del Object.smd_subdir
 	del Object.smd_action_filter
-	del Object.smd_name
 	del Object.smd_flex_controller_mode
 	del Object.smd_flex_controller_source
 
@@ -4465,13 +4431,10 @@ def unregister():
 	del Group.smd_subdir
 	del Group.smd_expand
 	del Group.smd_mute
-	del Group.smd_name
 	del Group.smd_flex_controller_mode
 	del Group.smd_flex_controller_source
 
 	del bpy.types.Curve.smd_faces
-	
-	del bpy.types.Action.smd_name
 	
 	del bpy.types.Mesh.smd_flex_stereo_sharpness
 
