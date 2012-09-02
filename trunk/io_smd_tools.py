@@ -2825,7 +2825,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	benchReset()
 	global log
 	
-	if smd.bakeInfo[0].smd_flex_controller_mode == 'ADVANCED' and not hasFlexControllerSource(smd.bakeInfo[0]):
+	if len(smd.bakeInfo) and smd.bakeInfo[0].smd_flex_controller_mode == 'ADVANCED' and not hasFlexControllerSource(smd.bakeInfo[0]):
 		log.error( "Could not find flex controllers for \"{}\"".format(smd.jobName) )
 		return
 	
@@ -2904,7 +2904,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		
 	if smd.jobType == REF: # mesh
 		root.add_attribute("model",DmeModel)
-		
+				
 		materials = {}
 		dags = []
 		for ob in smd.bakeInfo:
@@ -3153,8 +3153,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				DmeMesh.add_attribute("deltaStateWeights",delta_state_weights,datamodel.Vector2)
 				DmeMesh.add_attribute("deltaStateWeightsLagged",delta_state_weights,datamodel.Vector2)
 				
+				first_pass = not root.get_attribute("combinationOperator")
 				if ob.smd_flex_controller_mode == 'ADVANCED':
-					if not root.get_attribute("combinationOperator"):
+					if first_pass:
 						text = bpy.data.texts.get(ob.smd_flex_controller_source)
 						msg = "- Loading flex controllers from "
 						element_path = [ "combinationOperator" ]
@@ -3168,6 +3169,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					
 					DmeCombinationOperator = controller_dm.root.get_attribute("combinationOperator").value
 					
+					if first_pass:
+						root.add_attribute("combinationOperator",DmeCombinationOperator)
+					
 					# replace target meshes
 					targets = DmeCombinationOperator.get_attribute("targets").value
 					added = False
@@ -3176,20 +3180,23 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 							if elem.get_attribute("deltaStates").value[0].name in shape_names: # can't have the same delta name on multiple objects
 								elem.get_attribute("target").value = DmeMesh
 								added = True
-						else:
+						elif first_pass:
 							targets.remove(elem)
 					if not added:
 						targets.append(DmeMesh)
-				else:
-					DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
-					DmeCombinationOperator.add_attribute("controls",control_elems,datamodel.Element)
-					DmeCombinationOperator.add_attribute("controlValues",control_values,datamodel.Vector3)
-					DmeCombinationOperator.add_attribute("controlValuesLagged",control_values,datamodel.Vector3)
-					DmeCombinationOperator.add_attribute("usesLaggedValues",False)
-					DmeCombinationOperator.add_attribute("dominators",[],datamodel.Element)				
-					DmeCombinationOperator.add_attribute("targets",[DmeMesh],datamodel.Element)
-				if not root.get_attribute("combinationOperator"):
-					root.add_attribute("combinationOperator",DmeCombinationOperator)				
+				else:					
+					if first_pass:
+						DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator")
+						DmeCombinationOperator.add_attribute("controls",[],datamodel.Element)
+						DmeCombinationOperator.add_attribute("controlValues",[],datamodel.Vector3)
+						DmeCombinationOperator.add_attribute("usesLaggedValues",False)
+						DmeCombinationOperator.add_attribute("targets",[],datamodel.Element)
+						
+						root.add_attribute("combinationOperator",DmeCombinationOperator)
+						
+					DmeCombinationOperator.get_attribute("controls").value.extend(control_elems)
+					DmeCombinationOperator.get_attribute("controlValues").value.extend(control_values)
+					DmeCombinationOperator.get_attribute("targets").value.append(DmeMesh)
 				
 				bench("shapes")			
 		
@@ -3676,7 +3683,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 				
 				
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
-	bl_label = "Source Engine QC Complies"
+	bl_label = "Source Engine QC Complies ({})".format(os.path.basename(os.getenv('vproject')))
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
@@ -3702,11 +3709,6 @@ class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 			c = l.column_flow(2)
 			for path in qc_paths:
 				c.operator(SMD_OT_Compile.bl_idname,text=getFilename(path)).filepath = path
-
-		try:
-			vproj = getFilename(os.getenv('vproject'))
-		except:
-			vproj = "no game"
 		
 		error_row = l.row()
 		compile_row = l.row()
