@@ -1,4 +1,20 @@
 #labels Featured
+== SMD Tools 1.5 - September 3rd, 2012 ==
+
+Importer:
+
+  * Removed code that tried to preserve long names, as Blender no longer limits them to 29 characters
+  * Fixed warnings when an SMD starts with comments or blank lines (Dota 2 heroes)
+
+Exporter:
+
+  * Updated UI. Moved all the scattered object/data panels into Scene Properties.
+  * DMX: Added advanced flex controller configuration which inserts the controllers of another DMX File
+  * DMX: Added an operator to generate a template flex controller DMX
+  * DMX: wrinkle map vertex groups no longer start with "wrinkle"; they are now just the name of the shape key
+  * DMX: added support for flex controller stereo split
+
+
 == SMD Tools 1.4.2 - August 26th, 2012 ==
 
 Exporter:
