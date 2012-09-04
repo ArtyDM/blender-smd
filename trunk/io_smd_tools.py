@@ -3167,9 +3167,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 							print(msg + path)
 							controller_dm = datamodel.load(path=path,element_path=element_path)
 					
-					DmeCombinationOperator = controller_dm.root.get_attribute("combinationOperator").value
-					
-					if first_pass:
+						DmeCombinationOperator = controller_dm.root.get_attribute("combinationOperator").value
 						root.add_attribute("combinationOperator",DmeCombinationOperator)
 					
 					# replace target meshes
@@ -3680,10 +3678,13 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			row.alignment = 'CENTER'
 			row.label(icon='SHAPEKEY_DATA',text = "{} shape{}".format(num_shapes,"s" if num_shapes != 1 else ""))
 			row.label(icon='GROUP_VERTEX',text="{} wrinkle map{}".format(num_wrinkle_maps,"s" if num_wrinkle_maps != 1 else ""))
-				
-				
+			
+global vproject			
+vproject = os.getenv('vproject')
+if vproject: vproject = os.path.basename(vproject)
+
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
-	bl_label = "Source Engine QC Complies ({})".format(os.path.basename(os.getenv('vproject')))
+	bl_label = "Source Engine QC Complies ({})".format(vproject)
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
