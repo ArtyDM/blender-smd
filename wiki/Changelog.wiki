@@ -1,4 +1,8 @@
 #labels Featured
+== SMD Tools 1.5.1 - September 5th, 2012 ==
+
+Fixed the tools not starting on systems without the Source SDK.
+
 == SMD Tools 1.5 - September 3rd, 2012 ==
 
 Importer:
