@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 5, 0),
+	"version": (1, 5, 1),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -94,6 +94,10 @@ dmx_versions = {
 'SourceFilmmaker':[5,18],
 'Counter-Strike Global Offensive':[5,18]
 }
+
+global vproject
+vproject = os.getenv('vproject')
+if vproject: vproject = os.path.basename(vproject)
 
 # I hate Python's var redefinition habits
 class smd_info:
@@ -3505,6 +3509,10 @@ class SMD_OT_Compile(bpy.types.Operator):
 	bl_description = "Compile QCs with the Source SDK"
 
 	filepath = StringProperty(name="File path", description="QC to compile", maxlen=1024, default="", subtype='FILE_PATH')
+	
+	@classmethod
+	def poll(self,context):
+		return vproject != False
 
 	def execute(self,context):
 		global log
@@ -3679,12 +3687,8 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			row.label(icon='SHAPEKEY_DATA',text = "{} shape{}".format(num_shapes,"s" if num_shapes != 1 else ""))
 			row.label(icon='GROUP_VERTEX',text="{} wrinkle map{}".format(num_wrinkle_maps,"s" if num_wrinkle_maps != 1 else ""))
 			
-global vproject			
-vproject = os.getenv('vproject')
-if vproject: vproject = os.path.basename(vproject)
-
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
-	bl_label = "Source Engine QC Complies ({})".format(vproject)
+	bl_label = "Source Engine QC Complies ({})".format(vproject if vproject else "no game")
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
