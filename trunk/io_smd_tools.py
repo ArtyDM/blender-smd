@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 5, 1),
+	"version": (1, 5, 2),
 	"blender": (2, 63, 0),
 	"api": 45996,
 	"category": "Import-Export",
@@ -797,7 +797,8 @@ def applyFrames(bone_mats,num_frames, dmx_key_sets = None, fps = None): # this i
 	if smd.jobType in [REF,ANIM_SOLO]:
 		# Apply the reference pose
 		for bone in smd.a.pose.bones:
-			bone.matrix = bone_mats[bone][0]
+			if bone_mats.get(bone)[0]:
+				bone.matrix = bone_mats[bone][0]
 		bpy.ops.pose.armature_apply()
 		
 		# Get sphere bone mesh
@@ -3627,18 +3628,21 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			if item.smd_mute:
 				return
 		elif item:
-			if item.type == 'ARMATURE':
-				col = makeSettingsBox(l,text="Armature properties ({})".format(item.name),icon='OUTLINER_OB_ARMATURE')
-				col.row().prop(item.data,"smd_action_selection",expand=True)
-				if item.data.smd_action_selection == 'FILTERED':
-					col.prop(item,"smd_action_filter",text="Action Filter")
+			armature = item.find_armature()
+			if item.type == 'ARMATURE': armature = item
+			if armature:
+				col = makeSettingsBox(l,text="Armature properties ({})".format(armature.name),icon='OUTLINER_OB_ARMATURE')
+				if armature == item: # only display action stuff if the user has actually selected the armature
+					col.row().prop(armature.data,"smd_action_selection",expand=True)
+					if armature.data.smd_action_selection == 'FILTERED':
+						col.prop(armature,"smd_action_filter",text="Action Filter")
 
-				col.prop(item.data,"smd_implicit_zero_bone")
+				col.prop(armature.data,"smd_implicit_zero_bone")
 				if not shouldExportDMX(scene):
-					col.prop(item.data,"smd_legacy_rotation")
+					col.prop(armature.data,"smd_legacy_rotation")
 					
-				if item.animation_data and not 'ActLib' in dir(bpy.types):
-					col.template_ID(item.animation_data, "action", new="action.new")
+				if armature.animation_data and not 'ActLib' in dir(bpy.types):
+					col.template_ID(armature.animation_data, "action", new="action.new")
 			if item.type == 'CURVE':
 				col = makeSettingsBox(l,text="Curve properties",icon='OUTLINER_OB_CURVE')
 				col.label(text="Generate polygons on:")
