@@ -1,4 +1,14 @@
 #labels Featured
+== SMD Tools 1.5.2 - September 29th, 2012 ==
+
+Importer:
+
+  * Handle implicit SMD bones (like the ones the exporter creates...)
+
+Exporter:
+
+  * Armature properties panel now shows up when selecting an object with an armature modifier
+
 == SMD Tools 1.5.1 - September 5th, 2012 ==
 
 Fixed the tools not starting on systems without the Source SDK.
