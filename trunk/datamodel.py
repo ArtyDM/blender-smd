@@ -783,6 +783,7 @@ def load(path = None, in_file = None, element_path = None):
 				elif attr_type == Angle:		return Angle(get_vec(in_file,3))
 				elif attr_type == Vector4:		return Vector4(get_vec(in_file,4))
 				elif attr_type == Quaternion:	return Quaternion(get_vec(in_file,4))
+				elif attr_type == Color:		return Color(get_vec(in_file,4))
 					
 				elif attr_type == Time:		return get_int(in_file) / 10000
 				
