@@ -1,4 +1,4 @@
-import struct, array, io
+import struct, array, io, binascii
 from struct import unpack,calcsize
 
 global _kv2_indent
@@ -43,12 +43,25 @@ def _quote(str):
 	
 def get_bool(file):
 	return file.read(1) != b'\x00'
+def get_byte(file):
+	return int(unpack("B",file.read(1))[0])
+def get_char(file):
+	return unpack("c",file.read(1))[0].decode('ASCII')
 def get_int(file):
 	return int( unpack("i",file.read(intsize))[0] )
+def get_short(file):
+	return int( unpack("H",file.read(int(intsize/2)))[0] )
 def get_float(file):
 	return float( unpack("f",file.read(floatsize))[0] )
 def get_vec(file,dim):
-	return Vector( unpack("{}f".format(dim),file.read(floatsize*dim)) )
+	return list( unpack("{}f".format(dim),file.read(floatsize*dim)) )
+	
+def get_str(file):
+	out = ""
+	while True:
+		cur = file.read(1)
+		if cur == b'\x00': return out
+		out += cur.decode('ASCII')
 
 def _get_kv2_repr(var):
 	t = type(var)
@@ -247,7 +260,7 @@ class Element:
 				raise ValueError("A datamodel type must be specified for arrays")
 			if t not in _dmxtypes:
 				if t in _array_types:
-					prop_type = _get_array_type(prop_type)
+					if prop_type not in _dmxtypes_array: prop_type = _get_array_type(prop_type)
 					value = prop_type(value)
 				else:
 					raise ValueError("Unsupported data type ({})".format(t))
@@ -342,6 +355,15 @@ _dmxtypes = [Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector
 _dmxtypes_array = [_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray]
 _dmxtypes_str = ["element","int","float","bool","string","binary","time","color","vector2","vector3","vector4","angle","quaternion","matrix"]
 
+attr_list_v1 = [
+	None,Element,int,float,bool,str,Binary,"ObjectID",Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
+	_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,"_ObjectIDArray",_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray
+] # ObjectID is an element UUID
+attr_list_v2 = [
+	None,Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
+	_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray
+]
+
 def _get_type_from_string(type_str):
 	return _dmxtypes[_dmxtypes_str.index(type_str)]
 def _get_array_type(single_type):
@@ -351,16 +373,21 @@ def _get_single_type(array_type):
 	if array_type in _dmxtypes: raise ValueError("Argument is already a single type")
 	return _dmxtypes[ _dmxtypes_array.index(array_type) ]
 
-def _get_dmx_type_id(encoding,version,type):
-	attr_list_v1 = [
-				None,Element,int,float,bool,str,Binary,"ObjectID",Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
-				_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,"_ObjectIDArray",_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray
-			] # ObjectID is an element UUID
-	attr_list_v2 = [
-				None,Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix,
-				_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray
-			]
+def _get_dmx_id_type(encoding,version,id):	
+	if encoding == "binary":
+		if version in [2]:
+			return attr_list_v1[id]
+		if version in [5]:
+			return attr_list_v2[id]
+	if encoding == "keyvalues2":
+		if version == 1:
+			return attr_list_v1[id]
+		if version in [2]:
+			return attr_list_v2[id]
+				
+	raise ValueError("Type {} not supported in {} {}".format(type,encoding,version))
 	
+def _get_dmx_type_id(encoding,version,type):	
 	if encoding == "binary":
 		if version in [2]:
 			return attr_list_v1.index(type)
@@ -553,7 +580,7 @@ def load(path = None, in_file = None, element_path = None):
 	if element_path != None and type(element_path) != list:
 		raise TypeError("element_path must be a list containing element names")
 	if not in_file:
-		in_file = open(path,'r')
+		in_file = open(path,'rb')
 	
 	try:
 		import re, uuid
@@ -562,7 +589,10 @@ def load(path = None, in_file = None, element_path = None):
 		pattern = pattern.replace("{:d}","([0-9]+)")
 		pattern = pattern.replace("{:s}","(\S+)")
 		
-		header = in_file.readline()
+		header = ""
+		while True:
+			header += get_char(in_file)
+			if header.endswith("\n"): break
 		matches = re.findall(pattern,header)
 		if len(matches) != 1 or len(matches[0]) != 4:
 			raise Exception("Could not read DMX header")
@@ -698,6 +728,11 @@ def load(path = None, in_file = None, element_path = None):
 
 				raise IOError("Unexpected EOF")
 			
+			
+			in_file.close()
+			in_file = open(path,'r')
+			in_file.seek(len(header))
+			
 			element_chain = []
 			element_users = {}
 			for line in in_file:
@@ -709,11 +744,62 @@ def load(path = None, in_file = None, element_path = None):
 					read_element(line[0])
 				
 		elif encoding == 'binary':
-			raise Error("Binary DMX can't be read yet")
-			in_file.close()
-			in_file = open(path,'rb')
-			in_file.seek(len(header) + 1)
-		
+			in_file.seek(1,1) # skip header's null terminator
+			
+			# string dictionary			
+			string_dict = []
+			def get_str_with_dict():			
+				try:
+					return string_dict[get_int(in_file)]
+				except:
+					in_file.seek(intsize,1)
+					return get_str(in_file)
+			
+			dict_len = get_int(in_file)
+			for i in range(dict_len):
+				string_dict.append(get_str())
+			num_elements = get_int(in_file)
+			
+			# element headers
+			for i in range(num_elements):
+				elemtype = get_str_with_dict()
+				name = get_str_with_dict()
+				id = uuid.UUID(binascii.hexlify(in_file.read(16)).decode('ASCII'))
+				dm.add_element(name,elemtype,id)
+				
+			# attributes
+			def get_value(attr_type):
+				if attr_type in _dmxtypes_array:	attr_type = _get_single_type(attr_type)
+				
+				if attr_type == Element:	return dm.elements[get_int(in_file)]
+					
+				elif attr_type == str:		return get_str_with_dict()
+				elif attr_type == int:		return get_int(in_file)
+				elif attr_type == float:	return get_float(in_file)
+				elif attr_type == bool:		return get_bool(in_file)
+					
+				elif attr_type == Vector2:		return Vector2(get_vec(in_file,2))
+				elif attr_type == Vector3:		return Vector3(get_vec(in_file,3))
+				elif attr_type == Angle:		return Angle(get_vec(in_file,3))
+				elif attr_type == Vector4:		return Vector4(get_vec(in_file,4))
+				elif attr_type == Quaternion:	return Quaternion(get_vec(in_file,4))
+					
+				elif attr_type == Time:		return get_int(in_file) / 10000
+				
+			for elem in dm.elements:
+				num_attributes = get_int(in_file)
+				for i in range(num_attributes):
+					name = get_str_with_dict()
+					attr_type = _get_dmx_id_type(encoding,encoding_ver,get_byte(in_file))
+					
+					if attr_type in _dmxtypes:
+						elem.add_attribute(name,get_value(attr_type))
+					elif attr_type in _dmxtypes_array:
+						array_len = get_int(in_file)
+						arr = elem.add_attribute(name,[],attr_type).value
+						for x in range(array_len):
+							arr.append( get_value(attr_type) )
+					
 		return dm
 	finally:
 		in_file.close()
