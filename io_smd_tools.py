@@ -2671,7 +2671,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		def writeBone(bone):
 			bone_name = bone.name if bone else "blender_implicit"
 			
-			bone_elem = dm.add_element(bone_name,"DmeJoint",id=bone.name)
+			bone_elem = dm.add_element(bone_name,"DmeJoint",id=bone_name)
 			jointList.append(bone_elem)
 			smd.boneNameToID[bone_name] = len(smd.boneNameToID)
 			
@@ -2682,7 +2682,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			else:
 				relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
 			
-			trfm = makeTransform(bone_name,relMat,bone.name)
+			trfm = makeTransform(bone_name,relMat,bone_name)
 			
 			# Apply armature scale
 			scale = smd.a.matrix_world.to_scale()
