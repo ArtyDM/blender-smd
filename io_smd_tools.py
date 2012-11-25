@@ -2656,7 +2656,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	
 	dm = datamodel.DataModel("model",DatamodelFormatVersion())
 	root = dm.add_element("root",id=context.scene.name)	
-	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id=smd.a.name)
+	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id=smd.a.name if smd.a else smd.m.name)
 	DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(bpy.context.scene.smd_up_axis),context.scene.name)
 	DmeModel_children = DmeModel["children"] = datamodel.make_array([],datamodel.Element)
 	
@@ -4255,3 +4255,10 @@ def unregister():
 
 if __name__ == "__main__":
 	register()
+
+# Blender puts datamodel.py into the addons folder, then moans about it being there
+dir = os.path.dirname(__file__)
+dm_module = "datamodel.py"
+badpath = os.path.join(dir,dm_module)
+if os.path.exists(badpath):
+	os.rename(badpath,os.path.join(os.path.dirname(dir),"modules",dm_module))
