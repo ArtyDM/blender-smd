@@ -1,4 +1,20 @@
 #labels Featured
+== SMD Tools 1.6 - November 29th, 2012 ==
+
+General:
+
+  * Added code to move datamodel.py from the "addons" folder to "modules". This should help with the tools being impossible to enable.
+
+Importer:
+
+  * DMX: Rewrote importer in Python. DMX-Model is no longer required.
+
+Exporter:
+
+  * Fixed Blender undoing too far when exporting from edit mode.
+  * DMX: datamodel element IDs are now based on relevant Blender object names instead of being random. This is better for source control.
+  * DMX: flex controllers can now be loaded from binary DMX files.
+
 == SMD Tools 1.5.2 - September 29th, 2012 ==
 
 Importer:
