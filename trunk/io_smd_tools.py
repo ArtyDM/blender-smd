@@ -3680,10 +3680,15 @@ class SmdExporter(bpy.types.Operator):
 		global log
 		log = logger()
 		
+		# Creating an undo level from edit mode is buggy in 2.64a
+		prev_mode = None
+		if bpy.context.active_object:
+			prev_mode = bpy.context.mode.split("_")[0]
+			bpy.ops.object.mode_set(mode='OBJECT')
+		
 		bpy.ops.ed.undo_push(message=self.bl_label)
 		
 		try:
-			
 			bpy.context.tool_settings.use_keyframe_insert_auto = False
 			bpy.context.tool_settings.use_keyframe_insert_keyingset = False
 			
@@ -3780,6 +3785,9 @@ class SmdExporter(bpy.types.Operator):
 			# Clean everything up
 			bpy.ops.ed.undo_push(message=self.bl_label)
 			bpy.ops.ed.undo()
+			
+			if prev_mode:
+				bpy.ops.object.mode_set(mode=prev_mode)
 			
 			props.directory = ""
 			props.groupIndex = -1
