@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 6, 0),
+	"version": (1, 6, 1),
 	"blender": (2, 64, 0),
 	"api": 51232,
 	"category": "Import-Export",
@@ -4268,5 +4268,12 @@ if __name__ == "__main__":
 dir = os.path.dirname(__file__)
 dm_module = "datamodel.py"
 badpath = os.path.join(dir,dm_module)
+goodpath = os.path.join(os.path.dirname(dir),"modules",dm_module)
+
 if os.path.exists(badpath):
-	os.rename(badpath,os.path.join(os.path.dirname(dir),"modules",dm_module))
+	try:
+		os.makedirs(os.path.dirname(goodpath), exist_ok = True)
+		if os.path.exists(goodpath): os.remove(goodpath)
+		os.rename(badpath,goodpath)
+	except:
+		pass
