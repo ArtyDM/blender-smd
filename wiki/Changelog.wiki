@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.6.1 - December 3rd, 2012 ==
+
+General:
+
+  * Fixed datamodel.py move on fresh Blender profiles with no modules folder
+
 == SMD Tools 1.6 - November 29th, 2012 ==
 
 General:
