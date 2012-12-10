@@ -4265,10 +4265,10 @@ if __name__ == "__main__":
 	register()
 
 # Blender puts datamodel.py into the addons folder, then moans about it being there
-dir = os.path.dirname(__file__)
+scriptdir = os.path.dirname(__file__)
 dm_module = "datamodel.py"
-badpath = os.path.join(dir,dm_module)
-goodpath = os.path.join(os.path.dirname(dir),"modules",dm_module)
+badpath = os.path.join(scriptdir,dm_module)
+goodpath = os.path.join(os.path.dirname(scriptdir),"modules",dm_module)
 
 if os.path.exists(badpath):
 	try:
