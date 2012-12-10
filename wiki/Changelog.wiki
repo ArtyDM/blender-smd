@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.6.2 - December 10th, 2012 ==
+
+General:
+
+  * Fixed importing/exporting animations
+
 == SMD Tools 1.6.1 - December 3rd, 2012 ==
 
 General:
