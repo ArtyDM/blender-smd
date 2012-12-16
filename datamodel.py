@@ -22,7 +22,7 @@ floatsize = calcsize("f")
 
 def check_support(encoding,encoding_ver):
 	if encoding == 'binary':
-		if encoding_ver not in [2,5]:
+		if encoding_ver not in [1,2,5]:
 			raise ValueError("Version {} of binary DMX is not supported".format(encoding_ver))
 	elif encoding == 'keyvalues2':
 		if encoding_ver not in [1]:
@@ -301,18 +301,19 @@ class Element(collections.OrderedDict):
 		self._datamodels.add(datamodel)
 		
 		if id:
-			if type(id) == str:
+			if type(id) == uuid.UUID:
+				self.id = id
+			else:
 				global NAMESPACE_DATAMODEL
 				if NAMESPACE_DATAMODEL == None: NAMESPACE_DATAMODEL = uuid.UUID('20ba94f8-59f0-4579-9e01-50aac4567d3b')
-				self.id = uuid.uuid3(NAMESPACE_DATAMODEL,id)
-			else: self.id = id
+				self.id = uuid.uuid3(NAMESPACE_DATAMODEL,str(id))
 		else:
 			self.id = uuid.uuid4()
 		
 		super().__init__()
 		
-	#def __eq__(self,other):
-	#	return other and self.id == other.id
+	def __eq__(self,other):
+		return other and self.id == other.id
 
 	def __repr__(self):
 		return "<Datamodel element \"{}\" ({})>".format(self.name,self.type)
@@ -451,7 +452,7 @@ def _get_single_type(array_type):
 
 def _get_dmx_id_type(encoding,version,id):	
 	if encoding in ["binary","binary_proto"]:
-		if version in [2]:
+		if version in [1,2]:
 			return attr_list_v1[id]
 		if version in [5]:
 			return attr_list_v2[id]
@@ -482,6 +483,9 @@ class _StringDictionary(list):
 				self.read_index_func = get_int
 				self.index_size = intsize
 				self.index_structchar = "i"
+			elif encoding_ver == 1:
+				self.dummy = True
+				return
 			else:
 				self.read_index_func = get_short
 				self.index_size = shortsize
