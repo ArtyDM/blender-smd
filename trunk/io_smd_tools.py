@@ -21,9 +21,9 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 6, 2),
-	"blender": (2, 64, 0),
-	"api": 51232,
+	"version": (1, 6, 3),
+	"blender": (2, 65, 0),
+	"api": 52859,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties",
 	"wiki_url": "http://code.google.com/p/blender-smd/",
@@ -116,9 +116,7 @@ class smd_info:
 		self.started_in_editmode = None
 		self.append = False
 		self.in_block_comment = False
-		self.upAxis = 'Z'
-		self.upAxisMat = 1 # vec * 1 == vec
-		self.truncMaterialNames = []
+		self.upAxis = bpy.context.scene.smd_up_axis
 		self.rotMode = 'EULER' # for creating keyframes during import
 		self.materials_used = set() # printed to the console for users' benefit
 
@@ -161,7 +159,7 @@ class qc_info:
 		self.dir_stack = []
 
 	def cd(self):
-		return self.root_filedir + "".join(self.dir_stack)
+		return os.path.join(self.root_filedir,*self.dir_stack)
 		
 class KeyFrame:
 	matrix = Matrix()
@@ -1033,9 +1031,9 @@ def removeDoublesPreserveFaces():
 	
 	# Now remove those doubles!
 	ops.object.mode_set(mode='EDIT')
-	ops.mesh.remove_doubles(mergedist=0)
+	ops.mesh.remove_doubles(threshold=0)
 	bpy.ops.mesh.select_all(action='INVERT') # FIXME: the 'back' polys will not be connected to the main mesh
-	ops.mesh.remove_doubles(mergedist=0)
+	ops.mesh.remove_doubles(threshold=0)
 	bpy.ops.mesh.select_all(action='DESELECT')
 	ops.object.mode_set(mode='OBJECT')
 
@@ -1146,14 +1144,6 @@ def readPolys():
 		# Back in polyland now, with three verts processed.
 		countPolys+= 1
 
-	# Warn about truncated material names
-	length = len(smd.truncMaterialNames)
-	if length > 0:
-		log.warning('%d material name%s truncated to 21 characters' % (length,'s were' if length > 1 else ' was'))
-		print("The following material names were truncated to 21 characters:")
-		for smdName in smd.truncMaterialNames:
-			print('  ',smdName)
-
 	bm.to_mesh(md)
 	bm.free()
 	md.update()
@@ -1200,11 +1190,16 @@ def readShapes():
 	if not smd.m:
 		try:
 			smd.m = qc.ref_mesh
-		except NameError:
-			smd.m = bpy.context.active_object # user selection
+		except NameError: # user selection
+			if bpy.context.active_object.type in shape_types:
+				smd.m = bpy.context.active_object
+			else:
+				for obj in bpy.context.selected_objects:
+					if obj.type in shape_types:
+						smd.m = obj
 			
 	if not smd.m:
-		log.error("Could not import shape keys: no target mesh found") # FIXME: this could actually be supported
+		log.error("Could not import shape keys: no valid target object found") # FIXME: this could actually be supported
 		return
 	
 	smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
@@ -1508,7 +1503,7 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 def initSMD(filepath,smd_type,append,upAxis,rotMode,from_qc,target_layer):
 	global smd
 	smd	= smd_info()
-	smd.jobName = os.path.basename(filepath)
+	smd.jobName = os.path.splitext(os.path.basename(filepath))[0]
 	smd.jobType = smd_type
 	smd.append = append
 	smd.startTime = time.time()
@@ -1516,7 +1511,6 @@ def initSMD(filepath,smd_type,append,upAxis,rotMode,from_qc,target_layer):
 	smd.rotMode = rotMode
 	if upAxis:
 		smd.upAxis = upAxis
-		smd.upAxisMat = getUpAxisMat(upAxis)
 	smd.uiTime = 0
 	if not from_qc:
 		global smd_manager
@@ -1606,7 +1600,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		#if not DmeModel.get("model"): smd.jobType = ANIM
 		FlexControllers = dm.root.get("combinationOperator")
 		if DmeModel.get("upAxis"):
-			bpy.context.scene.smd_up_axis = DmeModel["upAxis"]
+			smd.upAxis = DmeModel["upAxis"]
 		
 		def getBlenderQuat(datamodel_quat):
 			return Quaternion([datamodel_quat[3], datamodel_quat[0], datamodel_quat[1], datamodel_quat[2]])
@@ -1614,7 +1608,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			out = Matrix()
 			if elem == None: return out
 			if use_up_axis:
-				out = getUpAxisMat(bpy.context.scene.smd_up_axis).copy()
+				out = getUpAxisMat(smd.upAxis).copy()
 			out *= Matrix.Translation(Vector(elem["position"]))
 			out *= getBlenderQuat(elem["orientation"]).to_matrix().to_4x4()
 			return out
@@ -1835,13 +1829,12 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			
 			frameRate = animation["frameRate"]			
 			timeFrame = animation["timeFrame"]
-			scale = timeFrame["scale"]
+			scale = timeFrame.get("scale",1.0)
 			duration = timeFrame["duration"] if dm.format_ver >= 15 else timeFrame["durationTime"]
-			offset = timeFrame["offset"] if dm.format_ver >= 15 else timeFrame["offsetTime"]
-			if type(duration) == int:
-				duration = datamodel.Time.from_int(duration)
-			if type(offset) == int:
-				offset = datamodel.Time.from_int(offset)
+			offset = timeFrame.get("offset",0.0) if dm.format_ver >= 15 else timeFrame.get("offsetTime",0.0)
+			
+			if type(duration) == int: duration = datamodel.Time.from_int(duration)
+			if type(offset) == int: offset = datamodel.Time.from_int(offset)
 				
 			total_frames = ceil(duration * frameRate) + 1 # need a frame for 0 too!
 			
@@ -1871,10 +1864,10 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					keyframe = keyframes[bone][frame]
 					
 					if channel["toAttribute"][0] == "p":
+						if not bone.parent: keyframe.matrix *= getUpAxisMat(smd.upAxis).inverted()
 						keyframe.matrix *= Matrix.Translation(frame_value)
 						keyframe.pos = True
 					elif channel["toAttribute"][0] == "o":
-						if not bone.parent: keyframe.matrix *= getUpAxisMat(smd.upAxis).inverted()
 						keyframe.matrix *= getBlenderQuat(frame_value).to_matrix().to_4x4()
 						keyframe.rot = True
 			
@@ -2085,7 +2078,7 @@ def writeFrames():
 				else: parentMat = parent.matrix
 				PoseMatrix = parentMat.inverted() * PoseMatrix
 			else:
-				PoseMatrix = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * smd.a.matrix_world * PoseMatrix				
+				PoseMatrix = getUpAxisMat(smd.upAxis).inverted() * smd.a.matrix_world * PoseMatrix				
 	
 			# Get position
 			pos = PoseMatrix.to_translation()
@@ -2467,7 +2460,7 @@ def bakeObj(in_object):
 			_ApplyVisualTransform(obj)
 			
 			if obj.type != 'ARMATURE': # don't apply transforms to armatures until/unless actions are baked too
-				obj.matrix_world *= getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
+				obj.matrix_world *= getUpAxisMat(smd.upAxis).inverted()
 				bpy.ops.object.transform_apply(scale=True,rotation=not smd.isDMX)
 		
 		# Apply modifiers; need to do this per shape key
@@ -2488,6 +2481,9 @@ def bakeObj(in_object):
 						has_edge_split = True
 					if mod.type == 'SOLIDIFY' and not solidify_fill_rim:
 						solidify_fill_rim = mod.use_rim
+					if smd.jobType == FLEX and mod.type == 'DECIMATE' and mod.decimate_type != 'UNSUBDIV':
+						log.error("Cannot export shape keys from \"{}\" because it has a '{}' Decimate modifier. Only Un-Subdivide mode is supported.".format(obj.name,mod.decimate_type))
+						return
 
 				if not has_edge_split and obj.type == 'MESH':
 					edgesplit = obj.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
@@ -2504,14 +2500,17 @@ def bakeObj(in_object):
 				bpy.context.scene.objects.active = baked
 				baked.select = True
 				baked['src_name'] = obj.name
-				if x == 0:
-					bakes_out.append(baked)
+				if smd.jobType == FLEX or (smd.isDMX and x > 0):
+					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
+				
 				if smd.isDMX:
-					if x > 0: smd.dmxShapes[obj.name].append(baked)
+					if x == 0: bakes_out.append(baked)
+					else: smd.dmxShapes[obj.name].append(baked)
 					if smd.g:
 						baked.smd_flex_controller_source = smd.g.smd_flex_controller_source
 						baked.smd_flex_controller_mode = smd.g.smd_flex_controller_mode
 				else:
+					bakes_out.append(baked)
 					bpy.ops.object.mode_set(mode='EDIT')
 					bpy.ops.mesh.quads_convert_to_tris()
 					bpy.ops.object.mode_set(mode='OBJECT')
@@ -2519,11 +2518,6 @@ def bakeObj(in_object):
 				for mod in baked.modifiers:
 					if mod.type == 'ARMATURE':
 						mod.show_viewport = False
-				
-				if smd.jobType == FLEX or (smd.isDMX and x > 0):
-					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					if not smd.isDMX:
-						bakes_out.append(baked)				
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
@@ -2589,6 +2583,8 @@ def writeSMD( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		_workStartNotice()
 		#smd.a = smd.m.find_armature() # Blender bug: only works on meshes
 		bakeObj(smd.m)
+		if len(smd.bakeInfo) == 0:
+			return False
 
 		# re-enable poses
 		for object in armatures:
@@ -2655,9 +2651,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 		return trfm
 	
 	dm = datamodel.DataModel("model",DatamodelFormatVersion())
-	root = dm.add_element("root",id=context.scene.name)	
-	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id=smd.a.name if smd.a else smd.m.name)
-	DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(bpy.context.scene.smd_up_axis),context.scene.name)
+	root = dm.add_element("root",id="Scene"+context.scene.name)	
+	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id="Object" + (smd.a.name if smd.a else smd.m.name))
+	DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(smd.upAxis),"Scene"+context.scene.name)
 	DmeModel_children = DmeModel["children"] = datamodel.make_array([],datamodel.Element)
 	
 	implicit_trfm = None
@@ -2678,11 +2674,11 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			relMat = None
 			if bone:
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-				else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
+				else: relMat = getUpAxisMat(smd.upAxis).inverted() * bone.matrix
 			else:
-				relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted()
+				relMat = getUpAxisMat(smd.upAxis).inverted()
 			
-			trfm = makeTransform(bone_name,relMat,bone_name)
+			trfm = makeTransform(bone_name,relMat,"bone"+bone_name)
 			
 			# Apply armature scale
 			scale = smd.a.matrix_world.to_scale()
@@ -2736,10 +2732,10 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			DmeMesh["currentState"] = vertex_data
 			DmeMesh["baseStates"] = datamodel.make_array([vertex_data],datamodel.Element)
 			
-			trfm = makeTransform(ob_name,ob.matrix_world,ob_name)
+			trfm = makeTransform(ob_name,ob.matrix_world,"ob"+ob_name)
 			jointTransforms.append(trfm)
 			
-			DmeDag = dm.add_element(ob_name,"DmeDag",id=ob_name+"trfm")
+			DmeDag = dm.add_element(ob_name,"DmeDag",id="ob"+ob_name+"dag")
 			jointList.append(DmeDag)
 			DmeDag["transform"] = trfm
 			DmeDag["shape"] = DmeMesh
@@ -2793,7 +2789,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				jointIndices = [ smd.boneNameToID[ob['bp']] ] * len(ob.data.vertices)
 			
 			width = ob.dimensions.x * ( 1 - (src_ob.data.smd_flex_stereo_sharpness / 100) )
-			for vert in ob.data.vertices:				
+			for vert in ob.data.vertices:
 				pos.append(datamodel.Vector3(vert.co))
 				norms.append(datamodel.Vector3(vert.normal))
 				vert.select = False
@@ -3055,9 +3051,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 				cur["mode"] = 1				
 				val_arr = dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer",cur.name+"loglayer")				
 				cur["log"] = dm.add_element(template[2]+" log","Dme"+template[2]+"Log",cur.name+"log")
-				cur["log"]["layers"] = datamodel.make_array(val_arr,datamodel.Element)				
+				cur["log"]["layers"] = datamodel.make_array([val_arr],datamodel.Element)				
 				val_arr["times"] = datamodel.make_array([],datamodel.Time)
-				val_arr["values"] = datamodel.make_array([],template[3])				
+				val_arr["values"] = datamodel.make_array([],template[3])
 				if bone: bone_channels[bone].append(val_arr)
 				channels.append(cur)
 		
@@ -3073,7 +3069,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			keyframe_time = datamodel.Time(frame / fps)
 			for bone in smd.a.pose.bones:
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-				else: relMat = getUpAxisMat(bpy.context.scene.smd_up_axis).inverted() * bone.matrix
+				else: relMat = getUpAxisMat(smd.upAxis).inverted() * bone.matrix
 				
 				pos = relMat.to_translation()
 				
