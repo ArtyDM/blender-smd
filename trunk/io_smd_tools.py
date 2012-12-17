@@ -699,11 +699,8 @@ def readFrames():
 	ops.object.mode_set(mode='POSE')
 
 	num_frames = 0
-	keyframes = {}
+	keyframes = collections.defaultdict(dict)
 	phantom_keyframes = collections.defaultdict(dict)	# bones that aren't in the reference skeleton
-	
-	for bone in smd.a.pose.bones:
-		keyframes[bone] = {}
 	
 	for line in smd.file:
 		if smdBreak(line):
@@ -762,7 +759,7 @@ def readFrames():
 					# Apply the phantom bone, then recurse
 					keyframes[bone][f].matrix = phantom_keyframes[cur_parent][phantom_frame] * keyframes[bone][f].matrix
 					cur_parent = smd.phantomParentIDs.get(cur_parent)
-					
+	
 	applyFrames(keyframes,num_frames)
 
 def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX import too
@@ -842,12 +839,12 @@ def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX i
 		if smd.isDMX == False:
 			# Remove every point but the first unless there is motion
 			still_bones = list(keyframes.keys())
-			for bone in still_bones:
+			for bone in keyframes.keys():
 				bone_keyframes = keyframes[bone]
 				for f,keyframe in bone_keyframes.items():
 					if f == 0: continue
 					diff = keyframe.matrix.inverted() * bone_keyframes[0].matrix
-					if diff.to_translation().length > 0.00001 or abs(sum(diff.to_euler())) > 0.0001:
+					if diff.to_translation().length > 0.00001 or abs(diff.to_quaternion().w) > 0.0001:
 						still_bones.remove(bone)
 						break
 			for bone in still_bones:
@@ -878,7 +875,6 @@ def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX i
 				
 				# Key each frame
 				for f,keyframe in keyframes[bone].items():
-					
 					# Transform
 					if smd.a.data.smd_legacy_rotation:
 						keyframe.matrix *= mat_BlenderToSMD.inverted()
@@ -889,7 +885,7 @@ def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX i
 						bone.matrix = parentMat * keyframe.matrix
 					else:
 						bone.matrix = getUpAxisMat(smd.upAxis) * keyframe.matrix
-						
+					
 					# Key location					
 					if keyframe.pos:
 						for i in range(3):
@@ -898,10 +894,10 @@ def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX i
 					
 					# Key rotation
 					if keyframe.rot:
-						if smd.rotMode == 'XYZ':							
+						if smd.rotMode == 'XYZ':
 							for i in range(3):
 								curvesRot[i].keyframe_points.add(1)
-								curvesRot[i].keyframe_points[-1].co = [f, bone.rotation_euler[i]]								
+								curvesRot[i].keyframe_points[-1].co = [f, bone.rotation_euler[i]]
 						else:
 							for i in range(4):
 								curvesRot[i].keyframe_points.add(1)
