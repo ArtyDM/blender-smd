@@ -553,6 +553,7 @@ class DataModel:
 		
 	def add_element(self,name,elemtype="DmElement",id=None,_is_placeholder=False):
 		elem = Element(self,name,elemtype,id,_is_placeholder)
+		if self.elements.contains(elem): raise ArgumentError("ID already in use in this datamodel.")
 		self.elements.append(elem)
 		elem.datamodel = self
 		if len(self.elements) == 1: self.root = elem
