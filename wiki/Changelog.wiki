@@ -1,4 +1,27 @@
 #labels Featured
+== SMD Tools 1.6.3 - December 17th, 2012 ==
+
+General:
+
+  * Upgraded to Blender 2.65. Previous versions of Blender are no longer supported.
+
+Importer:
+
+  * Fixed the up axis setting on the import screen being ignored
+  * Fixed importing QC files with $pushdir
+  * Fixed objects being imported with file extensions
+  * Improved object selection for shape key import
+  * DMX: added support for Binary v1
+  * DMX: use default values if an animation does not specify an offset or scale
+  * SMD: fixed animations not being importing for some bones
+
+Exporter:
+
+  * Fixed exporting the basis shape key twice
+  * Error if the user tries to export shapes from an object with a 'Collapse' or 'Planar' Decimate modifier
+  * DMX: fixed various Guid collision issues
+  * DMX: fixed no animation frames being exported (am I going mad?)
+
 == SMD Tools 1.6.2 - December 10th, 2012 ==
 
 General:
