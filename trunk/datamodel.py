@@ -553,7 +553,7 @@ class DataModel:
 		
 	def add_element(self,name,elemtype="DmElement",id=None,_is_placeholder=False):
 		elem = Element(self,name,elemtype,id,_is_placeholder)
-		if self.elements.contains(elem): raise ArgumentError("ID already in use in this datamodel.")
+		if elem in self.elements: raise ArgumentError("ID already in use in this datamodel.")
 		self.elements.append(elem)
 		elem.datamodel = self
 		if len(self.elements) == 1: self.root = elem
@@ -710,27 +710,30 @@ def load(path = None, in_file = None, element_path = None):
 	try:
 		import re, uuid
 		
-		header = ""
-		while True:
-			header += get_char(in_file)
-			if header.endswith(">"): break
-		
-		matches = re.findall(header_format_regex,header)
-		
-		if len(matches) != 1 or len(matches[0]) != 4:
-			global header_proto2
-			matches = re.findall(header_proto2_regex,header)
-			if len(matches) == 1 and len(matches[0]) == 1:
-				encoding = "binary_proto"
-				encoding_ver = int(matches[0][0])
-				format = "undefined_format"
-				format_ver = 0
+		try:
+			header = ""
+			while True:
+				header += get_char(in_file)
+				if header.endswith(">"): break
+			
+			matches = re.findall(header_format_regex,header)
+			
+			if len(matches) != 1 or len(matches[0]) != 4:
+				global header_proto2
+				matches = re.findall(header_proto2_regex,header)
+				if len(matches) == 1 and len(matches[0]) == 1:
+					encoding = "binary_proto"
+					encoding_ver = int(matches[0][0])
+					format = "undefined_format"
+					format_ver = 0
+				else:
+					raise Exception()
 			else:
-				raise Exception("Could not read DMX header")
-		else:
-			encoding,encoding_ver, format,format_ver = matches[0]
-			encoding_ver = int(encoding_ver)
-			format_ver = int(format_ver)
+				encoding,encoding_ver, format,format_ver = matches[0]
+				encoding_ver = int(encoding_ver)
+				format_ver = int(format_ver)
+		except:
+			raise Exception("Could not read DMX header")
 		
 		check_support(encoding,encoding_ver)
 		dm = DataModel(format,format_ver)
