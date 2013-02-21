@@ -553,7 +553,7 @@ class DataModel:
 		
 	def add_element(self,name,elemtype="DmElement",id=None,_is_placeholder=False):
 		elem = Element(self,name,elemtype,id,_is_placeholder)
-		if elem in self.elements: raise ArgumentError("ID already in use in this datamodel.")
+		if elem in self.elements: raise ValueError("ID already in use in this datamodel.")
 		self.elements.append(elem)
 		elem.datamodel = self
 		if len(self.elements) == 1: self.root = elem
@@ -701,7 +701,7 @@ def parse(parse_string, element_path=None):
 
 def load(path = None, in_file = None, element_path = None):
 	if not (path or in_file) or (path and in_file):
-		raise ArgumentError("A path string OR a file object must be provided")
+		raise ValueError("A path string OR a file object must be provided")
 	if element_path != None and type(element_path) != list:
 		raise TypeError("element_path must be a list containing element names")
 	if not in_file:
