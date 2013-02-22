@@ -1,4 +1,14 @@
 #labels Featured
+== SMD Tools 1.6.4 - February 22nd, 2013 ==
+
+  * Updated to Blender 2.66. Earlier versions of Blender are no longer supported.
+
+Exporter:
+
+  * Improved export list UI
+  * Fixed exporting a group to DMX when multiple members shared the same material
+  * Improved UI behaviour when an object is a member of multiple groups
+
 == SMD Tools 1.6.3 - December 17th, 2012 ==
 
 General:
