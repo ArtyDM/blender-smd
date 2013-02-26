@@ -553,7 +553,10 @@ class DataModel:
 		
 	def add_element(self,name,elemtype="DmElement",id=None,_is_placeholder=False):
 		elem = Element(self,name,elemtype,id,_is_placeholder)
-		if elem in self.elements: raise ValueError("ID already in use in this datamodel.")
+		try:
+			dupe_elem = self.elements.index(elem)
+			if not self.elements[dupe_elem]._is_placeholder: raise ValueError("ID {} already in use in this datamodel.".format(id))
+		except: pass
 		self.elements.append(elem)
 		elem.datamodel = self
 		if len(self.elements) == 1: self.root = elem
