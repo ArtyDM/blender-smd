@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.6.5 - March 4th, 2013 ==
+
+Importer:
+
+ * Fixed importing DMX files with shape keys  
+
 == SMD Tools 1.6.4 - February 22nd, 2013 ==
 
   * Updated to Blender 2.66. Earlier versions of Blender are no longer supported.
