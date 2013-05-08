@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 6, 5),
+	"version": (1, 6, 6),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -428,13 +428,15 @@ except:
 	def printColour(colour,*string):
 		print(*string)
 
-def getUpAxisMat(axis):
+def getUpAxisMat(axis=None):
+	global smd
+	if axis == None: axis = smd.upAxis
 	if axis.upper() == 'X':
 		return Matrix.Rotation(pi/2,4,'Y')
 	if axis.upper() == 'Y':
 		return Matrix.Rotation(pi/2,4,'X')
 	if axis.upper() == 'Z':
-		return Matrix.Rotation(0,4,'Z')
+		return Matrix()
 	else:
 		raise AttributeError("getUpAxisMat got invalid axis argument '{}'".format(axis))
 
@@ -735,11 +737,11 @@ def readFrames():
 		try:
 			bone = smd.a.pose.bones[ smd.boneIDs[values[0]] ]
 			if not bone.parent:
-				keyframe.matrix = getUpAxisMat(smd.upAxis) * keyframe.matrix
+				keyframe.matrix = getUpAxisMat() * keyframe.matrix
 			keyframes[bone][num_frames-1] = keyframe
 		except KeyError:
 			if not smd.phantomParentIDs.get(values[0]):
-				keyframe.matrix = getUpAxisMat(smd.upAxis) * keyframe.matrix
+				keyframe.matrix = getUpAxisMat() * keyframe.matrix
 			phantom_keyframes[values[0]][num_frames-1] = keyframe
 		
 	# All frames read, apply phantom bones
@@ -882,7 +884,7 @@ def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX i
 						else: parentMat = bone.parent.matrix
 						bone.matrix = parentMat * keyframe.matrix
 					else:
-						bone.matrix = getUpAxisMat(smd.upAxis) * keyframe.matrix
+						bone.matrix = getUpAxisMat() * keyframe.matrix
 					
 					# Key location					
 					if keyframe.pos:
@@ -1593,8 +1595,6 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 		DmeModel = dm.root.get("skeleton")
 		#if not DmeModel.get("model"): smd.jobType = ANIM
 		FlexControllers = dm.root.get("combinationOperator")
-		if DmeModel.get("upAxis"):
-			smd.upAxis = DmeModel["upAxis"]
 		
 		def getBlenderQuat(datamodel_quat):
 			return Quaternion([datamodel_quat[3], datamodel_quat[0], datamodel_quat[1], datamodel_quat[2]])
@@ -1602,7 +1602,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			out = Matrix()
 			if elem == None: return out
 			if use_up_axis:
-				out = getUpAxisMat(smd.upAxis).copy()
+				out = getUpAxisMat()
 			out *= Matrix.Translation(Vector(elem["position"]))
 			out *= getBlenderQuat(elem["orientation"]).to_matrix().to_4x4()
 			return out
@@ -1720,7 +1720,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 				for face_set in DmeMesh["faceSets"]:
 					mat_path = face_set["material"]["mtlName"]
 					bpy.context.scene.smd_material_path = os.path.dirname(mat_path).replace("\\","/")
-					mat, mat_ind = getMeshMaterial(os.path.dirname(mat_path))
+					mat, mat_ind = getMeshMaterial(os.path.basename(mat_path))
 					face_verts = []
 					dmx_face = 0
 					for vert in face_set["faces"]:
@@ -1858,7 +1858,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					keyframe = keyframes[bone][frame]
 					
 					if channel["toAttribute"][0] == "p":
-						if not bone.parent: keyframe.matrix *= getUpAxisMat(smd.upAxis).inverted()
+						if not bone.parent: keyframe.matrix *= getUpAxisMat().inverted()
 						keyframe.matrix *= Matrix.Translation(frame_value)
 						keyframe.pos = True
 					elif channel["toAttribute"][0] == "o":
@@ -2072,7 +2072,7 @@ def writeFrames():
 				else: parentMat = parent.matrix
 				PoseMatrix = parentMat.inverted() * PoseMatrix
 			else:
-				PoseMatrix = getUpAxisMat(smd.upAxis).inverted() * smd.a.matrix_world * PoseMatrix				
+				PoseMatrix = smd.a.matrix_world * PoseMatrix				
 	
 			# Get position
 			pos = PoseMatrix.to_translation()
@@ -2350,11 +2350,18 @@ def bakeObj(in_object):
 			if not cur_parent.parent:
 				top_parent = cur_parent
 			cur_parent = cur_parent.parent
+		
+		if smd.jobType != ANIM:
+			obj.matrix_world = getUpAxisMat().inverted() * obj.matrix_world
 
 		bpy.context.scene.objects.active = obj
+		bpy.ops.object.select_all(action='DESELECT')
+		obj.select = True
+		
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent (potentially the object itself)
-		bpy.ops.object.transform_apply(location=not smd.isDMX)	
+		if not smd.isDMX:
+			bpy.ops.object.transform_apply()
 
 	if in_object.type == 'ARMATURE':
 		_ApplyVisualTransform(in_object)
@@ -2453,10 +2460,6 @@ def bakeObj(in_object):
 			
 			_ApplyVisualTransform(obj)
 			
-			if obj.type != 'ARMATURE': # don't apply transforms to armatures until/unless actions are baked too
-				obj.matrix_world *= getUpAxisMat(smd.upAxis).inverted()
-				bpy.ops.object.transform_apply(scale=True,rotation=not smd.isDMX)
-		
 		# Apply modifiers; need to do this per shape key
 		bpy.ops.object.mode_set(mode='OBJECT')
 		for x in range(num_out):
@@ -2637,17 +2640,14 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 	
 	def makeTransform(name,matrix,object_name):
 		trfm = dm.add_element(name,"DmeTransform",id=object_name+"transform")
-		pos = matrix.to_translation()
-		rot = matrix.to_quaternion()
-				
-		trfm["position"] = datamodel.Vector3(pos)
-		trfm["orientation"] = getDatamodelQuat(rot)
+		trfm["position"] = datamodel.Vector3(matrix.to_translation())
+		trfm["orientation"] = getDatamodelQuat(matrix.to_quaternion())
 		return trfm
 	
 	dm = datamodel.DataModel("model",DatamodelFormatVersion())
 	root = dm.add_element("root",id="Scene"+context.scene.name)	
 	DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id="Object" + (smd.a.name if smd.a else smd.m.name))
-	DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(smd.upAxis),"Scene"+context.scene.name)
+	DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(),"Scene"+context.scene.name)
 	DmeModel_children = DmeModel["children"] = datamodel.make_array([],datamodel.Element)
 	
 	implicit_trfm = None
@@ -2668,9 +2668,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			relMat = None
 			if bone:
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-				else: relMat = getUpAxisMat(smd.upAxis).inverted() * bone.matrix
+				else: relMat = smd.a.matrix_world * bone.matrix
 			else:
-				relMat = getUpAxisMat(smd.upAxis).inverted()
+				relMat = smd.a.matrix_world
 			
 			trfm = makeTransform(bone_name,relMat,"bone"+bone_name)
 			
@@ -2726,7 +2726,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			DmeMesh["currentState"] = vertex_data
 			DmeMesh["baseStates"] = datamodel.make_array([vertex_data],datamodel.Element)
 			
-			trfm = makeTransform(ob_name,ob.matrix_world,"ob"+ob_name)
+			trfm = makeTransform(ob_name, ob.matrix_world, "ob"+ob_name)
 			jointTransforms.append(trfm)
 			
 			DmeDag = dm.add_element(ob_name,"DmeDag",id="ob"+ob_name+"dag")
@@ -2868,7 +2868,9 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					material_elem = materials.get(mat_name)
 					if not material_elem:
 						materials[mat_name] = material_elem = dm.add_element(mat_name,"DmeMaterial",id=mat_name + "mat")
-						material_elem["mtlName"] = bpy.context.scene.smd_material_path + mat_name
+						mat_path = bpy.context.scene.smd_material_path.replace('\\','/')
+						if (mat_path[-1] != '/'): mat_path += '/'
+						material_elem["mtlName"] = mat_path + mat_name
 					
 					faceSet = dm.add_element(mat_name,"DmeFaceSet",id=ob_name+mat_name+"faces")
 					faceSet["material"] = material_elem
@@ -3065,7 +3067,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 			keyframe_time = datamodel.Time(frame / fps)
 			for bone in smd.a.pose.bones:
 				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-				else: relMat = getUpAxisMat(smd.upAxis).inverted() * bone.matrix
+				else: relMat = smd.a.matrix_world * bone.matrix
 				
 				pos = relMat.to_translation()
 				
