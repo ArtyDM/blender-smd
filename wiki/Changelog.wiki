@@ -1,4 +1,15 @@
 #labels Featured
+== SMD Tools 1.6.6 - May 8th, 2013 ==
+
+Importer:
+
+  * DMX: fixed material name import
+  
+Exporter:
+
+  * Fixed object rotation doing crazy things
+  * DMX: fixed material name export when the scene's material path does not end with a slash
+
 == SMD Tools 1.6.5 - March 4th, 2013 ==
 
 Importer:
