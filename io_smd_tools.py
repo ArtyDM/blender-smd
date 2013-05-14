@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 6, 6),
+	"version": (1, 6, 7),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -2869,7 +2869,7 @@ def writeDMX( context, object, groupIndex, filepath, smd_type = None, quiet = Fa
 					if not material_elem:
 						materials[mat_name] = material_elem = dm.add_element(mat_name,"DmeMaterial",id=mat_name + "mat")
 						mat_path = bpy.context.scene.smd_material_path.replace('\\','/')
-						if (mat_path[-1] != '/'): mat_path += '/'
+						if (len(mat_path) > 0 and mat_path[-1] != '/'): mat_path += '/'
 						material_elem["mtlName"] = mat_path + mat_name
 					
 					faceSet = dm.add_element(mat_name,"DmeFaceSet",id=ob_name+mat_name+"faces")
