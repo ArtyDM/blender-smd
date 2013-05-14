@@ -1,4 +1,10 @@
 #labels Featured
+== SMD Tools 1.6.7 - May 14th, 2013 ==
+
+Exporter:
+
+  * Fixed DMX export when Material Path is empty
+
 == SMD Tools 1.6.6 - May 8th, 2013 ==
 
 Importer:
