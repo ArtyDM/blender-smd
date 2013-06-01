@@ -2360,8 +2360,9 @@ def bakeObj(in_object):
 		
 		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent (potentially the object itself)
+		bpy.ops.object.transform_apply(scale=True)
 		if not smd.isDMX:
-			bpy.ops.object.transform_apply()
+			bpy.ops.object.transform_apply(location=True,rotation=True)
 
 	if in_object.type == 'ARMATURE':
 		_ApplyVisualTransform(in_object)
