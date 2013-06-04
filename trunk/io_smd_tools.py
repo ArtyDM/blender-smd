@@ -20,8 +20,8 @@
 
 bl_info = {
 	"name": "SMD\DMX Tools",
-	"author": "Tom Edwards, EasyPickins",
-	"version": (1, 6, 7),
+	"author": "Tom Edwards",
+	"version": (1, 7, 0),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -1797,7 +1797,8 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					for DmeVertexDeltaData in DmeMesh["deltaStates"]:
 						if not ob.data.shape_keys:
 							ob.shape_key_add("Basis")
-							ob.show_only_shape_key = True				
+							ob.show_only_shape_key = True
+							ob.data.shape_keys.name = DmeMesh.name
 						shape_key = ob.shape_key_add(DmeVertexDeltaData.name)
 						
 						if "positions" in DmeVertexDeltaData["vertexFormat"]:
@@ -3486,6 +3487,8 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 				row.operator(DmxWriteFlexControllers.bl_idname,icon='TEXT',text="Generate controllers")
 				row.operator("wm.url_open",text="Flex controller help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Flex_properties"
 				
+				col.operator(AddCorrectiveShapeDrivers.bl_idname, icon='DRIVER')
+				
 				datablocks_dispayed = []
 				
 				for ob in objects:
@@ -4092,6 +4095,63 @@ class SmdToolsUpdate(bpy.types.Operator):
 		self.result = 'SUCCESS'
 		return
 
+################################
+#  Corrective shape utilities  #
+################################
+
+class ActiveDependencyShapes(bpy.types.Operator):
+	'''Activates shapes found in the name of the current shape (underscore delimited)'''
+	bl_idname = "object.shape_key_activate_dependents"
+	bl_label = "Activate Dependency Shapes"
+
+	@classmethod
+	def poll(cls, context):
+		try:
+			return context.active_object.active_shape_key.name.find('_') != -1
+		except:
+			return False
+
+	def execute(self, context):
+		context.active_object.show_only_shape_key = False
+		active_key = context.active_object.active_shape_key		
+		subkeys = set(active_key.name.split('_'))
+		num_activated = 0
+		for key in context.active_object.data.shape_keys.key_blocks:
+			if key == active_key or set(key.name.split('_')) <= subkeys:
+				key.value = 1
+				num_activated += 1
+			else:
+				key.value = 0
+		self.report({'INFO'},"Activated {} dependency shapes".format(num_activated - 1))
+		return {'FINISHED'}
+
+class AddCorrectiveShapeDrivers(bpy.types.Operator):
+	'''Adds Blender animation drivers to corrective Source engine shapes'''
+	bl_idname = "object.smd_generate_corrective_drivers"
+	bl_label = "Generate Corrective Shape Key Drivers"
+
+	@classmethod
+	def poll(cls, context):
+		return context.active_object and context.active_object.active_shape_key
+
+	def execute(self, context):
+		keys = context.active_object.data.shape_keys
+		for key in keys.key_blocks:
+			if key.name.find('_') != -1:
+				subkeys = key.name.split('_')
+				if any(keys.key_blocks.get(subkey) for subkey in subkeys):
+					key.driver_remove("value")
+					fcurve = key.driver_add("value")
+					fcurve.modifiers.remove(fcurve.modifiers[0])
+					fcurve.driver.type = 'MIN'
+					for subkey in subkeys:
+						if keys.key_blocks.get(subkey):
+							var = fcurve.driver.variables.new()
+							var.name = subkey
+							var.targets[0].id_type = 'KEY'
+							var.targets[0].id = keys
+							var.targets[0].data_path = "key_blocks[\"{}\"].value".format(subkey)
+		return {'FINISHED'}
 
 #####################################
 #        Shared registration        #
@@ -4102,6 +4162,9 @@ def menu_func_import(self, context):
 
 def menu_func_export(self, context):
 	self.layout.operator(SmdExporter.bl_idname, text="Source Engine (.smd, .vta, .dmx)")
+
+def menu_func_shapekeys(self,context):
+	self.layout.operator(ActiveDependencyShapes.bl_idname, text="Activate dependency shapes", icon='SHAPEKEY_DATA')
 
 @persistent
 def scene_update(scene):
@@ -4185,6 +4248,7 @@ def register():
 	bpy.utils.register_module(__name__)
 	bpy.types.INFO_MT_file_import.append(menu_func_import)
 	bpy.types.INFO_MT_file_export.append(menu_func_export)
+	bpy.types.MESH_MT_shape_key_specials.append(menu_func_shapekeys)
 	bpy.app.handlers.scene_update_post.append(scene_update)
 
 	global cached_action_filter_list
@@ -4247,6 +4311,7 @@ def unregister():
 	bpy.utils.unregister_module(__name__)
 	bpy.types.INFO_MT_file_import.remove(menu_func_import)
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
+	bpy.types.MESH_MT_shape_key_specials.remove(menu_func_shapekeys)
 	bpy.app.handlers.scene_update_post.remove(scene_update)
 
 	Scene = bpy.types.Scene
