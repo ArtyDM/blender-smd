@@ -1,4 +1,15 @@
 #labels Featured
+== SMD Tools 1.7 - June 4th, 2013 ==
+
+General:
+
+  * Added the "Generate Corrective Shape Key Drivers" operator, which adds Blender animation drivers for corrective shape keys
+  * Added the "Activate Dependency Shapes" operator, which activates all shapes referred to in the name of the active shape (use to view/edit a corrective shape in its proper context)
+  
+Exporter:
+
+  * Fixed object scale not being applied
+
 == SMD Tools 1.6.7 - May 14th, 2013 ==
 
 Exporter:
