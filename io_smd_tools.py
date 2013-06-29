@@ -1,3 +1,5 @@
+#  Copyright (c) 2013 Tom Edwards contact@steamreview.org
+#
 # ##### BEGIN GPL LICENSE BLOCK #####
 #
 #  This program is free software; you can redistribute it and/or
@@ -16,12 +18,12 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-# DISABLE SmdToolsUpdate IF YOU MAKE THIRD-PARTY CHANGES TO THE SCRIPT!
+# DISABLE SmdToolsUpdate IF YOU MAKE THIRD-PARTY CHANGES TO THIS SCRIPT!
 
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards",
-	"version": (1, 7, 0),
+	"version": (1, 8, 0),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -66,38 +68,6 @@ mesh_compatible = [ 'MESH', 'TEXT', 'FONT', 'SURFACE', 'META', 'CURVE' ]
 exportable_types = mesh_compatible[:]
 exportable_types.append('ARMATURE')
 shape_types = ['MESH' , 'SURFACE']
-
-src_branches = (
-('CUSTOM','Custom SDK',''),
-('orangebox','Source MP',''),
-('source2009','Source 2009',''),
-('source2007','Source 2007',''),
-('ep1','Source 2006',''),
-('left 4 dead 2','Left 4 Dead 2',''),
-('left 4 dead','Left 4 Dead',''),
-('alien swarm','Alien Swarm',''),
-('portal 2','Portal 2',''),
-('Counter-Strike Global Offensive','Counter-Strike: GO',''),
-('SourceFilmmaker', 'Source Filmmaker', '')
-)
-
-# [encoding,format]
-dmx_versions = {
-'ep1':[0,0],
-'source2007':[2,1],
-'source2009':[2,1],
-'left 4 dead':[5,15],
-'left 4 dead 2':[5,15],
-'alien swarm':[5,18],
-'orangebox':[5,18], # aka Source MP
-'portal 2':[5,18],
-'SourceFilmmaker':[5,18],
-'Counter-Strike Global Offensive':[5,18]
-}
-
-global vproject
-vproject = os.getenv('vproject')
-if vproject: vproject = os.path.basename(vproject)
 
 # I hate Python's var redefinition habits
 class smd_info:
@@ -194,7 +164,6 @@ class logger:
 		self.warnings = []
 		self.errors = []
 		self.startTime = time.time()
-		self.wantDMXDownloadPrompt = False
 
 	def warning(self, *string):
 		message = " ".join(str(s) for s in string)
@@ -214,16 +183,6 @@ class logger:
 		if len(self.errors) or len(self.warnings):
 			message += " with {} errors and {} warnings:".format(len(self.errors),len(self.warnings))
 
-			# like it or not, Blender automatically prints operator reports to the console these days
-			'''print(message)
-			stdOutColour(STD_RED)
-			for msg in self.errors:
-				print("  " + msg)
-			stdOutColour(STD_YELLOW)
-			for msg in self.warnings:
-				print("  " + msg)
-			stdOutReset()'''
-
 			for err in self.errors:
 				message += "\nERROR: " + err
 			for warn in self.warnings:
@@ -232,13 +191,6 @@ class logger:
 		else:
 			caller.report({'INFO'},message)
 			print(message)
-
-		if self.wantDMXDownloadPrompt:
-			stdOutColour(STD_YELLOW)
-			print("\nFor DMX support, download DMX-Model from http://code.google.com/p/blender-smd/downloads/list")
-			stdOutReset()
-
-log = None # Initialize this so it is easier for smd_test_suite to access
 
 ##################################
 #        Shared utilities        #
@@ -275,21 +227,16 @@ def ValidateBlenderVersion(op):
 	except ValueError:
 		return True
 
-def canExportDMX(scene):
-	if scene.smd_studiomdl_branch == 'CUSTOM':
-		dmx_versions['CUSTOM'] = [scene.smd_studiomdl_custom_path_dmx_encoding, scene.smd_studiomdl_custom_path_dmx_format]
-	
-	try: datamodel.check_support("binary",dmx_versions[scene.smd_studiomdl_branch][0])
-	except: return False
-	
-	return dmx_versions[scene.smd_studiomdl_branch][1] in [18]
-	
-def shouldExportDMX(scene):
-	if scene.smd_format != 'DMX': return False
-	return canExportDMX(scene)	
+def studiomdlPathValid():
+	return os.path.exists(os.path.join(bpy.path.abspath(bpy.context.scene.smd_studiomdl_custom_path),"studiomdl.exe"))
+
+def getGamePath():
+	return os.path.abspath(os.path.join(bpy.path.abspath(bpy.context.scene.smd_game_path),'')) if len(bpy.context.scene.smd_game_path) else os.getenv('vproject')
+def gamePathValid():
+	return os.path.exists(os.path.join(getGamePath(),"gameinfo.txt"))
 
 def getFileExt(flex=False):
-	if shouldExportDMX(bpy.context.scene):
+	if shouldExportDMX():
 		return ".dmx"
 	else:
 		if flex: return ".vta"
@@ -299,11 +246,6 @@ def isWild(in_str):
 	wcards = [ "*", "?", "[", "]" ]
 	for char in wcards:
 		if in_str.find(char) != -1: return True
-
-def getEngineBranchName():
-	for branch in src_branches:
-		if branch[0] == bpy.context.scene.smd_studiomdl_branch:
-			return branch[1]
 
 # rounds to 6 decimal places, converts between "1e-5" and "0.000001", outputs str
 def getSmdFloat(fval):
@@ -502,20 +444,65 @@ def hasShapes(ob,groupIndex = -1):
 def shouldExportGroup(group):
 	return group.smd_export and not group.smd_mute
 
-def DatamodelEncodingVersion():
-	if bpy.context.scene.smd_studiomdl_branch == 'CUSTOM':
-		return bpy.context.scene.smd_studiomdl_custom_path_dmx_encoding
-	else:
-		return dmx_versions[bpy.context.scene.smd_studiomdl_branch][0]
-	
-def DatamodelFormatVersion():
-	if bpy.context.scene.smd_studiomdl_branch == 'CUSTOM':
-		return bpy.context.scene.smd_studiomdl_custom_path_dmx_format
-	else:
-		return dmx_versions[bpy.context.scene.smd_studiomdl_branch][1]
-		
 def hasFlexControllerSource(item):
 	return bpy.data.texts.get(item.smd_flex_controller_source) or os.path.exists(bpy.path.abspath(item.smd_flex_controller_source))
+
+#########################
+#   DMX version stuff   #
+#########################
+
+dmx_model_versions = [1,15,18]
+scene_dmx_versions = {}
+
+dmx_versions = { # [encoding, format]
+'ep1':[0,0],
+'source2007':[2,1],
+'source2009':[2,1],
+'Left 4 Dead':[5,15],
+'Left 4 Dead 2':[5,15],
+'orangebox':[5,18], # aka Source MP
+'Alien Swarm':[5,18],
+'Portal 2':[5,18],
+'Counter-Strike Global Offensive':[5,18],
+'Source Filmmaker':[5,18],
+'Dota 2 Beta':[5,18],
+'Dota 2':[5,18],
+'Half-Life 2':[5,18],
+'Source SDK Base 2013 Singleplayer':[5,18],
+'Source SDK Base 2013 Multiplayer':[5,18]
+}
+
+def DatamodelEncodingVersion():
+	return scene_dmx_versions[bpy.context.scene][0] if scene_dmx_versions[bpy.context.scene] else int(bpy.context.scene.smd_dmx_encoding)
+def DatamodelFormatVersion():
+	return scene_dmx_versions[bpy.context.scene][1] if scene_dmx_versions[bpy.context.scene] else int(bpy.context.scene.smd_dmx_format)
+
+def canExportDMX():
+	return (len(bpy.context.scene.smd_studiomdl_custom_path) == 0 or studiomdlPathValid()) and DatamodelEncodingVersion() != 0 and DatamodelFormatVersion() != 0
+def shouldExportDMX():
+	return bpy.context.scene.smd_format == 'DMX' and canExportDMX()
+
+def getEngineBranchName():
+	path = bpy.context.scene.smd_studiomdl_custom_path
+	if path.find("SourceFilmmaker") != -1:
+		return "Source Filmmaker" # hack for weird SFM folder structure, add a space too
+	else:
+		return os.path.basename(os.path.abspath(os.path.join(bpy.path.abspath(path),os.pardir))).title() # why, Python, why
+def getDmxVersionsForSDK():
+	path_branch = getEngineBranchName().lower()
+	for branch in dmx_versions.keys():
+		if path_branch == branch.lower(): return dmx_versions[branch]
+	return None
+
+def studiomdl_path_changed(self, context):
+	version = scene_dmx_versions[self] = getDmxVersionsForSDK()
+	prefix = "Source engine branch changed..."
+	if version == None:
+		print(prefix + "unrecognised branch. Specify DMX versions manually.")
+	if version == [0,0]:
+		print(prefix + "no DMX support in this branch. Exporting SMD only.")
+	else:
+		print(prefix + "now exporting DMX binary {} / model {}".format(version[0],version[1]))
 
 ########################
 #        Import        #
@@ -613,7 +600,7 @@ def readNodes():
 	boneParents = {}
 	renamedBones = []
 
-	bpy.ops.object.mode_set(mode='EDIT',toggle=False)
+	ops.object.mode_set(mode='EDIT',toggle=False)
 
 	# Read bone definitions from disc
 	for line in smd.file:		
@@ -636,7 +623,7 @@ def readNodes():
 		if parentID != -1:	
 			bone.parent = smd.a.data.edit_bones[ smd.boneIDs[parentID] ]
 
-	bpy.ops.object.mode_set(mode='OBJECT')
+	ops.object.mode_set(mode='OBJECT')
 	print("- Imported {} new bones".format(len(smd.a.data.bones)) )
 
 	if len(smd.a.data.bones) > 128:
@@ -672,7 +659,7 @@ def findArmature():
 def createArmature(armature_name):
 
 	if bpy.context.active_object:
-		bpy.ops.object.mode_set(mode='OBJECT',toggle=False)
+		ops.object.mode_set(mode='OBJECT',toggle=False)
 	a = bpy.data.objects.new(armature_name,bpy.data.armatures.new(armature_name))
 	a.show_x_ray = True
 	a.data.draw_type = 'STICK'
@@ -713,7 +700,7 @@ def readFrames():
 		if values[0] == "time": # frame number is a dummy value, all frames are equally spaced
 			if num_frames > 0:
 				if smd.jobType == ANIM_SOLO and num_frames == 1:
-					bpy.ops.pose.armature_apply()
+					ops.pose.armature_apply()
 				if smd.jobType == REF:
 					log.warning("Found animation in reference mesh \"{}\", ignoring!".format(smd.jobName))
 					for line in smd.file: # skip to end of block						
@@ -763,18 +750,18 @@ def readFrames():
 	applyFrames(keyframes,num_frames)
 
 def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX import too
-	bpy.ops.object.mode_set(mode='POSE')
+	ops.object.mode_set(mode='POSE')
 	if smd.jobType in [REF,ANIM_SOLO]:
 		# Apply the reference pose
 		for bone in smd.a.pose.bones:
 			if keyframes.get(bone):
 				bone.matrix = keyframes[bone][0].matrix
-		bpy.ops.pose.armature_apply()
+		ops.pose.armature_apply()
 		
 		# Get sphere bone mesh
 		bone_vis = bpy.data.objects.get("smd_bone_vis")
 		if not bone_vis:
-			bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
+			ops.mesh.primitive_ico_sphere_add(subdivisions=3,size=2)
 			bone_vis = bpy.context.active_object
 			bone_vis.data.name = bone_vis.name = "smd_bone_vis"
 			bone_vis.use_fake_user = True
@@ -918,8 +905,8 @@ def applyFrames(keyframes,num_frames, fps = None): # this is called during DMX i
 		oldType = bpy.context.area.type
 		bpy.context.area.type = 'GRAPH_EDITOR'
 		smd.a.select = True
-		if bpy.ops.graph.handle_type.poll():
-			bpy.ops.graph.handle_type(type='AUTO')
+		if ops.graph.handle_type.poll():
+			ops.graph.handle_type(type='AUTO')
 		bpy.context.area.type = oldType # in Blender 2.59 this leaves context.region blank, making some future ops calls (e.g. view3d.view_all) fail!
 		for bone in smd.a.data.bones:
 			bone.select = False
@@ -1028,9 +1015,9 @@ def removeDoublesPreserveFaces():
 	# Now remove those doubles!
 	ops.object.mode_set(mode='EDIT')
 	ops.mesh.remove_doubles(threshold=0)
-	bpy.ops.mesh.select_all(action='INVERT') # FIXME: the 'back' polys will not be connected to the main mesh
+	ops.mesh.select_all(action='INVERT') # FIXME: the 'back' polys will not be connected to the main mesh
 	ops.mesh.remove_doubles(threshold=0)
-	bpy.ops.mesh.select_all(action='DESELECT')
+	ops.mesh.select_all(action='DESELECT')
 	ops.object.mode_set(mode='OBJECT')
 
 # triangles block
@@ -1157,7 +1144,7 @@ def readPolys():
 			for link in weights[i]:
 				link[0].add( [i], link[1], 'REPLACE' )
         
-		bpy.ops.object.select_all(action="DESELECT")
+		ops.object.select_all(action="DESELECT")
 		smd.m.select = True
 		bpy.context.scene.objects.active = smd.m
 		
@@ -1444,9 +1431,9 @@ def readQC( context, filepath, newscene, doAnim, makeCamera, rotMode, outer_qc =
 			bpy.context.scene.objects.link(origin)
 
 			origin.rotation_euler = Vector([pi/2,0,pi]) + Vector(getUpAxisMat(qc.upAxis).inverted().to_euler()) # works, but adding seems very wrong!
-			bpy.ops.object.select_all(action="DESELECT")
+			ops.object.select_all(action="DESELECT")
 			origin.select = True
-			bpy.ops.object.transform_apply(rotation=True)
+			ops.object.transform_apply(rotation=True)
 
 			for i in range(3):
 				origin.location[i] = float(line[i+1])
@@ -1558,7 +1545,7 @@ def readSMD( context, filepath, upAxis, rotMode, newscene = False, smd_type = No
 		smd.m.rotation_euler = smd.upAxisMat.to_euler()
 		smd.m.select = True
 		bpy.context.scene.update()
-		bpy.ops.object.transform_apply(rotation=True)
+		ops.object.transform_apply(rotation=True)
 	'''
 	printTimeMessage(smd.startTime,smd.jobName,"import")
 
@@ -1576,7 +1563,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 	ob = bone = restData = smd.atch = smd.a = None
 	smd.layer = target_layer
 	starting_objects = set(bpy.context.scene.objects)
-	if bpy.context.active_object: bpy.ops.object.mode_set(mode='OBJECT')
+	if bpy.context.active_object: ops.object.mode_set(mode='OBJECT')
 	
 	print( "\nDMX IMPORTER: now working on",os.path.basename(filepath) )	
 	
@@ -1635,7 +1622,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			smd.a.data.smd_implicit_zero_bone = False # Too easy to break compatibility, plus the skeleton is probably set up already
 			if not smd_manager.a: smd_manager.a = ob
 			bpy.context.scene.objects.active = smd.a
-			bpy.ops.object.mode_set(mode='EDIT')
+			ops.object.mode_set(mode='EDIT')
 			
 			smd.a.matrix_world = get_transform_matrix(DmeModel["transform"])
 			
@@ -1668,7 +1655,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 			for child in DmeModel["children"]:
 				parseSkeleton(child,None)
 				
-			bpy.ops.object.mode_set(mode='POSE')
+			ops.object.mode_set(mode='POSE')
 			for bone in smd.a.pose.bones:
 				keyframe = KeyFrame()
 				keyframe.matrix = bone_matrices[bone.name]
@@ -1688,7 +1675,7 @@ def readDMX( context, filepath, upAxis, rotMode,newscene = False, smd_type = Non
 					parseModel(subelem,matrix)
 			elif elem.type == "DmeMesh":
 				DmeMesh = elem
-				bpy.ops.object.mode_set(mode='OBJECT')
+				ops.object.mode_set(mode='OBJECT')
 				ob = smd.m = bpy.data.objects.new(name=DmeMesh.name, object_data=bpy.data.meshes.new(name=DmeMesh.name))
 				ob.matrix_world = matrix
 				context.scene.objects.link(ob)
@@ -1933,7 +1920,7 @@ class SmdImporter(bpy.types.Operator):
 
 		log.errorReport("imported","file",self,self.countSMDs)
 		if self.countSMDs:
-			bpy.ops.object.select_all(action='DESELECT')
+			ops.object.select_all(action='DESELECT')
 			new_obs = set(bpy.context.scene.objects).difference(pre_obs)
 			xy = xyz = 0
 			for ob in new_obs:
@@ -1948,7 +1935,7 @@ class SmdImporter(bpy.types.Operator):
 					space.grid_lines = max(space.grid_lines, (xy * 1.2) / space.grid_scale )
 					space.clip_end = max( space.clip_end, xyz * 2 )
 		if bpy.context.area.type == 'VIEW_3D' and bpy.context.region:
-			bpy.ops.view3d.view_selected()
+			ops.view3d.view_selected()
 		return {'FINISHED'}
 
 	def invoke(self, context, event):
@@ -2101,7 +2088,7 @@ def writeFrames():
 
 	smd.file.write("end\n")
 
-	bpy.ops.object.mode_set(mode='OBJECT')
+	ops.object.mode_set(mode='OBJECT')
 	
 	print("- Exported {} frames{}".format(num_frames," (legacy rotation)" if smd.a.data.smd_legacy_rotation else ""))
 	return
@@ -2191,7 +2178,7 @@ def writePolys(internal=False):
 						posebone.matrix_basis.identity()
 					bpy.context.scene.update()
 					have_cleared_pose = True
-				bpy.ops.object.mode_set(mode='OBJECT')
+				ops.object.mode_set(mode='OBJECT')
 
 				writePolys(internal=True)
 
@@ -2340,7 +2327,7 @@ def bakeObj(in_object):
 	for object in bpy.context.selected_objects:
 		object.select = False
 	bpy.context.scene.objects.active = in_object
-	bpy.ops.object.mode_set(mode='OBJECT')
+	ops.object.mode_set(mode='OBJECT')
 	
 	def _ApplyVisualTransform(obj):
 		if obj.data.users > 1:
@@ -2356,14 +2343,14 @@ def bakeObj(in_object):
 			obj.matrix_world = getUpAxisMat().inverted() * obj.matrix_world
 
 		bpy.context.scene.objects.active = obj
-		bpy.ops.object.select_all(action='DESELECT')
+		ops.object.select_all(action='DESELECT')
 		obj.select = True
 		
-		bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+		ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
 		obj.location -= top_parent.location # undo location of topmost parent (potentially the object itself)
-		bpy.ops.object.transform_apply(scale=True)
+		ops.object.transform_apply(scale=True)
 		if not smd.isDMX:
-			bpy.ops.object.transform_apply(location=True,rotation=True)
+			ops.object.transform_apply(location=True,rotation=True)
 
 	if in_object.type == 'ARMATURE':
 		_ApplyVisualTransform(in_object)
@@ -2392,7 +2379,7 @@ def bakeObj(in_object):
 				for ob in bpy.context.scene.objects:
 					ob.select = ob in bakes_in
 				bpy.context.scene.objects.active = bakes_in[0]
-				bpy.ops.object.join()
+				ops.object.join()
 				bakes_in = [bpy.context.scene.objects.active]
 		
 	# bake the list of objects!
@@ -2412,8 +2399,8 @@ def bakeObj(in_object):
 		else:
 			num_out = 1
 		
-		bpy.ops.object.mode_set(mode='OBJECT')
-		bpy.ops.object.select_all(action="DESELECT")
+		ops.object.mode_set(mode='OBJECT')
+		ops.object.select_all(action="DESELECT")
 		obj.select = True
 		bpy.context.scene.objects.active = obj
 		
@@ -2453,17 +2440,17 @@ def bakeObj(in_object):
 						found_envelope = True
 		
 			if obj.type == "MESH":
-				bpy.ops.object.mode_set(mode='EDIT')
-				bpy.ops.mesh.reveal()
-				bpy.ops.mesh.select_all(action="SELECT")
+				ops.object.mode_set(mode='EDIT')
+				ops.mesh.reveal()
+				ops.mesh.select_all(action="SELECT")
 				if obj.matrix_world.is_negative:
-					bpy.ops.mesh.flip_normals()
-				bpy.ops.object.mode_set(mode='OBJECT')
+					ops.mesh.flip_normals()
+				ops.object.mode_set(mode='OBJECT')
 			
 			_ApplyVisualTransform(obj)
 			
 		# Apply modifiers; need to do this per shape key
-		bpy.ops.object.mode_set(mode='OBJECT')
+		ops.object.mode_set(mode='OBJECT')
 		for x in range(num_out):
 			if shape_keys:
 				cur_shape = shape_keys[x]
@@ -2510,9 +2497,9 @@ def bakeObj(in_object):
 						baked.smd_flex_controller_mode = smd.g.smd_flex_controller_mode
 				else:
 					bakes_out.append(baked)
-					bpy.ops.object.mode_set(mode='EDIT')
-					bpy.ops.mesh.quads_convert_to_tris()
-					bpy.ops.object.mode_set(mode='OBJECT')
+					ops.object.mode_set(mode='EDIT')
+					ops.mesh.quads_convert_to_tris()
+					ops.object.mode_set(mode='OBJECT')
 					
 				for mod in baked.modifiers:
 					if mod.type == 'ARMATURE':
@@ -2520,30 +2507,30 @@ def bakeObj(in_object):
 		
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
-					bpy.ops.object.mode_set(mode='EDIT')
+					ops.object.mode_set(mode='EDIT')
 					if obj.data.smd_faces == 'RIGHT':
-						bpy.ops.mesh.duplicate()
-						bpy.ops.mesh.flip_normals()
+						ops.mesh.duplicate()
+						ops.mesh.flip_normals()
 					if not obj.data.smd_faces == 'BOTH':
-						bpy.ops.mesh.select_all(action='INVERT')
-						bpy.ops.mesh.delete()
+						ops.mesh.select_all(action='INVERT')
+						ops.mesh.delete()
 					elif solidify_fill_rim:
 						log.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
-					bpy.ops.object.mode_set(mode='OBJECT')
+					ops.object.mode_set(mode='OBJECT')
 
 				# project a UV map
 				if smd.jobType != FLEX and len(baked.data.uv_textures) == 0:
 					if len(baked.data.vertices) < 2000:
-						bpy.ops.object.mode_set(mode='OBJECT')
-						bpy.ops.object.select_all(action='DESELECT')
+						ops.object.mode_set(mode='OBJECT')
+						ops.object.select_all(action='DESELECT')
 						baked.select = True
-						bpy.ops.uv.smart_project()
+						ops.uv.smart_project()
 					else:
-						bpy.ops.object.mode_set(mode='EDIT')
-						bpy.ops.mesh.select_all(action='SELECT')
-						bpy.ops.uv.unwrap()
+						ops.object.mode_set(mode='EDIT')
+						ops.mesh.select_all(action='SELECT')
+						ops.uv.unwrap()
 		
-		bpy.ops.object.mode_set(mode='OBJECT')
+		ops.object.mode_set(mode='OBJECT')
 		obj.select = False
 	
 	smd.bakeInfo.extend(bakes_out) # save to manager
@@ -3121,66 +3108,41 @@ def getQCs(path = None):
 
 def compileQCs(path=None):
 	scene = bpy.context.scene
-	branch = scene.smd_studiomdl_branch
 	print("\n")
 
-	sdk_path = os.getenv('SOURCESDK')
-	ncf_path = None
-	if sdk_path:
-		ncf_path = sdk_path + "\\..\\..\\common\\"
+	studiomdl_path = os.path.join(bpy.path.abspath(scene.smd_studiomdl_custom_path),"studiomdl.exe")
+
+	if path:
+		qc_paths = [path]
 	else:
-		for path in [ os.getenv('PROGRAMFILES(X86)'), os.getenv('PROGRAMFILES') ]:
-			path += "\\steam\\steamapps\\common"
-			if os.path.exists(path):
-				ncf_path = path
-
-	studiomdl_path = None
-	if branch in ['ep1','source2007','source2009', 'orangebox'] and sdk_path:
-		studiomdl_path = sdk_path + "\\bin\\" + branch + "\\bin\\"
-	elif branch in ['left 4 dead', 'left 4 dead 2', 'alien swarm', 'portal 2', 'Counter-Strike Global Offensive'] and ncf_path:
-		studiomdl_path = ncf_path + branch + "\\bin\\"
-	elif branch in ['SourceFilmmaker']:
-		studiomdl_path = ncf_path + branch + "\\game\\bin\\"
-	elif branch == 'CUSTOM':
-		studiomdl_path = scene.smd_studiomdl_custom_path = bpy.path.abspath(scene.smd_studiomdl_custom_path)
-
-	if not studiomdl_path:
-		log.error("Could not locate Source SDK installation. Launch it to create the relevant files, or run a custom QC compile")
+		qc_paths = getQCs()
+	num_good_compiles = 0
+	if len( qc_paths ) == 0:
+		log.error("Cannot compile, no QCs provided. The SMD Tools do not generate QCs.")
+	elif not os.path.exists(studiomdl_path):
+		log.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
 	else:
-		if studiomdl_path and studiomdl_path[-1] in ['/','\\']:
-			studiomdl_path += "studiomdl.exe"
+		for qc in qc_paths:	
+			# save any version of the file currently open in Blender
+			qc_mangled = qc.lower().replace('\\','/')
+			for candidate_area in bpy.context.screen.areas:
+				if candidate_area.type == 'TEXT_EDITOR' and candidate_area.spaces[0].text and candidate_area.spaces[0].text.filepath.lower().replace('\\','/') == qc_mangled:
+					oldType = bpy.context.area.type
+					bpy.context.area.type = 'TEXT_EDITOR'
+					bpy.context.area.spaces[0].text = candidate_area.spaces[0].text
+					ops.text.save()
+					bpy.context.area.type = oldType
+					break #what a farce!
+			
+			print( "Running studiomdl for \"{}\"...\n".format(os.path.basename(qc)) )
+			studiomdl = subprocess.Popen([studiomdl_path, "-nop4", "-game", getGamePath(), qc])
+			studiomdl.communicate()
 
-		if path:
-			qc_paths = [path]
-		else:
-			qc_paths = getQCs()
-		num_good_compiles = 0
-		if len( qc_paths ) == 0:
-			log.error("Cannot compile, no QCs provided. The SMD Tools do not generate QCs.")
-		elif not os.path.exists(studiomdl_path):
-			log.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
-		else:
-			for qc in qc_paths:	
-				# save any version of the file currently open in Blender
-				qc_mangled = qc.lower().replace('\\','/')
-				for candidate_area in bpy.context.screen.areas:
-					if candidate_area.type == 'TEXT_EDITOR' and candidate_area.spaces[0].text and candidate_area.spaces[0].text.filepath.lower().replace('\\','/') == qc_mangled:
-						oldType = bpy.context.area.type
-						bpy.context.area.type = 'TEXT_EDITOR'
-						bpy.context.area.spaces[0].text = candidate_area.spaces[0].text
-						bpy.ops.text.save()
-						bpy.context.area.type = oldType
-						break #what a farce!
-				
-				print( "Running studiomdl for \"{}\"...\n".format(os.path.basename(qc)) )
-				studiomdl = subprocess.Popen([studiomdl_path, "-nop4", qc])
-				studiomdl.communicate()
-
-				if studiomdl.returncode == 0:
-					num_good_compiles += 1
-				else:
-					log.error("Compile of {}.qc failed. Check the console for details".format(os.path.basename(qc)))
-		return num_good_compiles
+			if studiomdl.returncode == 0:
+				num_good_compiles += 1
+			else:
+				log.error("Compile of {}.qc failed. Check the console for details".format(os.path.basename(qc)))
+	return num_good_compiles
 
 class SMD_MT_ExportChoice(bpy.types.Menu):
 	bl_label = "SMD/DMX export mode"
@@ -3322,7 +3284,8 @@ class SMD_OT_Compile(bpy.types.Operator):
 	
 	@classmethod
 	def poll(self,context):
-		return vproject != False
+		global qc_paths
+		return len(qc_paths) > 0 and gamePathValid() and studiomdlPathValid()
 
 	def execute(self,context):
 		global log
@@ -3362,28 +3325,41 @@ class SMD_PT_Scene(bpy.types.Panel):
 
 		self.embed_scene = l.row()
 		SMD_MT_ExportChoice.draw(self,context)
-
-		l.prop(scene,"smd_path",text="Output Folder")
-		l.prop(scene,"smd_studiomdl_branch",text="Target Engine")
-		if scene.smd_studiomdl_branch == 'CUSTOM':
-			l.prop(scene,"smd_studiomdl_custom_path",text="Studiomdl path")
-			row = l.row(align=True)
-			row.prop(scene,"smd_studiomdl_custom_path_dmx_encoding",text="DMX binary",slider=False)
-			row.prop(scene,"smd_studiomdl_custom_path_dmx_format",text="Model format",slider=False)
-		row = l.row().split(0.33)
-		row.label(text="Output Format:")
-		row.row().prop(scene,"smd_format",text="Format",expand=True)
-		row.enabled = canExportDMX(scene)
-		row = l.row().split(0.33)
-		row.label(text="Target Up Axis:")
-		row.row().prop(scene,"smd_up_axis", expand=True)
-		if shouldExportDMX(scene):
-			l.prop(scene,"smd_material_path",text="Material Path")
+		
 		row = l.row()
 		row.alignment = 'CENTER'
 		row.prop(scene,"smd_layer_filter",text="Visible layer(s) only")
 		row.prop(scene,"smd_use_image_names",text="Ignore Blender materials")
 
+		l.prop(scene,"smd_path",text="Export Path")
+		if scene_dmx_versions[scene] != [0,0]:
+			row = l.row().split(0.33)
+			row.label(text="Export Format:")
+			row.row().prop(scene,"smd_format",expand=True)
+		row = l.row().split(0.33)
+		row.label(text="Export Up Axis:")
+		row.row().prop(scene,"smd_up_axis", expand=True)
+		
+		if shouldExportDMX():
+			l.separator()
+		
+		row = l.row()
+		row.alert = len(scene.smd_studiomdl_custom_path) > 0 and not studiomdlPathValid()
+		row.prop(scene,"smd_studiomdl_custom_path",text="SDK Path")
+		
+		if scene.smd_format == 'DMX':
+			if scene_dmx_versions[scene] == None:
+				row = l.split(0.33)
+				row.label(text="DMX Version:")
+				row = row.row(align=True)
+				row.prop(scene,"smd_dmx_encoding",text="")
+				row.prop(scene,"smd_dmx_format",text="")
+				row.enabled = len(scene.smd_studiomdl_custom_path) == 0 or studiomdlPathValid()
+			if canExportDMX():
+				row = l.row()
+				row.prop(scene,"smd_material_path",text="Material Path")
+				row.enabled = shouldExportDMX()
+		
 		row = l.row(align=True)
 		row.operator("wm.url_open",text="Help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Exporting"
 		row.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')		
@@ -3457,7 +3433,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 						col.prop(armature,"smd_action_filter",text="Action Filter")
 
 				col.prop(armature.data,"smd_implicit_zero_bone")
-				if not shouldExportDMX(scene):
+				if not shouldExportDMX():
 					col.prop(armature.data,"smd_legacy_rotation")
 					
 				if armature.animation_data and not 'ActLib' in dir(bpy.types):
@@ -3513,7 +3489,7 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 			row.label(icon='GROUP_VERTEX',text="{} wrinkle map{}".format(num_wrinkle_maps,"s" if num_wrinkle_maps != 1 else ""))
 			
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
-	bl_label = "Source Engine QC Complies ({})".format(vproject if vproject else "no game")
+	bl_label = "Source Engine QC Complies"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
 	bl_context = "scene"
@@ -3522,6 +3498,22 @@ class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 	def draw(self,context):
 		l = self.layout
 		scene = context.scene
+		
+		if not studiomdlPathValid():
+			l.label(icon='ERROR',text="Invalid SDK Path")
+			l.alignment = 'CENTER'
+			l.enabled = False
+			return
+			
+		row = l.row()
+		row.alert = len(scene.smd_game_path) > 0 and not gamePathValid()
+		row.prop(scene,"smd_game_path",text="Game Path")
+		
+		if len(scene.smd_game_path) == 0 and not gamePathValid():
+			row = l.row()
+			row.label(icon='ERROR',text="No Game Path and invalid VPROJECT")
+			row.enabled = False
+			return
 		
 		# QCs
 		global qc_path
@@ -3549,7 +3541,7 @@ class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 			if scene.smd_qc_path:
 				qc_path_row.alert = True
 			compile_row.enabled = False
-		qc_path_row.prop(scene,"smd_qc_path",text="QC file path") # can't add this until the above test completes!
+		qc_path_row.prop(scene,"smd_qc_path",text="QC Path") # can't add this until the above test completes!
 
 class DmxWriteFlexControllers(bpy.types.Operator):
 	'''Generate a simple Flex Controller DMX block'''
@@ -3662,7 +3654,7 @@ class SmdExporter(bpy.types.Operator):
 		props = self.properties
 
 		if props.exportMode == 'NONE':
-			self.report({'ERROR'},"Programmer error: bpy.ops.{} called without exportMode".format(SmdExporter.bl_idname))
+			self.report({'ERROR'},"Programmer error: ops.{} called without exportMode".format(SmdExporter.bl_idname))
 			return {'CANCELLED'}
 			
 		if context.scene.smd_format == 'DMX':
@@ -3698,9 +3690,9 @@ class SmdExporter(bpy.types.Operator):
 		prev_mode = None
 		if bpy.context.active_object:
 			prev_mode = bpy.context.mode.split("_")[0]
-			bpy.ops.object.mode_set(mode='OBJECT')
+			ops.object.mode_set(mode='OBJECT')
 		
-		bpy.ops.ed.undo_push(message=self.bl_label)
+		ops.ed.undo_push(message=self.bl_label)
 		
 		try:
 			bpy.context.tool_settings.use_keyframe_insert_auto = False
@@ -3790,18 +3782,21 @@ class SmdExporter(bpy.types.Operator):
 				log.error("Found no valid objects for export")
 			elif context.scene.smd_qc_compile and context.scene.smd_qc_path:
 				# ...and compile the QC
-				num_good_compiles = compileQCs()
-				jobMessage += " and {} {} QC{} compiled".format(num_good_compiles, getEngineBranchName(), "" if num_good_compiles == 1 else "s")
-				print("\n")
+				if not SMD_OT_Compile.poll(context):
+					print("Skipping QC compile step: context incorrect\n")
+				else:
+					num_good_compiles = compileQCs()
+					jobMessage += " and {} QC{} compiled with {} for {}".format(num_good_compiles, "" if num_good_compiles == 1 else "s", getEngineBranchName(), os.path.basename(getGamePath()))
+					print("\n")
 				
 			log.errorReport(jobMessage,"file",self,self.countSMDs)
 		finally:
 			# Clean everything up
-			bpy.ops.ed.undo_push(message=self.bl_label)
-			bpy.ops.ed.undo()
+			ops.ed.undo_push(message=self.bl_label)
+			ops.ed.undo()
 			
 			if prev_mode:
-				bpy.ops.object.mode_set(mode=prev_mode)
+				ops.object.mode_set(mode=prev_mode)
 			
 			props.directory = ""
 			props.groupIndex = -1
@@ -3869,7 +3864,7 @@ class SmdExporter(bpy.types.Operator):
 		if not ValidateBlenderVersion(self):
 			return {'CANCELLED'}
 		if self.properties.exportMode == 'NONE':
-			bpy.ops.wm.call_menu(name="SMD_MT_ExportChoice")
+			ops.wm.call_menu(name="SMD_MT_ExportChoice")
 			return {'PASS_THROUGH'}
 		else: # a UI element has chosen a mode for us
 			return self.execute(context)
@@ -3895,10 +3890,10 @@ class SmdClean(bpy.types.Operator):
 				# For some reason deleting custom properties from bones doesn't work well in Edit Mode
 				bpy.context.scene.objects.active = object
 				object_mode = object.mode
-				bpy.ops.object.mode_set(mode='OBJECT')
+				ops.object.mode_set(mode='OBJECT')
 				for bone in object.data.bones:
 					removeProps(bone)
-				bpy.ops.object.mode_set(mode=object_mode)
+				ops.object.mode_set(mode=object_mode)
 			
 			if type(object) == bpy.types.Object and object.type == 'ARMATURE': # clean from actions too
 				if object.data.smd_action_selection == 'CURRENT':
@@ -3931,7 +3926,7 @@ class SmdClean(bpy.types.Operator):
 
 		bpy.context.scene.objects.active = active_obj
 		if active_obj:
-			bpy.ops.object.mode_set(mode=active_mode)
+			ops.object.mode_set(mode=active_mode)
 
 		bpy.data.objects.is_updated = True
 		self.report({'INFO'},"Deleted {} SMD properties".format(self.numPropsRemoved))
@@ -4034,9 +4029,9 @@ class SmdToolsUpdate(bpy.types.Operator):
 			return {'FINISHED'}
 
 		elif self.result == 'SUCCESS':
-			bpy.ops.script.reload()
+			ops.script.reload()
 			self.report({'INFO'},"Upgraded to SMD Tools {}!".format(self.remote_ver_str))
-			bpy.ops.wm.call_menu(name="SMD_MT_Updated")
+			ops.wm.call_menu(name="SMD_MT_Updated")
 			return {'FINISHED'}
 
 		else:
@@ -4168,6 +4163,9 @@ def menu_func_shapekeys(self,context):
 
 @persistent
 def scene_update(scene):
+	if not scene_dmx_versions.get(scene):
+		scene_dmx_versions[scene] = getDmxVersionsForSDK()
+	
 	if not (bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated or bpy.data.groups.is_updated):
 		return
 	
@@ -4243,7 +4241,7 @@ def export_active_changed(self, context):
 	else:
 		id.select = True
 		context.scene.objects.active = id
-
+	
 def register():
 	bpy.utils.register_module(__name__)
 	bpy.types.INFO_MT_file_import.append(menu_func_import)
@@ -4254,26 +4252,37 @@ def register():
 	global cached_action_filter_list
 	cached_action_filter_list = 0
 
-	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')
+	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMD and DMX exports from this scene are written", subtype='DIR_PATH')
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
 	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s); Unix wildcards supported", subtype="FILE_PATH")
-	bpy.types.Scene.smd_studiomdl_branch = EnumProperty(name="SMD Target Engine Branch",items=src_branches,description="Determines DMX version and Studiomdl path",default='source2009')
-	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="SMD Custom Studiomdl Path",description="Location of studiomdl.exe for a custom compile", subtype="FILE_PATH")
-	bpy.types.Scene.smd_studiomdl_custom_path_dmx_encoding = IntProperty(name="SMD Custom DMX encoding",description="Version of the binary DMX encoding to export",subtype='UNSIGNED')
-	bpy.types.Scene.smd_studiomdl_custom_path_dmx_format = IntProperty(name="SMD Custom DMX format",description="Version of the DMX model format to export",subtype='UNSIGNED')
-	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with existing SMDs")
+	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="Source SDK Path",description="Directory containing studiomdl", subtype="DIR_PATH",update=studiomdl_path_changed)
+	
+	encodings = []
+	latest = 0
+	for enc in datamodel.list_support()['binary']:
+		encodings.append( (str(enc), 'Binary ' + str(enc), '' ) )
+		latest = max(latest,enc)
+	bpy.types.Scene.smd_dmx_encoding = EnumProperty(name="DMX encoding",description="Manual override for binary DMX encoding version",items=tuple(encodings),default=str(latest))
+	
+	formats = []
+	for fmt in dmx_model_versions:
+		formats.append( (str(fmt), "Model " + str(fmt), '') )
+	bpy.types.Scene.smd_dmx_format = EnumProperty(name="DMX format",description="Manual override for DMX model format version",items=tuple(formats),default=str(dmx_model_versions[-1]))
+	
 	formats = (
 	('SMD', "SMD", "Studiomdl Data" ),
 	('DMX', "DMX", "Data Model Exchange" )
 	)
-	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='SMD')
+	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='DMX')
+	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with data from other 3D tools")
 	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Ignore Materials",description="Only export face-assigned image filenames",default=False)
-	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Only consider objects in active viewport layers for export",default=False)
+	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Ignore objects in hidden layers",default=False)
 	bpy.types.Scene.smd_material_path = StringProperty(name="DMX material path",description="Folder relative to game root containing VMTs referenced in this scene (DMX only)")
 	bpy.types.Scene.smd_export_list_active = IntProperty(name="SMD active object",default=0,update=export_active_changed)
 	bpy.types.Scene.smd_export_list = CollectionProperty(type=SMD_CT_ObjectExportProps,options={'SKIP_SAVE'})	
 	bpy.types.Scene.smd_use_kv2 = BoolProperty(name="SMD Write KeyValues2",description="Write ASCII DMX files",default=False)
-		
+	bpy.types.Scene.smd_game_path = StringProperty(name="QC Compile Target",description="Directory containing gameinfo.txt (if unset, the system VPROJECT will be used)",subtype="DIR_PATH")
+	
 	bpy.types.Object.smd_export = BoolProperty(name="SMD Scene Export",description="Export this item with the scene",default=True)
 	bpy.types.Object.smd_subdir = StringProperty(name="SMD Subfolder",description="Optional path relative to scene output folder")
 	bpy.types.Object.smd_action_filter = StringProperty(name="SMD Action Filter",description="Only actions with names matching this filter will be exported")
@@ -4318,10 +4327,9 @@ def unregister():
 	del Scene.smd_path
 	del Scene.smd_qc_compile
 	del Scene.smd_qc_path
-	del Scene.smd_studiomdl_branch
 	del Scene.smd_studiomdl_custom_path
-	del Scene.smd_studiomdl_custom_path_dmx_encoding
-	del Scene.smd_studiomdl_custom_path_dmx_format
+	del Scene.smd_dmx_encoding
+	del Scene.smd_dmx_format
 	del Scene.smd_up_axis
 	del Scene.smd_format
 	del Scene.smd_use_image_names
