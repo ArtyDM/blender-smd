@@ -1,3 +1,26 @@
+#  The MIT License (MIT)
+#  
+#  Copyright (c) 2013 Tom Edwards contact@steamreview.org
+#  
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#  
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
+#  
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#  THE SOFTWARE.
+
+
 import struct, array, io, binascii, collections
 from struct import unpack,calcsize
 
@@ -20,18 +43,15 @@ intsize = calcsize("i")
 shortsize = calcsize("H")
 floatsize = calcsize("f")
 
+def list_support():
+	return { 'binary':[1,2,5], 'keyvalues2':[1],'binary_proto':[2] }
+
 def check_support(encoding,encoding_ver):
-	if encoding == 'binary':
-		if encoding_ver not in [1,2,5]:
-			raise ValueError("Version {} of binary DMX is not supported".format(encoding_ver))
-	elif encoding == 'keyvalues2':
-		if encoding_ver not in [1]:
-			raise ValueError("Version {} of keyvalues2 DMX is not supported".format(encoding_ver))
-	elif encoding == 'binary_proto':
-		if encoding_ver not in [2]:
-			raise ValueError("Version {} of prototype binary DMX is not supported".format(encoding_ver))
-	else:
+	versions = list_support().get(encoding)
+	if not versions:
 		raise ValueError("DMX encoding \"{}\" is not supported".format(encoding))
+	if encoding_ver not in versions:
+		raise ValueError("Version {} of {} DMX is not supported".format(encoding_ver,encoding))
 
 def _encode_binary_string(string):
 	return bytes(string,'ASCII') + bytes(1)
@@ -39,12 +59,12 @@ def _encode_binary_string(string):
 def _get_kv2_indent():
 	return '\t' * _kv2_indent
 
-def _validate_array_list(list,array_type):
-	if not list: return
+def _validate_array_list(l,array_type):
+	if not l: return
 	try:
-		for i in range(len(list)):
-			if type(list[i]) != array_type:
-				list[i] = array_type(list[i])
+		for i in range(len(l)):
+			if type(l[i]) != array_type:
+				l[i] = array_type(l[i])
 	except:
 		raise TypeError("Could not convert all values to {}".format(array_type))
 			
@@ -262,10 +282,10 @@ class _TimeArray(_Array):
 			out += item.tobytes()
 		return out
 		
-def make_array(list,type):
-	if type not in _dmxtypes_all:
-		raise TypeError("{} is not a valid datamodel attribute type".format(type))
-	return _get_array_type(type)(list)
+def make_array(list,t):
+	if t not in _dmxtypes_all:
+		raise TypeError("{} is not a valid datamodel attribute type".format(t))
+	return _get_array_type(t)(list)
 		
 class AttributeError(KeyError):
 	'''Raised when an attribute is not found on an element. Essentially a KeyError, but subclassed because it's normally an unrecoverable data issue.'''
@@ -459,20 +479,21 @@ def _get_dmx_id_type(encoding,version,id):
 	if encoding == "keyvalues2":
 		return _dmxtypes[ _dmxtypes_str.index(id) ]
 				
-	raise ValueError("Type {} not supported in {} {}".format(type,encoding,version))
+	raise ValueError("Type ID {} invalid in {} {}".format(id,encoding,version))
 	
-def _get_dmx_type_id(encoding,version,type):	
+def _get_dmx_type_id(encoding,version,t):	
+	if t == type(None): t = Element
 	if encoding == "binary":
 		if version in [2]:
-			return attr_list_v1.index(type)
+			return attr_list_v1.index(t)
 		if version in [5]:
-			return attr_list_v2.index(type)
+			return attr_list_v2.index(t)
 	elif encoding == "binary_proto":
-		return attr_list_v1.index(type)
+		return attr_list_v1.index(t)
 	elif encoding == "keyvalues2":
 		raise ValueError("Type IDs do not exist in KeyValues2")
 				
-	raise ValueError("Type {} not supported in {} {}".format(type,encoding,version))
+	raise ValueError("Type {} not supported in {} {}".format(t,encoding,version))
 
 class _StringDictionary(list):
 	dummy = False
@@ -628,10 +649,15 @@ class DataModel:
 				attr = elem[name]
 				self._write(name)
 				self._write( struct.pack("b", _get_dmx_type_id(self.encoding, self.encoding_ver, type(attr) )) )
-				if type(attr) == Element:
+				if attr == None:
+					self._write(-1)
+				elif type(attr) == Element:
 					if attr._is_placeholder:
-						self._write(-2)
-						self._write(str(attr.id))
+						if self.encoding_ver < 5:
+							self._write(-1)
+						else:
+							self._write(-2)
+							self._write(str(attr.id))
 					else:
 						self._write(self.elem_chain.index(attr),elem)
 				else:
@@ -951,5 +977,4 @@ def load(path = None, in_file = None, element_path = None):
 		dm._string_dict = None
 		return dm
 	finally:
-		#dm.write("C:/Users/Tom/Desktop/out.dmx","keyvalues2",1)
 		if in_file: in_file.close()
