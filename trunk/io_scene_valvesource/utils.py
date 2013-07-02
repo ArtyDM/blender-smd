@@ -75,6 +75,9 @@ dmx_versions = { # [encoding, format]
 'Source SDK Base 2013 Multiplayer':[2,1]
 }
 
+def SPAM(*args):
+	print(*args)
+
 def benchReset():
 	global benchLast
 	global benchStart
@@ -363,9 +366,11 @@ class QcInfo:
 		return os.path.join(self.root_filedir,*self.dir_stack)
 		
 class KeyFrame:
-	matrix = Matrix()
 	pos = False
 	rot = False
+	
+	def __init__(self):
+		self.matrix = Matrix()
 
 class Cache:
 	qc_lastPath = ""

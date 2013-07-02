@@ -75,7 +75,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 				# FIXME: assumes meshes are centered around their origins
 				xy = max(xy, int(max(ob.dimensions[0],ob.dimensions[1])) )
 				xyz = max(xyz, max(xy,int(ob.dimensions[2])))
-			bpy.context.scene.objects.active = self.qc.a if self.qc else smd.a
+			bpy.context.scene.objects.active = self.qc.a if self.qc else self.smd.a
 			for area in context.screen.areas:
 				if area.type == 'VIEW_3D':
 					space = area.spaces.active
@@ -1447,25 +1447,25 @@ class SmdImporter(bpy.types.Operator, Logger):
 				frameRate = animation["frameRate"]			
 				timeFrame = animation["timeFrame"]
 				scale = timeFrame.get("scale",1.0)
-				duration = timeFrame["duration"] if dm.format_ver >= 15 else timeFrame["durationTime"]
-				offset = timeFrame.get("offset",0.0) if dm.format_ver >= 15 else timeFrame.get("offsetTime",0.0)
+				duration = timeFrame["duration" if dm.format_ver >= 18 else "durationTime"]
+				offset = timeFrame.get("offset" if dm.format_ver >= 18 else "offsetTime",0.0)
 				
 				if type(duration) == int: duration = datamodel.Time.from_int(duration)
 				if type(offset) == int: offset = datamodel.Time.from_int(offset)
-					
+				
 				total_frames = ceil(duration * frameRate) + 1 # need a frame for 0 too!
 				
 				keyframes = collections.defaultdict(lambda: collections.defaultdict(KeyFrame))
-				missing_bones = []
+				unknown_bones = []
 				for channel in animation["channels"]:
 					toElement = channel["toElement"]
 					if not toElement: continue # SFM
 					bone_name = smd.boneTransformIDs.get(toElement.id)
 					bone = smd.a.pose.bones.get(bone_name) if bone_name else None
 					if not bone:
-						if bone_name and bone_name not in missing_bones:
-							missing_bones.append(bone_name)
-							self.warning("Animation contained unknown bone \"{}\"".format(bone_name))
+						if toElement.name not in unknown_bones:
+							unknown_bones.append(toElement.name)
+							print("- Animation refers to unrecognised bone \"{}\"".format(toElement.name))
 						continue
 					
 					frame_log = channel["log"]["layers"][0]
@@ -1476,15 +1476,17 @@ class SmdImporter(bpy.types.Operator, Logger):
 					for i in range( len(times) ):
 						frame_time = times[i]
 						if type(frame_time) == int: frame_time = datamodel.Time.from_int(frame_time)
-						frame_value = values[i]				
+						frame_value = values[i]
 						frame = ceil(frame_time * frameRate)
 						keyframe = keyframes[bone][frame]
 						
-						if channel["toAttribute"][0] == "p":
-							if not bone.parent: keyframe.matrix *= getUpAxisMat(smd.upAxis).inverted()
+						if not (bone.parent or keyframe.pos or keyframe.rot):
+							keyframe.matrix = getUpAxisMat(smd.upAxis).inverted()
+						
+						if channel["toAttribute"][0] == "p" and not keyframe.pos:
 							keyframe.matrix *= Matrix.Translation(frame_value)
 							keyframe.pos = True
-						elif channel["toAttribute"][0] == "o":
+						elif channel["toAttribute"][0] == "o" and not keyframe.rot:
 							keyframe.matrix *= getBlenderQuat(frame_value).to_matrix().to_4x4()
 							keyframe.rot = True
 				
