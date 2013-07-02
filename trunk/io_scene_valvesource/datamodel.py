@@ -20,22 +20,12 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #  THE SOFTWARE.
 
-
 import struct, array, io, binascii, collections
 from struct import unpack,calcsize
 
-global NAMESPACE_DATAMODEL
-NAMESPACE_DATAMODEL = None
-global _kv2_indent
-_kv2_indent = 0
-
-global header_format
-global header_format_regex
 header_format = "<!-- dmx encoding {:s} {:d} format {:s} {:d} -->"
 header_format_regex = header_format.replace("{:d}","([0-9]+)").replace("{:s}","(\S+)")
 
-global header_proto2
-global header_proto2_regex
 header_proto2 = "<!-- DMXVersion binary_v{:d} -->"
 header_proto2_regex = header_proto2.replace("{:d}","([0-9]+)")
 
@@ -56,6 +46,7 @@ def check_support(encoding,encoding_ver):
 def _encode_binary_string(string):
 	return bytes(string,'ASCII') + bytes(1)
 
+_kv2_indent = 0
 def _get_kv2_indent():
 	return '\t' * _kv2_indent
 
@@ -117,20 +108,19 @@ class _Array(list):
 	type = None
 	type_str = ""	
 	
-	def __init__(self,list=None):
-		_validate_array_list(list,self.type)
-		if list:
-			return super().__init__(list)
+	def __init__(self,l=None):
+		_validate_array_list(l,self.type)
+		if l:
+			return super().__init__(l)
 		else:
 			return super().__init__()
 		
 	def to_kv2(self):
-		global _kv2_indent
-		
 		if len(self) == 0:
 			return "[ ]"
 		if self.type == Element:
 			out = "\n{}[\n".format(_get_kv2_indent())
+			global _kv2_indent
 			_kv2_indent += 1
 		else:
 			out = "[ "
@@ -324,9 +314,7 @@ class Element(collections.OrderedDict):
 			if type(id) == uuid.UUID:
 				self.id = id
 			else:
-				global NAMESPACE_DATAMODEL
-				if NAMESPACE_DATAMODEL == None: NAMESPACE_DATAMODEL = uuid.UUID('20ba94f8-59f0-4579-9e01-50aac4567d3b')
-				self.id = uuid.uuid3(NAMESPACE_DATAMODEL,str(id))
+				self.id = uuid.uuid3(uuid.UUID('20ba94f8-59f0-4579-9e01-50aac4567d3b'),str(id))
 		else:
 			self.id = uuid.uuid4()
 		
@@ -345,7 +333,7 @@ class Element(collections.OrderedDict):
 		if type(item) != str: raise TypeError("Attribute name must be a string, not {}".format(type(item)))
 		try:
 			return super().__getitem__(item)
-		except:
+		except KeyError:
 			raise AttributeError("No attribute \"{}\" on {}".format(item,self))
 			
 	def __setitem__(self,key,item):
@@ -386,10 +374,10 @@ class Element(collections.OrderedDict):
 				raise ValueError("Invalid attribute type ({})".format(t))
 		
 	def get_kv2(self,deep = True):
-		global _kv2_indent
 		out = ""
 		out += _quote(self.type)
 		out += "\n" + _get_kv2_indent() + "{\n"
+		global _kv2_indent
 		_kv2_indent += 1
 		
 		def _make_attr_str(attr, is_array = False):
@@ -483,17 +471,17 @@ def _get_dmx_id_type(encoding,version,id):
 	
 def _get_dmx_type_id(encoding,version,t):	
 	if t == type(None): t = Element
-	if encoding == "binary":
-		if version in [2]:
+	if encoding == "keyvalues2": raise ValueError("Type IDs do not exist in KeyValues2")
+	try:
+		if encoding == "binary":
+			if version in [2]:
+				return attr_list_v1.index(t)
+			if version in [5]:
+				return attr_list_v2.index(t)
+		elif encoding == "binary_proto":
 			return attr_list_v1.index(t)
-		if version in [5]:
-			return attr_list_v2.index(t)
-	elif encoding == "binary_proto":
-		return attr_list_v1.index(t)
-	elif encoding == "keyvalues2":
-		raise ValueError("Type IDs do not exist in KeyValues2")
-				
-	raise ValueError("Type {} not supported in {} {}".format(t,encoding,version))
+	except:
+		raise ValueError("Type {} not supported in {} {}".format(t,encoding,version))
 
 class _StringDictionary(list):
 	dummy = False
@@ -585,13 +573,15 @@ class DataModel:
 		
 	def find_elements(self,name=None,id=None,elemtype=None):
 		out = []
+		import uuid
+		if type(id) == str: id = uuid.UUID(id)
 		for elem in self.elements:
 			if elem.id == id: return elem
 			if elem.name == name: out.append(elem)
 			if elem.type == elemtype: out.append(elem)
 		if len(out): return out
 		
-	def _write(self,value, elem = None):
+	def _write(self,value, elem = None, suppress_dict = False):
 		import uuid
 		t = type(value)
 		
@@ -605,7 +595,10 @@ class DataModel:
 		elif t == Element:
 			raise Error("Don't write elements as attributes")
 		elif t == str:
-			self._string_dict.write_string(self.out,value)
+			if suppress_dict:
+				self.out.write( _encode_binary_string(value) )
+			else:
+				self._string_dict.write_string(self.out,value)
 				
 		elif issubclass(t, _Array):
 			self.out.write( struct.pack("i",len(value)) )
@@ -626,7 +619,7 @@ class DataModel:
 	def _write_element_index(self,elem):
 		if elem._is_placeholder: return
 		self._write(elem.type)
-		self._write(elem.name)
+		self._write(elem.name, suppress_dict = self.encoding_ver < 5)
 		self._write(elem.id)
 		
 		self.elem_chain.append(elem)
@@ -670,6 +663,8 @@ class DataModel:
 			self.out = io.BytesIO()
 		else:
 			self.out = io.StringIO()
+			global _kv2_indent
+			_kv2_indent = 0
 		
 		self.encoding = encoding
 		self.encoding_ver = encoding_ver
@@ -748,7 +743,6 @@ def load(path = None, in_file = None, element_path = None):
 			matches = re.findall(header_format_regex,header)
 			
 			if len(matches) != 1 or len(matches[0]) != 4:
-				global header_proto2
 				matches = re.findall(header_proto2_regex,header)
 				if len(matches) == 1 and len(matches[0]) == 1:
 					encoding = "binary_proto"
@@ -767,7 +761,6 @@ def load(path = None, in_file = None, element_path = None):
 		check_support(encoding,encoding_ver)
 		dm = DataModel(format,format_ver)
 		
-		global max_elem_path
 		max_elem_path = len(element_path) + 1 if element_path else 0
 		
 		if encoding == 'keyvalues2':
@@ -934,7 +927,7 @@ def load(path = None, in_file = None, element_path = None):
 					else:
 						return dm.elements[element_index]
 					
-				elif attr_type == str:		return dm._string_dict.read_string(in_file) if encoding_ver >= 5 and not from_array else get_str(in_file)
+				elif attr_type == str:		return get_str(in_file) if encoding_ver >= 5 and from_array else dm._string_dict.read_string(in_file)
 				elif attr_type == int:		return get_int(in_file)
 				elif attr_type == float:	return get_float(in_file)
 				elif attr_type == bool:		return get_bool(in_file)
