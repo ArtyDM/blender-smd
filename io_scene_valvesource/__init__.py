@@ -230,16 +230,12 @@ def register():
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="Source SDK Path",description="Directory containing studiomdl", subtype="DIR_PATH",update=studiomdl_path_changed)
 	
 	encodings = []
-	latest = 0
-	for enc in datamodel.list_support()['binary']:
-		encodings.append( (str(enc), 'Binary ' + str(enc), '' ) )
-		latest = max(latest,enc)
-	bpy.types.Scene.smd_dmx_encoding = EnumProperty(name="DMX encoding",description="Manual override for binary DMX encoding version",items=tuple(encodings),default=str(latest))
+	for enc in datamodel.list_support()['binary']: encodings.append( (str(enc), 'Binary ' + str(enc), '' ) )
+	bpy.types.Scene.smd_dmx_encoding = EnumProperty(name="DMX encoding",description="Manual override for binary DMX encoding version",items=tuple(encodings),default='2')
 	
 	formats = []
-	for fmt in dmx_model_versions:
-		formats.append( (str(fmt), "Model " + str(fmt), '') )
-	bpy.types.Scene.smd_dmx_format = EnumProperty(name="DMX format",description="Manual override for DMX model format version",items=tuple(formats),default=str(dmx_model_versions[-1]))
+	for fmt in dmx_model_versions: formats.append( (str(fmt), "Model " + str(fmt), '') )
+	bpy.types.Scene.smd_dmx_format = EnumProperty(name="DMX format",description="Manual override for DMX model format version",items=tuple(formats),default='1')
 	
 	formats = (
 	('SMD', "SMD", "Studiomdl Data" ),
