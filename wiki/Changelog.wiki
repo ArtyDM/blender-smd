@@ -1,4 +1,34 @@
 #labels Featured
+== SMD Tools 1.8 - July 3rd, 2013 ==
+
+General:
+
+  * Refactored the addon into a Python package. 1.8 is technically a different addon from 1.7 but the upgrade process should be transparent.
+
+Importer:
+
+  * Fixed importing DMX animations with sub-keyframe accuracy (Source Filmmaker)
+  * Fixed importing DMX animations which aren't Z-up and have sparse keyframes
+  * Fixed importing DMX model 15 animations
+
+Exporter:
+
+  * *NEW:* Rewrote engine branch configuration to reflect the new Source SDK layout. You must now provide a path to the binaries of your target engine branch.
+  * DMX is now the default export format
+  * Fixed exporting DMX model v1 and v15
+  * Switched DMX version override properties to be a drop-down list of valid values instead of a user-defined number
+  * It is now possible to override the system VPROJECT variable on a scene-by-scene basis for QC compiles
+
+Datamodel.py:
+
+  * Now uses The MIT License
+  * Added support for binary 3
+  * Fixed writing stub Elements in binary encodings that don't support them
+  * Fixed some built-in function and type shadowing (PYTHON!!)
+  * Fixed using the string dictionary for element names in binary 2
+  * Fixed writing binary 1
+  * Fixed loading string arrays from below binary 5
+
 == SMD Tools 1.7 - June 4th, 2013 ==
 
 General:
