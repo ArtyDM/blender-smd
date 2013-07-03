@@ -775,6 +775,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					bakes_in = [bpy.context.scene.objects.active]
 			
 		# bake the list of objects!
+		bpy.context.window_manager.progress_begin(0,len(bakes_in))
 		for i in range(len(bakes_in)):
 			obj = bakes_in[i]
 			solidify_fill_rim = False
@@ -921,10 +922,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 							ops.object.mode_set(mode='EDIT')
 							ops.mesh.select_all(action='SELECT')
 							ops.uv.unwrap()
+				bpy.context.window_manager.progress_update(i + (x/num_out)) # not visible in current Blender builds...
 			
 			ops.object.mode_set(mode='OBJECT')
 			obj.select = False
 		
+		bpy.context.window_manager.progress_end()
 		smd.bakeInfo.extend(bakes_out) # save to manager
 
 	def writeSMD(self, object, groupIndex, filepath, smd_type = None, quiet = False ):
