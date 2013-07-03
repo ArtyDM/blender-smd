@@ -34,7 +34,7 @@ shortsize = calcsize("H")
 floatsize = calcsize("f")
 
 def list_support():
-	return { 'binary':[1,2,5], 'keyvalues2':[1],'binary_proto':[2] }
+	return { 'binary':[1,2,3,5], 'keyvalues2':[1],'binary_proto':[2] }
 
 def check_support(encoding,encoding_ver):
 	versions = list_support().get(encoding)
@@ -460,7 +460,7 @@ def _get_single_type(array_type):
 
 def _get_dmx_id_type(encoding,version,id):	
 	if encoding in ["binary","binary_proto"]:
-		if version in [1,2]:
+		if version in [1,2,3]:
 			return attr_list_v1[id]
 		if version in [5]:
 			return attr_list_v2[id]
@@ -474,7 +474,7 @@ def _get_dmx_type_id(encoding,version,t):
 	if encoding == "keyvalues2": raise ValueError("Type IDs do not exist in KeyValues2")
 	try:
 		if encoding == "binary":
-			if version in [2]:
+			if version in [1,2,3]:
 				return attr_list_v1.index(t)
 			if version in [5]:
 				return attr_list_v2.index(t)
@@ -927,7 +927,7 @@ def load(path = None, in_file = None, element_path = None):
 					else:
 						return dm.elements[element_index]
 					
-				elif attr_type == str:		return get_str(in_file) if encoding_ver >= 5 and from_array else dm._string_dict.read_string(in_file)
+				elif attr_type == str:		return get_str(in_file) if encoding_ver < 5 or from_array else dm._string_dict.read_string(in_file)
 				elif attr_type == int:		return get_int(in_file)
 				elif attr_type == float:	return get_float(in_file)
 				elif attr_type == bool:		return get_bool(in_file)
