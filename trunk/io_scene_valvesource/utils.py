@@ -171,7 +171,7 @@ def printTimeMessage(start_time,name,job,type="SMD"):
 	else:
 		elapsedtime = "under 1 second"
 
-	print(type,name,"{}ed successfully in".format(job),elapsedtime,"\n")
+	print(type,name,"{}ed in".format(job),elapsedtime,"\n")
 
 def PrintVer(in_seq,sep="."):
 		rlist = list(in_seq[:])
