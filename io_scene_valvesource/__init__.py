@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 8, 0),
+	"version": (1, 8, 1),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -239,7 +239,7 @@ def register():
 	
 	formats = (
 	('SMD', "SMD", "Studiomdl Data" ),
-	('DMX', "DMX", "Data Model Exchange" )
+	('DMX', "DMX", "Datamodel Exchange" )
 	)
 	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='DMX')
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with data from other 3D tools")

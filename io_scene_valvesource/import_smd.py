@@ -224,11 +224,14 @@ class SmdImporter(bpy.types.Operator, Logger):
 	# nodes
 	def readNodes(self):
 		smd = self.smd
-		if smd.append and self.findArmature():
-			if smd.jobType == REF:
-				smd.jobType = REF_ADD
-			self.validateBones(smd.a)
-			return
+		if smd.append:
+			if not smd.a:
+				smd.a = self.findArmature()
+			if smd.a:
+				if smd.jobType == REF:
+					smd.jobType = REF_ADD
+				self.validateBones(smd.a)
+				return
 
 		# Got this far? Then this is a fresh import which needs a new armature.
 		smd.a = self.createArmature(self.qc.jobName if self.qc else smd.jobName)
@@ -826,12 +829,10 @@ class SmdImporter(bpy.types.Operator, Logger):
 		smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
 		
 		co_map = {}
-		mesh_cos = []
-		for vert in smd.m.data.vertices:
-			mesh_cos.append(vert.co)
+		mesh_cos = [vert.co for vert in smd.m.data.vertices]
 		
 		making_base_shape = True
-		bad_vta_verts = num_shapes = 0
+		total_vta_verts = bad_vta_verts = num_shapes = 0
 		md = smd.m.data
 
 		for line in smd.file:
@@ -845,15 +846,22 @@ class SmdImporter(bpy.types.Operator, Logger):
 			values = line.split()
 
 			if values[0] == "time":
-				if len(co_map):
-					making_base_shape = False
-					if bad_vta_verts > 0:
-						self.warning(bad_vta_verts,"VTA vertices were not matched to a mesh vertex!")
+				making_base_shape = values[1] == "0"
 
 				if making_base_shape:
 					smd.m.shape_key_add("Basis")
 				else:
-					smd.m.shape_key_add(str(values[1]))
+					if bad_vta_verts > 0:
+						err_ratio = bad_vta_verts/total_vta_verts
+						message = "{} VTA vertices ({}%) were not matched to a mesh vertex!".format(bad_vta_verts, int(err_ratio * 100))
+						if err_ratio == 1:
+							self.error(message)
+							return
+						else:
+							self.warning(message)
+							bad_vta_verts = 0
+						
+					smd.m.shape_key_add(values[1])
 					num_shapes += 1
 
 				continue # to the first vertex of the new shape
@@ -862,6 +870,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 			vta_co = Vector([ float(values[1]), float(values[2]), float(values[3]) ])
 
 			if making_base_shape: # create VTA vert ID -> mesh vert ID dictionary
+				total_vta_verts += 1
 				try:
 					co_map[cur_id] = mesh_cos.index(vta_co)
 				except ValueError:
@@ -1195,7 +1204,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 			smd.a = target_arm
 			arm_hide = target_arm.hide
 		benchReset()
-		ob = bone = restData = smd.atch = smd.a = None
+		ob = bone = restData = smd.atch = None
 		smd.layer = target_layer
 		starting_objects = set(bpy.context.scene.objects)
 		if bpy.context.active_object: ops.object.mode_set(mode='OBJECT')
@@ -1245,14 +1254,12 @@ class SmdImporter(bpy.types.Operator, Logger):
 							for child in elem["children"]:
 								validateSkeleton(child,bone)
 				
-				smd.a = self.findArmature()
 				for child in DmeModel["children"]:
 					validateSkeleton(child,None)
 			else:
 				if smd.jobType == ANIM: smd.jobType = ANIM_SOLO
 				restData = {}
-				if not self.findArmature():
-					smd.append = False
+				smd.append = False
 				ob = smd.a = self.createArmature(DmeModel.name)
 				if self.qc: self.qc.a = ob
 				smd.a.data.smd_implicit_zero_bone = False # Too easy to break compatibility, plus the skeleton is probably set up already
@@ -1444,7 +1451,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 				
 				animation = dm.root["animationList"]["animations"][0]
 				
-				frameRate = animation["frameRate"]			
+				frameRate = animation["frameRate"] if dm.format_ver > 1 else 30 # very, very old DMXs don't have this
 				timeFrame = animation["timeFrame"]
 				scale = timeFrame.get("scale",1.0)
 				duration = timeFrame["duration" if dm.format_ver >= 18 else "durationTime"]
