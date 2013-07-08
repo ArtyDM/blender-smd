@@ -828,13 +828,20 @@ class SmdImporter(bpy.types.Operator, Logger):
 		
 		smd.m.show_only_shape_key = True # easier to view each shape, less confusion when several are active at once
 		
+		def vec_round(v):
+			return Vector([round(co,3) for co in v])
 		co_map = {}
 		mesh_cos = [vert.co for vert in smd.m.data.vertices]
+		mesh_cos_rnd = [vec_round(co) for co in mesh_cos]
+		
+		smd.vta_ref = None
+		vta_cos = []
+		vta_ids = []
 		
 		making_base_shape = True
-		total_vta_verts = bad_vta_verts = num_shapes = 0
+		bad_vta_verts = num_shapes = 0
 		md = smd.m.data
-
+		
 		for line in smd.file:
 			line = line.rstrip("\n")
 			
@@ -846,35 +853,58 @@ class SmdImporter(bpy.types.Operator, Logger):
 			values = line.split()
 
 			if values[0] == "time":
-				making_base_shape = values[1] == "0"
-
-				if making_base_shape:
+				if smd.vta_ref == None:
 					smd.m.shape_key_add("Basis")
-				else:
+					vta_ref = smd.vta_ref = smd.m.copy()
+					vta_ref.name = "VTA vertices"
+					bpy.context.scene.objects.link(vta_ref)
+					vd = vta_ref.data = bpy.data.meshes.new(vta_ref.name)
+				elif making_base_shape:
+					vd.vertices.add(len(vta_cos)/3)
+					vd.vertices.foreach_set("co",vta_cos)
+					del vta_cos
+					
+					#mod = vta_ref.modifiers.new(name="VTA Shrinkwrap",type='SHRINKWRAP')
+					#mod.target = smd.m
+					#mod.wrap_method = 'NEAREST_VERTEX'
+					
+					vd = vta_ref.to_mesh(bpy.context.scene, True, 'PREVIEW')
+					
+					for i in range(len(vd.vertices)):
+						try:
+							co_map[vta_ids[i]] = mesh_cos.index(vd.vertices[i].co)
+						except ValueError:
+							try:
+								co_map[vta_ids[i]] = mesh_cos_rnd.index(vec_round(vd.vertices[i].co))
+							except ValueError:
+								bad_vta_verts += 1
+					
+					bpy.data.meshes.remove(vd)
+					
 					if bad_vta_verts > 0:
-						err_ratio = bad_vta_verts/total_vta_verts
-						message = "{} VTA vertices ({}%) were not matched to a mesh vertex!".format(bad_vta_verts, int(err_ratio * 100))
+						err_ratio = bad_vta_verts/len(vta_ids)
+						message = "{} VTA vertices ({}%) were not matched to a mesh vertex! An object has been created showing where the VTA vertices are.".format(bad_vta_verts, int(err_ratio * 100))
 						if err_ratio == 1:
 							self.error(message)
 							return
 						else:
 							self.warning(message)
-							bad_vta_verts = 0
-						
+					else:
+						removeObject(vta_ref)
+					making_base_shape = False
+				
+				if not making_base_shape:
 					smd.m.shape_key_add(values[1])
 					num_shapes += 1
 
 				continue # to the first vertex of the new shape
 
 			cur_id = int(values[0])
-			vta_co = Vector([ float(values[1]), float(values[2]), float(values[3]) ])
+			vta_co = getUpAxisMat(smd.upAxis) * Vector([ float(values[1]), float(values[2]), float(values[3]) ])
 
-			if making_base_shape: # create VTA vert ID -> mesh vert ID dictionary
-				total_vta_verts += 1
-				try:
-					co_map[cur_id] = mesh_cos.index(vta_co)
-				except ValueError:
-					bad_vta_verts += 1
+			if making_base_shape:
+				vta_ids.append(cur_id)
+				vta_cos.extend(vta_co)
 			else: # write to the shapekey
 				try:
 					md.shape_keys.key_blocks[-1].data[ co_map[cur_id] ].co = vta_co

@@ -241,8 +241,8 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 		
 		if not len(scene.smd_export_list):
 			return
-			
-		active_item = scene.smd_export_list[scene.smd_export_list_active]
+		
+		active_item = scene.smd_export_list[min(scene.smd_export_list_active,len(scene.smd_export_list)-1)]
 		item = (bpy.data.groups if active_item.ob_type == 'GROUP' else bpy.data.objects)[active_item.item_name]
 		
 		validObs = getValidObs()
