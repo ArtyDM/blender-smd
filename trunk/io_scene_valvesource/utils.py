@@ -136,8 +136,8 @@ def getDmxVersionsForSDK():
 def count_exports(context):
 	num = 0
 	for exportable in context.scene.smd_export_list:
-		if exportable.get_id().smd_export:
-			num += 1
+		id = exportable.get_id()
+		if id and id.smd_export: num += 1
 	return num
 
 def getFileExt(flex=False):
@@ -377,5 +377,6 @@ class Cache:
 	qc_paths = {}
 	qc_lastUpdate = 0
 	
+	scene_updated = False
 	action_filter = ""
 p_cache = Cache() # package cached data

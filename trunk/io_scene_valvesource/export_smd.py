@@ -193,7 +193,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			bpy.context.scene.layers = [True] * len(bpy.context.scene.layers)
 
 			# check export mode and perform appropriate jobs
-			self.countSMDs = 0
+			self.countSMDs = self.attemptedExports = 0
 			if props.exportMode == 'SINGLE':
 				ob = context.active_object
 				group_name = None
@@ -258,7 +258,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 			jobMessage = "exported"
 
-			if self.countSMDs == 0:
+			if self.attemptedExports == 0:
 				self.error("Found no valid objects for export")
 			elif context.scene.smd_qc_compile and context.scene.smd_qc_path:
 				# ...and compile the QC
@@ -288,6 +288,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 	# indirection to support batch exporting
 	def exportObject(self,context,object,groupIndex=-1):
 		props = self.properties
+		self.attemptedExports += 1
 
 		if groupIndex == -1:
 			if not object in self.validObs:
@@ -307,7 +308,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 		# assemble filename
 		path = os.path.join( bpy.path.abspath(os.path.dirname(props.directory)), object.smd_subdir)
 		if not os.path.exists(path):
-			os.makedirs(path)
+			try:
+				os.makedirs(path)
+			except Exception as err:
+				self.error("Could not create export folder. Python reports: {}".format(err))
+				return
 
 		if object.type in mesh_compatible:
 			if groupIndex == -1: path = os.path.join(path,getObExportName(object))
@@ -1004,8 +1009,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 		
 		try:
 			smd.file = open(filepath, 'w')
-		except PermissionError:
-			self.error("Could not create file {}: permission denied.".format(filepath))
+		except Exception as err:
+			self.error("Could not create SMD. Python reports: {}.".format(err))
 		print("-",filepath)
 			
 		smd.file.write("version 1\n")
@@ -1203,7 +1208,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 							balance_out = min(1,max(0, balance_out))
 						balance.append( float(balance_out) )
 					
-					if jointCount:
+					if not ob.get('bp'):
 						weights = [0.0] * jointCount
 						indices = [0] * jointCount
 						i = 0
@@ -1522,8 +1527,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 				dm.write(filepath,"keyvalues2",1)
 			else:
 				dm.write(filepath,"binary",DatamodelEncodingVersion())
-		except PermissionError:
-			self.error("Could not create file {}. Permission denied.".format(os.path.abspath(filepath)))
+		except (PermissionError, FileNotFoundError) as err:
+			self.error("Could not create DMX. Python reports: {}.".format(err))
 		bench("Writing")
 		print("DMX export took",time.time() - start,"\n")
 		

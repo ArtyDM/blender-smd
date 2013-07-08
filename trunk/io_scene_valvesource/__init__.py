@@ -57,12 +57,15 @@ class SMD_CT_ObjectExportProps(bpy.types.PropertyGroup):
 	item_name = StringProperty()
 	
 	def get_id(self):
-		if self.ob_type == 'GROUP':
-			return bpy.data.groups[self.item_name]
-		if self.ob_type in ['ACTION', 'OBJECT']:
-			return bpy.data.objects[self.item_name]
-		else:
-			raise TypeError("Unknown object type in SMD_CT_ObjectExportProps")
+		try:
+			if self.ob_type == 'GROUP':
+				return bpy.data.groups[self.item_name]
+			if self.ob_type in ['ACTION', 'OBJECT']:
+				return bpy.data.objects[self.item_name]
+			else:
+				raise TypeError("Unknown object type in SMD_CT_ObjectExportProps")
+		except KeyError:
+			p_cache.scene_updated = True
 
 class SmdClean(bpy.types.Operator):
 	bl_idname = "smd.clean"
@@ -138,8 +141,10 @@ def menu_func_shapekeys(self,context):
 
 @bpy.app.handlers.persistent
 def scene_update(scene):
-	if not (bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated or bpy.data.groups.is_updated):
+	if not (p_cache.scene_updated or bpy.data.groups.is_updated or bpy.data.objects.is_updated or bpy.data.scenes.is_updated or bpy.data.actions.is_updated or bpy.data.groups.is_updated):
 		return
+	
+	p_cache.scene_updated = False
 	
 	scene.smd_export_list.clear()
 	validObs = GUI.getValidObs()
