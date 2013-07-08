@@ -26,6 +26,10 @@ from math import *
 from .utils import *
 from . import datamodel
 
+wm = bpy.types.WindowManager
+if not 'progress_begin' in dir(wm): # instead of requiring 2.67
+	wm.progress_begin = wm.progress_update = wm.progress_end = lambda *args: None
+
 class SMD_OT_Compile(bpy.types.Operator, Logger):
 	bl_idname = "smd.compile_qc"
 	bl_label = "Compile QC"
@@ -39,9 +43,12 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 
 	def execute(self,context):
 		num = self.compileQCs(self.properties.filepath)
+		#if num > 1:
+		#	bpy.context.window_manager.progress_begin(0,1)
 		if not self.properties.filepath:
 			self.properties.filepath = "QC"
 		self.errorReport("compiled","{} QC".format(getEngineBranchName()),self, num)
+		bpy.context.window_manager.progress_end()
 		return {'FINISHED'}
 	
 	@classmethod
@@ -77,7 +84,10 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 		elif not os.path.exists(studiomdl_path):
 			self.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
 		else:
+			i = 0
+			num_qcs = len(p_cache.qc_paths)
 			for qc in p_cache.qc_paths:
+				bpy.context.window_manager.progress_update((i+1) / (num_qcs+1))
 				# save any version of the file currently open in Blender
 				qc_mangled = qc.lower().replace('\\','/')
 				for candidate_area in bpy.context.screen.areas:
@@ -97,13 +107,14 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 					num_good_compiles += 1
 				else:
 					self.error("Compile of {}.qc failed. Check the console for details".format(os.path.basename(qc)))
+				i+=1
 		return num_good_compiles
 
 class SmdExporter(bpy.types.Operator, Logger):
 	'''Export SMD or DMX files and compile them with QC scripts'''
 	bl_idname = "export_scene.smd"
 	bl_label = "Export SMD/VTA/DMX"
-
+	
 	directory = bpy.props.StringProperty(name="Export root", description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')	
 	filename = bpy.props.StringProperty(default="", options={'HIDDEN'})
 
@@ -119,6 +130,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 	def execute(self, context):
 		props = self.properties
+		#bpy.context.window_manager.progress_begin(0,1)
 
 		if props.exportMode == 'NONE':
 			self.report({'ERROR'},"bpy.ops.{} requires an exportMode".format(SmdExporter.bl_idname))
@@ -268,6 +280,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 			
 			props.directory = ""
 			props.groupIndex = -1
+			
+			bpy.context.window_manager.progress_end()
 
 		return {'FINISHED'}
 
@@ -426,6 +440,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 		# Start writing out the animation
 		for i in range(num_frames):
+			bpy.context.window_manager.progress_update(i / num_frames)
 			smd.file.write("time {}\n".format(i))
 
 			for posebone in smd.a.pose.bones:
@@ -488,9 +503,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 		
 		amod_vg = ob.vertex_groups.get(amod.vertex_group)
 		
+		num_verts = len(ob.data.vertices)
 		for v in ob.data.vertices:
 			weights = []
 			total_weight = 0
+			if len(out) % 50 == 0: bpy.context.window_manager.progress_update(len(out) / num_verts)
 			
 			if amod.use_vertex_groups:			
 				for v_group in v.groups:
@@ -591,7 +608,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 			ob_weight_str = " 0"
 		
 		bad_face_mats = 0
+		p = 0
 		for poly in md.polygons:
+			if p % 10 == 0: bpy.context.window_manager.progress_update(p / len(md.polygons))
 			mat_name = None
 			if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > poly.material_index:
 				mat = smd.m.material_slots[poly.material_index].material
@@ -670,6 +689,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		smd.m = smd.bakeInfo[0]
 		
 		for i in range(len(smd.bakeInfo)):
+			bpy.context.window_manager.progress_update((i+1) / (len(smd.bakeInfo)+1))
 			_writeTime(i)
 			shape = smd.bakeInfo[i]
 			start_time = time.time()
@@ -685,12 +705,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 							if ordinate > 8:
 								num_bad_verts += 1
 								break
-
 					if i == 0 or (diff_vec > epsilon or shape_vert.normal - mesh_vert.normal > epsilon):
 						cos = norms = ""
-						for i in range(3):
-							cos += " " + getSmdFloat(shape_vert.co[i])
-							norms += " " + getSmdFloat(shape_vert.normal[i])
+						for x in range(3):
+							cos += " " + getSmdFloat(shape_vert.co[x])
+							norms += " " + getSmdFloat(shape_vert.normal[x])
 						smd.file.write(str(smd_vert_id) + cos + norms + "\n")
 						total_verts += 1
 				
@@ -775,8 +794,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 					bakes_in = [bpy.context.scene.objects.active]
 			
 		# bake the list of objects!
-		bpy.context.window_manager.progress_begin(0,len(bakes_in))
 		for i in range(len(bakes_in)):
+			bpy.context.window_manager.progress_update(i / len(bakes_in))
 			obj = bakes_in[i]
 			solidify_fill_rim = False
 
@@ -845,6 +864,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			# Apply modifiers; need to do this per shape key
 			ops.object.mode_set(mode='OBJECT')
 			for x in range(num_out):
+				bpy.context.window_manager.progress_update((i + 1 + (x / num_out)) / (len(bakes_in) + 1))
 				if shape_keys:
 					cur_shape = shape_keys[x]
 					obj.active_shape_key_index = x
@@ -922,12 +942,10 @@ class SmdExporter(bpy.types.Operator, Logger):
 							ops.object.mode_set(mode='EDIT')
 							ops.mesh.select_all(action='SELECT')
 							ops.uv.unwrap()
-				bpy.context.window_manager.progress_update(i + (x/num_out)) # not visible in current Blender builds...
 			
 			ops.object.mode_set(mode='OBJECT')
 			obj.select = False
 		
-		bpy.context.window_manager.progress_end()
 		smd.bakeInfo.extend(bakes_out) # save to manager
 
 	def writeSMD(self, object, groupIndex, filepath, smd_type = None, quiet = False ):
@@ -983,8 +1001,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 		if smd.isDMX:
 			return self.writeDMX(object, groupIndex, filepath, smd_type, quiet )
-			
-		smd.file = open(filepath, 'w')
+		
+		try:
+			smd.file = open(filepath, 'w')
+		except PermissionError:
+			self.error("Could not create file {}: permission denied.".format(filepath))
 		print("-",filepath)
 			
 		smd.file.write("version 1\n")
@@ -1033,6 +1054,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		implicit_trfm = None
 		
 		if smd.jobType in [REF,ANIM]: # skeleton
+			num_bones = len(smd.a.pose.bones)
 			root["skeleton"] = DmeModel
 			if DatamodelFormatVersion() >= 15:
 				jointList = DmeModel["jointList"] = datamodel.make_array([],datamodel.Element)
@@ -1072,6 +1094,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					for child in bone.children:
 						children.append( writeBone(child) )
 				
+				bpy.context.window_manager.progress_update(len(jointTransforms)/num_bones)
 				return bone_elem
 		
 			if smd.a:
@@ -1091,7 +1114,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			
 		if smd.jobType == REF: # mesh
 			root["model"] = DmeModel
-					
+			
 			materials = {}
 			dags = []
 			for ob in smd.bakeInfo:
@@ -1164,6 +1187,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					jointIndices = [ smd.boneNameToID[ob['bp']] ] * len(ob.data.vertices)
 				
 				width = ob.dimensions.x * ( 1 - (src_ob.data.smd_flex_stereo_sharpness / 100) )
+				num_verts = len(ob.data.vertices)
 				for vert in ob.data.vertices:
 					pos.append(datamodel.Vector3(vert.co))
 					norms.append(datamodel.Vector3(vert.normal))
@@ -1195,8 +1219,13 @@ class SmdExporter(bpy.types.Operator, Logger):
 						
 						jointWeights.extend(weights)
 						jointIndices.extend(indices)
+					if len(pos) % 50 == 0:
+						bpy.context.window_manager.progress_update(len(pos) / num_verts)
 					
 				bench("verts")
+				
+				num_polys = len(ob.data.polygons)
+				p = 0
 				for poly in ob.data.polygons:
 					i=0
 					for vert_index in poly.vertices:
@@ -1212,7 +1241,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 							texcoIndices.append(len(texco) - 1)
 						
 						i+=1
+					p+=1
+					if p % 10 == 0:
+						bpy.context.window_manager.progress_update(p / num_polys)
 				bench("polys")
+				
 				vertex_data["positions"] = datamodel.make_array(pos,datamodel.Vector3)
 				vertex_data["positionsIndices"] = datamodel.make_array(Indices,int)
 				
@@ -1229,10 +1262,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 				if has_shapes:
 					vertex_data["balance"] = datamodel.make_array(balance,float)
 					vertex_data["balanceIndices"] = datamodel.make_array(Indices,int)
+				
 				bench("insert")
 				face_sets = {}
 				bad_face_mats = 0
 				vert_index = 0
+				p = 0
 				for poly in ob.data.polygons:
 					mat_name = None
 					if not bpy.context.scene.smd_use_image_names:
@@ -1264,6 +1299,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 						face_list.append(vert_index)
 						vert_index += 1
 					face_list.append(-1)
+					p+=1
+					if p % 20 == 0:
+						bpy.context.window_manager.progress_update(len(face_list) / num_polys)
 				
 				DmeMesh["faceSets"] = datamodel.make_array(list(face_sets.values()),datamodel.Element)
 				if bad_face_mats:
@@ -1277,6 +1315,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					control_elems = []
 					control_values = []
 					delta_state_weights = []
+					num_shapes = len(smd.dmxShapes[ob_name])
 					for shape in smd.dmxShapes[ob_name]:
 						shape_name = shape['shape_name']
 						shape_names.append(shape_name)
@@ -1340,7 +1379,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 							DmeVertexDeltaData["wrinkleIndices"] = datamodel.make_array(wrinkleIndices,int)
 						
 						removeObject(shape)
-						
+						bpy.context.window_manager.progress_update(len(shape_names) / num_shapes)
 					DmeMesh["deltaStates"] = datamodel.make_array(shape_elems,datamodel.Element)
 					DmeMesh["deltaStateWeights"] = datamodel.make_array(delta_state_weights,datamodel.Vector2)
 					DmeMesh["deltaStateWeightsLagged"] = datamodel.make_array(delta_state_weights,datamodel.Vector2)
@@ -1448,6 +1487,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			prev_rot = {}
 			
 			for frame in range(0,num_frames):
+				bpy.context.window_manager.progress_update(frame/num_frames)
 				bpy.context.scene.frame_set(frame)
 				keyframe_time = datamodel.Time(frame / fps) if DatamodelFormatVersion() > 15 else int(frame/fps * 10000)
 				for bone in smd.a.pose.bones:
@@ -1476,12 +1516,15 @@ class SmdExporter(bpy.types.Operator, Logger):
 				bench("frame {}".format(frame+1))
 		
 		benchReset()
-		if bpy.context.scene.smd_use_kv2:
-			dm.write(filepath,"keyvalues2",1)
-		else:
-			dm.write(filepath,"binary",DatamodelEncodingVersion())
+		bpy.context.window_manager.progress_update(0.99)
+		try:
+			if bpy.context.scene.smd_use_kv2:
+				dm.write(filepath,"keyvalues2",1)
+			else:
+				dm.write(filepath,"binary",DatamodelEncodingVersion())
+		except PermissionError:
+			self.error("Could not create file {}. Permission denied.".format(os.path.abspath(filepath)))
 		bench("Writing")
-		
 		print("DMX export took",time.time() - start,"\n")
 		
 		return True
