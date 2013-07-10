@@ -1,4 +1,27 @@
 #labels Featured
+== SMD Tools 1.8.1 - July 10th, 2013 ==
+
+General:
+
+  * Fixed possible UI error when the number of scene exportables decreased
+
+Importer:
+
+  * Fixed importing individual files into a scene already containing an Armature
+  * Fixed importing very, very old DMX animations which don't specify a framerate
+  * Fixed errors from totally invalid VTAs never being reported
+  * Improved accuracy of the VTA importer in cases where VTA basis verts aren't 100% aligned with reference mesh verts
+  * Fixed importing VTAs into Y-up scenes
+  * If any verts weren't matched by the VTA importer, a mesh is now created showing the user where they are
+
+Exporter:
+
+  * Fixed VTA exports not including basis verts
+  * Fixed DMX export with Blender 2.66
+  * Turned OS filesystem exceptions into user-friendly error reports
+  * Fixed exporting DMX meshes with bone parents
+  * Fixed console spam and UI glitches if Blender doesn't make a scene update callback
+
 == SMD Tools 1.8 - July 3rd, 2013 ==
 
 General:
