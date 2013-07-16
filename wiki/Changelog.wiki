@@ -1,11 +1,15 @@
 #labels Featured
 == SMD Tools 1.8.2 - July 16th, 2013 ==
 
+Importer:
+
+* Fixed importing when Blender is in background mode
+
 Exporter:
 
   * Fixed exporting DMX meshes without Armatures
   * Fixed console error when changing to an unrecognised SDK
-  * Fixed importing when Blender is in background mode
+  
 
 == SMD Tools 1.8.1 - July 10th, 2013 ==
 
