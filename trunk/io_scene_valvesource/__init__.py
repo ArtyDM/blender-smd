@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 8, 1),
+	"version": (1, 8, 2),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -217,7 +217,7 @@ def studiomdl_path_changed(self, context):
 	prefix = "Source engine branch changed..."
 	if version == None:
 		print(prefix + "unrecognised branch. Specify DMX versions manually.")
-	if version == [0,0]:
+	elif version == [0,0]:
 		print(prefix + "no DMX support in this branch. Forcing SMD export.")
 	else:
 		print(prefix + "now exporting DMX binary {} / model {}".format(version[0],version[1]))

@@ -124,8 +124,10 @@ def shouldExportDMX():
 
 def getEngineBranchName():
 	path = bpy.context.scene.smd_studiomdl_custom_path
-	if path.find("SourceFilmmaker") != -1:
+	if path.lower().find("sourcefilmmaker") != -1:
 		return "Source Filmmaker" # hack for weird SFM folder structure, add a space too
+	elif path.lower().find("dota 2 beta") != -1:
+		return "Dota 2"
 	else:
 		return os.path.basename(os.path.abspath(os.path.join(bpy.path.abspath(path),os.pardir))).title() # why, Python, why
 def getDmxVersionsForSDK():
