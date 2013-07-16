@@ -1051,7 +1051,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			return trfm
 		
 		dm = datamodel.DataModel("model",DatamodelFormatVersion())
-		root = dm.add_element("root",id="Scene"+bpy.context.scene.name)	
+		root = dm.add_element("root",id="Scene"+bpy.context.scene.name)
 		DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id="Object" + (smd.a.name if smd.a else smd.m.name))
 		DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(smd.upAxis),"Scene"+bpy.context.scene.name)
 		DmeModel_children = DmeModel["children"] = datamodel.make_array([],datamodel.Element)
@@ -1059,7 +1059,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 		implicit_trfm = None
 		
 		if smd.jobType in [REF,ANIM]: # skeleton
-			num_bones = len(smd.a.pose.bones)
 			root["skeleton"] = DmeModel
 			if DatamodelFormatVersion() >= 15:
 				jointList = DmeModel["jointList"] = datamodel.make_array([],datamodel.Element)
@@ -1103,6 +1102,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				return bone_elem
 		
 			if smd.a:
+				num_bones = len(smd.a.pose.bones)
 				# remove any non-keyframed positions
 				for posebone in smd.a.pose.bones:
 					posebone.matrix_basis.identity()
@@ -1208,7 +1208,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 							balance_out = min(1,max(0, balance_out))
 						balance.append( float(balance_out) )
 					
-					if not ob.get('bp'):
+					if smd.a and not ob.get('bp'):
 						weights = [0.0] * jointCount
 						indices = [0] * jointCount
 						i = 0

@@ -81,7 +81,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					space = area.spaces.active
 					space.grid_lines = max(space.grid_lines, (xy * 1.2) / space.grid_scale )
 					space.clip_end = max( space.clip_end, xyz * 2 )
-		if bpy.context.area.type == 'VIEW_3D' and bpy.context.region:
+		if bpy.context.area and bpy.context.area.type == 'VIEW_3D' and bpy.context.region:
 			ops.view3d.view_selected()
 		return {'FINISHED'}
 
@@ -536,18 +536,24 @@ class SmdImporter(bpy.types.Operator, Logger):
 			for bone in smd.a.pose.bones:			
 				if not bone.parent:					
 					ApplyRecursive(bone)
-					
-			# Smooth keyframe handles
-			for bone in smd.a.data.bones:
-				bone.select = True		
-			oldType = bpy.context.area.type
-			bpy.context.area.type = 'GRAPH_EDITOR'
-			smd.a.select = True
-			if ops.graph.handle_type.poll():
-				ops.graph.handle_type(type='AUTO')
-			bpy.context.area.type = oldType # in Blender 2.59 this leaves context.region blank, making some future ops calls (e.g. view3d.view_all) fail!
-			for bone in smd.a.data.bones:
-				bone.select = False
+			
+			if 'update' in dir(action.fcurves[0]):
+				for fc in action.fcurves:
+					fc.update()
+			elif bpy.context.area != None:
+				# Handle updates can only be done via operators which depend on certain UI conditions
+				for bone in smd.a.data.bones:
+					bone.select = True		
+				oldType = bpy.context.area.type
+				bpy.context.area.type = 'GRAPH_EDITOR'
+				smd.a.select = True
+				if ops.graph.clean.poll():
+					ops.graph.handle_type(type='AUTO')
+				bpy.context.area.type = oldType # in Blender 2.59 this leaves context.region blank, making some future ops calls (e.g. view3d.view_all) fail!'''
+				for bone in smd.a.data.bones:
+					bone.select = False
+			else: # Blender is probably in background mode
+				self.warning("Unable to clean FCurve handles, animations might be jittery.")
 
 		# clear any unkeyed poses
 		for bone in smd.a.pose.bones:
