@@ -3,7 +3,7 @@
 
 Importer:
 
-* Fixed importing when Blender is in background mode
+  * Fixed importing when Blender is in background mode
 
 Exporter:
 
