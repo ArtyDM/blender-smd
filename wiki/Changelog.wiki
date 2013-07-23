@@ -9,6 +9,7 @@ Datamodel.py:
 Exporter:
 
   * Fixed exporting when the active object is hidden
+  * Fixed subdirectory of the selected Object instead of selected Group being used
   * Changed the default scene QC Path to {{{//*.qc}}}
   * Error when unable to export DMX due to configuration problem
 
