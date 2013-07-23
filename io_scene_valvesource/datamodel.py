@@ -141,9 +141,6 @@ class _Array(list):
 			return "{}\n{}]".format(out,_get_kv2_indent())
 		else:
 			return "{} ]".format(out)
-	
-	def tobytes(self, datamodel, elem):
-		return array.array(self.type_str,self).tobytes()
 		
 	def frombytes(self,file):
 		length = get_int(file)		
@@ -159,11 +156,7 @@ class _FloatArray(_Array):
 	type = float
 	type_str = "f"
 class _StrArray(_Array):
-	type = str	
-	def tobytes(self, datamodel, elem):
-		out = bytes()
-		for item in self: out += _encode_binary_string(item)
-		return out
+	type = str
 
 class _Vector(list):
 	type_str = ""
@@ -202,10 +195,6 @@ class _VectorArray(_Array):
 	def __init__(self,list=None):
 		_validate_array_list(self,list)
 		_Array.__init__(self,list)
-	def tobytes(self, datamodel, elem):
-		out = bytes()
-		for item in self: out += item.tobytes()
-		return out
 class _Vector2Array(_VectorArray):
 	type = Vector2
 class _Vector3Array(_VectorArray):
@@ -266,11 +255,6 @@ class Time(float):
 
 class _TimeArray(_Array):
 	type = Time
-	def tobytes(self, datamodel, elem):
-		out = bytes()
-		for item in self:
-			out += item.tobytes()
-		return out
 		
 def make_array(list,t):
 	if t not in _dmxtypes_all:
@@ -429,11 +413,6 @@ class Element(collections.OrderedDict):
 
 class _ElementArray(_Array):
 	type = Element
-	def tobytes(self, datamodel, elem):
-		out = []
-		for item in self:
-			out.append(datamodel.elem_chain.index(item))
-		return array.array("i",out).tobytes()
 
 _dmxtypes = [Element,int,float,bool,str,Binary,Time,Color,Vector2,Vector3,Vector4,Angle,Quaternion,Matrix]
 _dmxtypes_array = [_ElementArray,_IntArray,_FloatArray,_BoolArray,_StrArray,_BinaryArray,_TimeArray,_ColorArray,_Vector2Array,_Vector3Array,_Vector4Array,_AngleArray,_QuaternionArray,_MatrixArray]
@@ -593,7 +572,14 @@ class DataModel:
 		elif t == uuid.UUID:
 			self.out.write(value.bytes)
 		elif t == Element:
-			raise Error("Don't write elements as attributes")
+			if value._is_placeholder:
+				if self.encoding_ver < 5:
+					self._write(-1)
+				else:
+					self._write(-2)
+					self._write(str(value.id))
+			else:
+				self._write(self.elem_chain.index(value),elem)
 		elif t == str:
 			if suppress_dict:
 				self.out.write( _encode_binary_string(value) )
@@ -602,7 +588,8 @@ class DataModel:
 				
 		elif issubclass(t, _Array):
 			self.out.write( struct.pack("i",len(value)) )
-			self.out.write( value.tobytes(self,elem) )
+			for item in value:
+				self._write(item,suppress_dict=True)
 		elif issubclass(t,_Vector) or t == Time:
 			self.out.write(value.tobytes())
 		
@@ -644,17 +631,8 @@ class DataModel:
 				self._write( struct.pack("b", _get_dmx_type_id(self.encoding, self.encoding_ver, type(attr) )) )
 				if attr == None:
 					self._write(-1)
-				elif type(attr) == Element:
-					if attr._is_placeholder:
-						if self.encoding_ver < 5:
-							self._write(-1)
-						else:
-							self._write(-2)
-							self._write(str(attr.id))
-					else:
-						self._write(self.elem_chain.index(attr),elem)
 				else:
-					self._write(attr,elem)
+					self._write(attr,elem, suppress_dict = self.encoding_ver < 5)
 					
 	def echo(self,encoding,encoding_ver):
 		check_support(encoding, encoding_ver)
