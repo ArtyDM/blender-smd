@@ -166,9 +166,15 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 			props.directory = export_root
 		
+		if context.scene.smd_format == 'DMX' and not canExportDMX():
+			self.report({'ERROR'},"Cannot export DMX. Resolve errors in the Source Engine Export panel in Scene Properties.")
+			return {'CANCELLED'}
+		
 		# Creating an undo level from edit mode is buggy in 2.64a
 		prev_mode = None
+		prev_hidden = bpy.context.active_object if bpy.context.active_object.hide else None
 		if bpy.context.active_object:
+			bpy.context.active_object.hide = False
 			prev_mode = bpy.context.mode.split("_")[0]
 			ops.object.mode_set(mode='OBJECT')
 		
@@ -277,6 +283,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 			
 			if prev_mode:
 				ops.object.mode_set(mode=prev_mode)
+			if prev_hidden:
+				prev_hidden.hide = True
 			
 			props.directory = ""
 			props.groupIndex = -1
@@ -293,20 +301,20 @@ class SmdExporter(bpy.types.Operator, Logger):
 		if groupIndex == -1:
 			if not object in self.validObs:
 				return
+			subdir = object.smd_subdir
+			if object.type == 'ARMATURE':
+				if not object.animation_data: return # otherwise we create a folder but put nothing in it
+				if len(object.smd_subdir) == 0: object.smd_subdir = "anims"
 		else:
 			if len(set(self.validObs).intersection( set(object.users_group[groupIndex].objects) )) == 0:
 				return
-				
+			subdir = object.users_group[groupIndex].smd_subdir
+		
 		# handle subfolder
-		if len(object.smd_subdir) == 0 and object.type == 'ARMATURE':
-			object.smd_subdir = "anims"
-		object.smd_subdir = object.smd_subdir.lstrip("/") # don't want //s here!
-
-		if object.type == 'ARMATURE' and not object.animation_data:
-			return; # otherwise we create a folder but put nothing in it
+		subdir = subdir.lstrip("/") # don't want //s here!
 
 		# assemble filename
-		path = os.path.join( bpy.path.abspath(os.path.dirname(props.directory)), object.smd_subdir)
+		path = os.path.join( bpy.path.abspath(os.path.dirname(props.directory)), subdir)
 		if not os.path.exists(path):
 			try:
 				os.makedirs(path)

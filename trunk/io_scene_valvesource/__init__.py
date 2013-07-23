@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 8, 2),
+	"version": (1, 8, 3),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -231,7 +231,7 @@ def register():
 	
 	bpy.types.Scene.smd_path = StringProperty(name="SMD Export Root",description="The root folder into which SMD and DMX exports from this scene are written", subtype='DIR_PATH')
 	bpy.types.Scene.smd_qc_compile = BoolProperty(name="Compile all on export",description="Compile all QC files whenever anything is exported",default=False)
-	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="Location of this scene's QC file(s); Unix wildcards supported", subtype="FILE_PATH")
+	bpy.types.Scene.smd_qc_path = StringProperty(name="QC Path",description="This scene's QC file(s); Unix wildcards supported",default="//*.qc",subtype="FILE_PATH")
 	bpy.types.Scene.smd_studiomdl_custom_path = StringProperty(name="Source SDK Path",description="Directory containing studiomdl", subtype="DIR_PATH",update=studiomdl_path_changed)
 	
 	encodings = []

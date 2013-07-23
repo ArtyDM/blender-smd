@@ -143,7 +143,7 @@ def count_exports(context):
 	return num
 
 def getFileExt(flex=False):
-	if shouldExportDMX():
+	if bpy.context.scene.smd_format == 'DMX':
 		return ".dmx"
 	else:
 		if flex: return ".vta"
