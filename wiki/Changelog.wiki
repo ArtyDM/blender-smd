@@ -9,7 +9,7 @@ Datamodel.py:
 Exporter:
 
   * Fixed exporting when the active object is hidden
-  * Changed the default scene QC Path to "//*.qc"
+  * Changed the default scene QC Path to {{{//*.qc}}}
   * Error when unable to export DMX due to configuration problem
 
 == SMD Tools 1.8.2 - July 16th, 2013 ==
