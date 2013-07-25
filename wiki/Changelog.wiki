@@ -7,8 +7,7 @@ General:
 
 Exporter:
 
-  * Fixed objects with Bone Parents being exported with the wrong rotations
-(possibly a Blender 2.68 bug)
+  * Fixed objects with Bone Parents being exported with the wrong rotations (possibly a Blender 2.68 bug)
   * Fixed exporting objects parented to other objects with Bone Parents
   * Fixed exporting armatures with parents
   * Fixed armature scale being applied twice to animation frames
