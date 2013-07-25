@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 8, 3),
+	"version": (1, 8, 4),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
