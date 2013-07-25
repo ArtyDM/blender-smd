@@ -129,7 +129,7 @@ def getEngineBranchName():
 	elif path.lower().find("dota 2 beta") != -1:
 		return "Dota 2"
 	else:
-		return os.path.basename(os.path.abspath(os.path.join(bpy.path.abspath(path),os.pardir))).title().replace("Sdk","SDK") # why, Python, why
+		return os.path.basename(os.path.abspath(os.path.join(bpy.path.abspath(path),os.pardir))).title() # why, Python, why
 def getDmxVersionsForSDK():
 	path_branch = getEngineBranchName().lower()
 	for branch in dmx_versions.keys():

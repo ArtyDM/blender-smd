@@ -4,9 +4,8 @@ import bpy, os
 def pass_torch(scene):
 	bpy.app.handlers.scene_update_post.remove(pass_torch)
 	
-	bpy.ops.wm.addon_disable('EXEC_SCREEN',module="io_scene_valvesource")
-	bpy.ops.wm.addon_disable('EXEC_SCREEN',module="io_smd_tools")
 	bpy.ops.wm.addon_enable('EXEC_SCREEN',module="io_scene_valvesource")
+	bpy.ops.wm.addon_disable('EXEC_SCREEN',module="io_smd_tools")
 	bpy.ops.wm.save_userpref('EXEC_AREA')
 	
 	for s_path in bpy.utils.script_paths():

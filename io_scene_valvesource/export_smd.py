@@ -127,8 +127,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 		)
 	exportMode = bpy.props.EnumProperty(items=exportMode_enum,options={'HIDDEN'})
 	groupIndex = bpy.props.IntProperty(default=-1,options={'HIDDEN'})
-	
-	default_armature_subdir = "anims"
 
 	def execute(self, context):
 		props = self.properties
@@ -287,11 +285,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 				ops.object.mode_set(mode=prev_mode)
 			if prev_hidden:
 				prev_hidden.hide = True
-				
-			for ob in self.validObs:
-				if ob.type == 'ARMATURE' and len(ob.smd_subdir) == 0:
-					bpy.data.objects[ob.name].smd_subdir = self.default_armature_subdir # ob itself seems to be within the undo buffer!
-			p_cache.scene_updated = True
 			
 			props.directory = ""
 			props.groupIndex = -1
@@ -311,7 +304,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			subdir = object.smd_subdir
 			if object.type == 'ARMATURE':
 				if not object.animation_data: return # otherwise we create a folder but put nothing in it
-				if len(subdir) == 0: subdir = self.default_armature_subdir
+				if len(object.smd_subdir) == 0: object.smd_subdir = "anims"
 		else:
 			if len(set(self.validObs).intersection( set(object.users_group[groupIndex].objects) )) == 0:
 				return
@@ -486,7 +479,13 @@ class SmdExporter(bpy.types.Operator, Logger):
 		
 				# Get position
 				pos = PoseMatrix.to_translation()
-				
+		
+				# Apply armature scale
+				if posebone.parent: # already applied to root bones
+					scale = smd.a.matrix_world.to_scale()
+					for j in range(3):
+						pos[j] *= scale[j]
+		
 				# Get Rotation
 				rot = PoseMatrix.to_euler()
 
@@ -754,38 +753,30 @@ class SmdExporter(bpy.types.Operator, Logger):
 		bpy.context.scene.objects.active = in_object
 		ops.object.mode_set(mode='OBJECT')
 		
-		def _GetParentInfo(obj):
-			if obj.get('tp'): return
-			cur_parent = obj
-			while cur_parent:
-				if cur_parent.parent_bone and cur_parent.parent_type == 'BONE' and not obj.get('bp'):
-					obj['bp'] = cur_parent.parent_bone
-					smd.a = cur_parent.parent
-				
-				obj['tp'] = cur_parent.name # top parent
-				cur_parent = cur_parent.parent
-		
 		def _ApplyVisualTransform(obj):
 			if obj.data.users > 1:
 				obj.data = obj.data.copy()
+			
+			top_parent = cur_parent = obj
+			while(cur_parent):
+				if not cur_parent.parent:
+					top_parent = cur_parent
+				cur_parent = cur_parent.parent
+			
+			if smd.jobType != ANIM:
+				obj.matrix_world = getUpAxisMat(smd.upAxis).inverted() * obj.matrix_world
 
 			bpy.context.scene.objects.active = obj
 			ops.object.select_all(action='DESELECT')
 			obj.select = True
 			
 			ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-			bpy.data.objects[obj['tp']].location = Vector([0,0,0]) # centre the topmost parent (potentially the object itself)
-			if obj.type != 'ARMATURE':
-				ops.object.transform_apply(scale=True)
-			if smd.jobType != ANIM:
-				obj.matrix_world = getUpAxisMat(smd.upAxis).inverted() * obj.matrix_world
+			obj.location -= top_parent.location # undo location of topmost parent (potentially the object itself)
+			ops.object.transform_apply(scale=True)
 			if not smd.isDMX:
 				ops.object.transform_apply(location=True,rotation=True)
 
 		if in_object.type == 'ARMATURE':
-			if not in_object.get('tp') and list(in_object.scale).count(in_object.scale[0]) != 3:
-				self.warning("Armature \"{}\" has non-uniform scale. Mesh deformation in Source will differ from Blender.".format(in_object.name))
-			_GetParentInfo(in_object)
 			_ApplyVisualTransform(in_object)
 			smd.a = in_object
 		elif in_object.type in mesh_compatible:
@@ -815,9 +806,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 					ops.object.join()
 					bakes_in = [bpy.context.scene.objects.active]
 			
-			for obj in bakes_in:
-				_GetParentInfo(obj)
-		
 		# bake the list of objects!
 		for i in range(len(bakes_in)):
 			bpy.context.window_manager.progress_update(i / len(bakes_in))
@@ -845,8 +833,14 @@ class SmdExporter(bpy.types.Operator, Logger):
 				obj.data.dimensions = '3D'
 
 			if smd.jobType != FLEX: # we've already messed about with this object during ref export
-				found_envelope = obj.get('bp')
+				found_envelope = False
 				
+				# Bone parent
+				if obj.parent_bone and obj.parent_type == 'BONE':
+					smd.a = obj.parent
+					obj['bp'] = obj.parent_bone
+					found_envelope = True				
+					
 				# Bone constraint
 				for con in obj.constraints:
 					if con.mute:
@@ -1514,6 +1508,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 					else: relMat = smd.a.matrix_world * bone.matrix
 					
 					pos = relMat.to_translation()
+					
+					# Apply armature scale
+					scale = smd.a.matrix_world.to_scale()
+					for j in range(3):
+						pos[j] *= scale[j]
 					
 					if not prev_pos.get(bone) or pos - prev_pos[bone] > epsilon:
 						bone_channels[bone][0]["times"].append(keyframe_time)
