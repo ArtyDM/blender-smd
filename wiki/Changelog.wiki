@@ -1,4 +1,21 @@
 #labels Featured
+== SMD Tools 1.8.4 - July 25rd, 2013 ==
+
+General:
+
+  * Fixed installing the addon in Blender 2.68
+
+Exporter:
+
+  * Fixed objects with Bone Parents being exported with the wrong rotations
+(possibly a Blender 2.68 bug)
+  * Fixed exporting objects parented to other objects with Bone Parents
+  * Fixed exporting armatures with parents
+  * Fixed armature scale being applied twice to animation frames
+  * Warn user when an armature has non-uniform scale
+  * Fixed animations not being exported to the "anims" subfolder by default
+  * Replace "Sdk" with "SDK" in engine branch names
+
 == SMD Tools 1.8.3 - July 23rd, 2013 ==
 
 Datamodel.py:
