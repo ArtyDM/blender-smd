@@ -1,4 +1,13 @@
 #labels Featured
+== SMD Tools 1.8.5 - August 4th, 2013 ==
+
+Exporter:
+
+  * Display an error if the scene is unconfigured telling users about the Scene Properties panel (there are now multiple settings to configure)
+  * Fixed export error if there is no active object
+  * DMX: Fixed exporting Text and Curve objects
+  * DMX: Fixed polygon corruption in compiled Text objects (Studiomdl does not support concave polygons)
+
 == SMD Tools 1.8.4 - July 25rd, 2013 ==
 
 General:
