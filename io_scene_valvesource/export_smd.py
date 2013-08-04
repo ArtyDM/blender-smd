@@ -115,9 +115,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 	bl_idname = "export_scene.smd"
 	bl_label = "Export SMD/VTA/DMX"
 	
-	directory = bpy.props.StringProperty(name="Export root", description="The root folder into which SMDs from this scene are written", subtype='DIR_PATH')	
-	filename = bpy.props.StringProperty(default="", options={'HIDDEN'})
-
 	exportMode_enum = (
 		('NONE','No mode','The user will be prompted to choose a mode'),
 		('SINGLE','Active','Only the active object'),
@@ -134,49 +131,31 @@ class SmdExporter(bpy.types.Operator, Logger):
 		props = self.properties
 		#bpy.context.window_manager.progress_begin(0,1)
 
+		# Misconfiguration?
 		if props.exportMode == 'NONE':
 			self.report({'ERROR'},"bpy.ops.{} requires an exportMode".format(SmdExporter.bl_idname))
 			return {'CANCELLED'}
-			
 		if context.scene.smd_format == 'DMX':
 			datamodel.check_support("binary",DatamodelEncodingVersion())
-			
 			if DatamodelEncodingVersion() < 5 and DatamodelFormatVersion() > 15:
 				self.report({'ERROR'},"DMX format \"Model {}\" requires DMX encoding \"Binary 5\" or later".format(DatamodelFormatVersion()))
 				return {'CANCELLED' }
-
-		# Handle export root path
-		if len(props.directory):
-			# We've got a file path from the file selector (or direct invocation)
-			context.scene['smd_path'] = props.directory
-		else:
-			# Get a path from the scene object
-			export_root = context.scene.get("smd_path")
-
-			# No root defined, pop up a file select
-			if not export_root:
-				props.filename = "*** [Please choose a root folder for exports from this scene] ***"
-				context.window_manager.fileselect_add(self)
-				return {'RUNNING_MODAL'}
-
-			if export_root.startswith("//") and not bpy.context.blend_data.filepath:
-				self.report({'ERROR'},"Relative scene output path, but .blend not saved")
-				return {'CANCELLED'}
-
-			if export_root[-1] not in ['\\','/']: # append trailing slash
-				export_root += os.path.sep		
-
-			props.directory = export_root
-		
+		if len(context.scene.smd_path) == 0:
+			self.report({'ERROR'},"Scene unconfigured. See the SOURCE ENGINE EXPORT panel in SCENE PROPERTIES.")
+			return {'CANCELLED'}
+		if context.scene.smd_path.startswith("//") and not bpy.context.blend_data.filepath:
+			self.report({'ERROR'},"Cannot export to a relative path until the blend file has been saved.")
+			return {'CANCELLED'}
 		if context.scene.smd_format == 'DMX' and not canExportDMX():
-			self.report({'ERROR'},"Cannot export DMX. Resolve errors in the Source Engine Export panel in Scene Properties.")
+			self.report({'ERROR'},"Cannot export DMX. Resolve errors with the SOURCE ENGINE EXPORT panel in SCENE PROPERTIES.")
 			return {'CANCELLED'}
 		
-		# Creating an undo level from edit mode is buggy in 2.64a
-		prev_mode = None
-		prev_hidden = bpy.context.active_object if bpy.context.active_object.hide else None
+		# Creating an undo level from edit mode is still buggy in 2.68a
+		prev_mode = prev_hidden = None
 		if bpy.context.active_object:
-			bpy.context.active_object.hide = False
+			if bpy.context.active_object.hide:
+				prev_hidden = bpy.context.active_object 
+				bpy.context.active_object.hide = False
 			prev_mode = bpy.context.mode.split("_")[0]
 			ops.object.mode_set(mode='OBJECT')
 		
@@ -293,7 +272,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 					bpy.data.objects[ob.name].smd_subdir = self.default_armature_subdir # ob itself seems to be within the undo buffer!
 			p_cache.scene_updated = True
 			
-			props.directory = ""
 			props.groupIndex = -1
 			
 			bpy.context.window_manager.progress_end()
@@ -321,7 +299,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		subdir = subdir.lstrip("/") # don't want //s here!
 
 		# assemble filename
-		path = os.path.join( bpy.path.abspath(os.path.dirname(props.directory)), subdir)
+		path = os.path.join(bpy.path.abspath(context.scene.smd_path), subdir)
 		if not os.path.exists(path):
 			try:
 				os.makedirs(path)
@@ -929,6 +907,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 							baked.smd_flex_controller_mode = smd.g.smd_flex_controller_mode
 					else:
 						bakes_out.append(baked)
+					
+					if obj.smd_triangulate or not smd.isDMX:
 						ops.object.mode_set(mode='EDIT')
 						ops.mesh.quads_convert_to_tris()
 						ops.object.mode_set(mode='OBJECT')
@@ -1205,7 +1185,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					jointWeights = [ 1.0 ] * len(ob.data.vertices)
 					jointIndices = [ smd.boneNameToID[ob['bp']] ] * len(ob.data.vertices)
 				
-				width = ob.dimensions.x * ( 1 - (src_ob.data.smd_flex_stereo_sharpness / 100) )
+				if has_shapes: balance_width = ob.dimensions.x * ( 1 - (src_ob.data.smd_flex_stereo_sharpness / 100) )
 				num_verts = len(ob.data.vertices)
 				for vert in ob.data.vertices:
 					pos.append(datamodel.Vector3(vert.co))
@@ -1213,12 +1193,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 					vert.select = False
 					
 					if has_shapes:
-						if width == 0:
+						if balance_width == 0:
 							if vert.co.x == 0: balance_out = 0.5
 							elif vert.co.x > 0: balance_out = 1
 							else: balance_out = 0
 						else:
-							balance_out = (-vert.co.x / width / 2) + 0.5
+							balance_out = (-vert.co.x / balance_width / 2) + 0.5
 							balance_out = min(1,max(0, balance_out))
 						balance.append( float(balance_out) )
 					
@@ -1292,7 +1272,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					if not bpy.context.scene.smd_use_image_names:
 						try: mat_name = ob.material_slots[poly.material_index].material.name
 						except: pass
-					if not mat_name and smd.m.data.uv_textures.active:
+					if not mat_name and ob.data.uv_textures.active:
 						try: mat_name = os.path.basename(smd.m.data.uv_textures.active.data[poly.index].image.filepath)
 						except: pass					
 					if not mat_name:

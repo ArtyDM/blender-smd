@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "SMD\DMX Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 8, 4),
+	"version": (1, 8, 5),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -183,6 +183,9 @@ def scene_update(scene):
 			
 			
 		for ob in validObs:
+			if ob.type == 'FONT':
+				ob.smd_triangulate = True # preserved if the user converts to mesh
+			
 			i_name = i_type = i_icon = None
 			if ob.type == 'ARMATURE':
 				if ob.animation_data and ob.animation_data.action:
@@ -242,11 +245,7 @@ def register():
 	for fmt in dmx_model_versions: formats.append( (str(fmt), "Model " + str(fmt), '') )
 	bpy.types.Scene.smd_dmx_format = EnumProperty(name="DMX format",description="Manual override for DMX model format version",items=tuple(formats),default='1')
 	
-	formats = (
-	('SMD', "SMD", "Studiomdl Data" ),
-	('DMX', "DMX", "Datamodel Exchange" )
-	)
-	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=formats,default='DMX')
+	bpy.types.Scene.smd_format = EnumProperty(name="SMD Export Format",items=( ('SMD', "SMD", "Studiomdl Data" ), ('DMX', "DMX", "Datamodel Exchange" ) ),default='DMX')
 	bpy.types.Scene.smd_up_axis = EnumProperty(name="SMD Target Up Axis",items=axes,default='Z',description="Use for compatibility with data from other 3D tools")
 	bpy.types.Scene.smd_use_image_names = BoolProperty(name="SMD Ignore Materials",description="Only export face-assigned image filenames",default=False)
 	bpy.types.Scene.smd_layer_filter = BoolProperty(name="SMD Export visible layers only",description="Ignore objects in hidden layers",default=False)
@@ -265,6 +264,7 @@ def register():
 	)
 	bpy.types.Object.smd_flex_controller_mode = EnumProperty(name="DMX Flex Controller generation",description="How flex controllers are defined",items=flex_controller_modes,default='SIMPLE')
 	bpy.types.Object.smd_flex_controller_source = StringProperty(name="DMX Flex Controller source",description="A DMX file (or Text datablock) containing flex controllers",subtype='FILE_PATH')
+	bpy.types.Object.smd_triangulate = BoolProperty(name="Triangulate",description="Avoids concave DMX faces, which are not supported by studiomdl",default=False)
 	
 	bpy.types.Armature.smd_implicit_zero_bone = BoolProperty(name="Implicit motionless bone",default=True,description="Create a dummy bone for vertices which don't move. Emulates Blender's behaviour in Source, but may break compatibility with existing files")
 	arm_modes = (
