@@ -201,8 +201,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 					self.exportObject(context,context.active_object,groupIndex=props.groupIndex)
 				else:
 					self.error("The group \"" + group_name + "\" has no active objects")
-					return {'CANCELLED'}
-
 
 			elif props.exportMode == 'MULTI':
 				exported_groups = []
@@ -543,6 +541,24 @@ class SmdExporter(bpy.types.Operator, Logger):
 
 			out.append(weights)
 		return out
+		
+	def GetMaterialName(self, poly, uv_tex):
+		smd = self.smd
+		mat_name = None
+		if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > poly.material_index:
+			mat = smd.m.material_slots[poly.material_index].material
+			if mat:
+				mat_name = getObExportName(mat)
+		if not mat_name and uv_tex:
+			image = uv_tex[poly.index].image
+			if image:
+				mat_name = os.path.basename(bpy.path.abspath(image.filepath))
+				if len(mat_name) == 0: mat_name = image.name
+		if mat_name:
+			smd.materials_used.add(mat_name)
+			return mat_name, True
+		else:
+			return "no_material", smd.m.draw_type != 'TEXTURED' # assume it's a collision mesh if it's not textured
 
 	# triangles block
 	def writePolys(self,internal=False):
@@ -603,21 +619,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 		p = 0
 		for poly in md.polygons:
 			if p % 10 == 0: bpy.context.window_manager.progress_update(p / len(md.polygons))
-			mat_name = None
-			if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > poly.material_index:
-				mat = smd.m.material_slots[poly.material_index].material
-				if mat:
-					mat_name = getObExportName(mat)
-			if not mat_name and uv_tex:
-				image = uv_tex[face_index].image
-				if image:
-					mat_name = os.path.basename(image.filepath) # not using data name as it can be truncated and custom props can't be used here
-			if mat_name:
-				smd.materials_used.add(mat_name)
-			else:
-				mat_name = "no_material"
-				if smd.m.draw_type == 'TEXTURED':
-					bad_face_mats += 1
+			mat_name, mat_success = self.GetMaterialName(poly, uv_tex)
+			if not mat_success:
+				bad_face_mats += 1
 			
 			smd.file.write(mat_name + "\n")
 			
@@ -1005,7 +1009,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			smd.file = open(filepath, 'w')
 		except Exception as err:
 			self.error("Could not create SMD. Python reports: {}.".format(err))
-		print("-",filepath)
+		print("-",os.path.realpath(filepath))
 			
 		smd.file.write("version 1\n")
 
@@ -1031,7 +1035,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		smd = self.smd
 		
 		start = time.time()
-		print("-",filepath)
+		print("-",os.path.realpath(filepath))
 		benchReset()
 		
 		if len(smd.bakeInfo) and smd.bakeInfo[0].smd_flex_controller_mode == 'ADVANCED' and not hasFlexControllerSource(smd.bakeInfo[0]):
@@ -1267,16 +1271,10 @@ class SmdExporter(bpy.types.Operator, Logger):
 				bad_face_mats = 0
 				vert_index = 0
 				p = 0
+				uv_tex = ob.data.uv_textures.active.data
 				for poly in ob.data.polygons:
-					mat_name = None
-					if not bpy.context.scene.smd_use_image_names:
-						try: mat_name = ob.material_slots[poly.material_index].material.name
-						except: pass
-					if not mat_name and ob.data.uv_textures.active:
-						try: mat_name = os.path.basename(smd.m.data.uv_textures.active.data[poly.index].image.filepath)
-						except: pass					
-					if not mat_name:
-						mat_name = "Material"
+					mat_name, mat_success = self.GetMaterialName(poly, uv_tex)
+					if not mat_success:
 						bad_face_mats += 1
 						
 					if not face_sets.get(mat_name):
@@ -1293,9 +1291,14 @@ class SmdExporter(bpy.types.Operator, Logger):
 						
 						face_sets[mat_name] = faceSet
 					
+					if poly.use_smooth:
+						vertex_data["normals"].append(datamodel.Vector3(poly.normal))
+						poly_ni = len(vertex_data["normals"]) - 1
+					
 					face_list = face_sets[mat_name]["faces"]
 					for vert in poly.vertices:
 						face_list.append(vert_index)
+						if poly.use_smooth: vertex_data["normalsIndices"][vert_index] = poly_ni
 						vert_index += 1
 					face_list.append(-1)
 					p+=1
