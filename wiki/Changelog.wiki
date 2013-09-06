@@ -1,4 +1,12 @@
 #labels Featured
+== SMD Tools 1.8.6 - September 6th, 2013 ==
+
+Exporter:
+
+  * DMX: fixed per-face "Shade Smooth" setting not being applied to exports
+  * Fixed exporting face images with relative filepaths
+  * Empty Groups no longer cause the export process to cancel
+
 == SMD Tools 1.8.5 - August 4th, 2013 ==
 
 Exporter:
