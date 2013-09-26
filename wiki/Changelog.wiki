@@ -1,4 +1,26 @@
 #labels Featured
+== SMD Tools 1.9.0 - September 26th, 2013 ==
+
+General:
+
+  * Added "Launch HLMV" operator (requires SDK Path to be set)
+  * Export Path text box is now highlighted red when empty
+
+Importer:
+
+  * DMX: improved weightmap import performance
+  * DMX: fixed importing empty animations
+
+Exporter:
+
+  * SMD: Worked around crash in the SMD->DMX conversion of Dota 2's model importer
+  * DMX: Wrinkle maps are now auto-generated; set a non-zero wrinkle scale in your flex controller DMX to activate
+  * DMX: Flex controller generator now works for objects which aren't in a Group
+  * DMX: Don't generate flex controllers for corrective shapes
+  * DMX: Fixed flat-shaded polygon export
+  * DMX: Fixed exporting Groups with multiple texture names
+  * Fixed post-export error if export was started from paint mode
+
 == SMD Tools 1.8.6 - September 6th, 2013 ==
 
 Exporter:
