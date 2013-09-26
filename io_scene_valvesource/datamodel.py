@@ -67,7 +67,9 @@ def get_bool(file):
 def get_byte(file):
 	return int(unpack("B",file.read(1))[0])
 def get_char(file):
-	return unpack("c",file.read(1))[0].decode('ASCII')
+	c = file.read(1)
+	if type(c) == str: return c
+	return unpack("c",c)[0].decode('ASCII')
 def get_int(file):
 	return int( unpack("i",file.read(intsize))[0] )
 def get_short(file):
@@ -324,15 +326,13 @@ class Element(collections.OrderedDict):
 		if type(key) != str: raise TypeError("Attribute name must be string, not {}".format(type(key)))
 		
 		def import_element(elem):
-			if elem._datamodels != self._datamodels:
-				for dm in self._datamodels:
-					for dm_e in dm.elements:
-						if dm_e.id == elem.id:
-							raise IDCollisionError("Could not add {} to {}: element ID collision.".format(elem,dm))
-				
-				for dm in self._datamodels:
-					dm.elements.append(elem)
-				elem._datamodels = elem._datamodels.union(self._datamodels)
+			for dm in self._datamodels:
+				if dm in elem._datamodels: continue
+				for dm_e in dm.elements:
+					if dm_e.id == elem.id:
+						raise IDCollisionError("Could not add {} to {}: element ID collision with {}.".format(elem, dm, dm_e))
+				dm.elements.append(elem)
+				elem._datamodels.add(dm)
 				for attr in elem.values():
 					t = type(attr)
 					if t == Element:
@@ -539,6 +539,9 @@ class DataModel:
 		
 		self.elements = []
 		
+	def __repr__(self):
+		return "<Datamodel 0x{}{}>".format(id(self)," (root is \"{}\")".format(self.root.name) if self.root else "")
+		
 	def add_element(self,name,elemtype="DmElement",id=None,_is_placeholder=False):
 		elem = Element(self,name,elemtype,id,_is_placeholder)
 		try:
@@ -702,7 +705,7 @@ def parse(parse_string, element_path=None):
 	return load(in_file=io.StringIO(parse_string),element_path=element_path)
 
 def load(path = None, in_file = None, element_path = None):
-	if not (path or in_file) or (path and in_file):
+	if bool(path) == bool(in_file):
 		raise ValueError("A path string OR a file object must be provided")
 	if element_path != None and type(element_path) != list:
 		raise TypeError("element_path must be a list containing element names")
@@ -858,8 +861,7 @@ def load(path = None, in_file = None, element_path = None):
 
 				raise IOError("Unexpected EOF")
 			
-			in_file.close()
-			in_file = open(path,'r')
+			if ('mode' in dir(in_file) and 'b' in in_file.mode): in_file = io.TextIOWrapper(in_file)
 			in_file.seek(len(header))
 			
 			element_chain = []

@@ -18,7 +18,7 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-import bpy, struct, time, collections, os
+import bpy, struct, time, collections, os, subprocess
 from mathutils import *
 from math import *
 from . import datamodel
@@ -382,3 +382,18 @@ class Cache:
 	scene_updated = False
 	action_filter = ""
 p_cache = Cache() # package cached data
+
+class SMD_OT_LaunchHLMV(bpy.types.Operator):
+	'''Launches Half-Life Model Viewer'''
+	bl_idname = "smd.launch_hlmv"
+	bl_label = "Launch HLMV"
+	@classmethod
+	def poll(self,context):
+		return bool(context.scene.smd_studiomdl_custom_path)
+		
+	def execute(self,context):
+		args = [os.path.normpath(os.path.join(bpy.path.abspath(context.scene.smd_studiomdl_custom_path),"hlmv"))]
+		if context.scene.smd_game_path:
+			args.extend(["-game",os.path.normpath(bpy.path.abspath(context.scene.smd_game_path))])
+		subprocess.Popen(args)
+		return {'FINISHED'}

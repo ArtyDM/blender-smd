@@ -537,7 +537,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 				if not bone.parent:					
 					ApplyRecursive(bone)
 			
-			if 'update' in dir(action.fcurves[0]):
+			if len(action.fcurves) > 0 and 'update' in dir(action.fcurves[0]):
 				for fc in action.fcurves:
 					fc.update()
 			elif bpy.context.area != None:
@@ -1430,7 +1430,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 										vg = ob.vertex_groups.new(bone_name)
 									if weight == 1:
 										full_weights[vg].append(vert_index)
-									else:
+									elif weight > 0:
 										vg.add([vert_index],weight,'REPLACE')
 								joint_index += 1
 								
@@ -1470,13 +1470,6 @@ class SmdImporter(bpy.types.Operator, Logger):
 								deltaPositions = DmeVertexDeltaData["positions"]
 								for i,posIndex in enumerate(DmeVertexDeltaData["positionsIndices"]):
 									shape_key.data[posIndex].co += Vector(deltaPositions[i])
-						
-							#if "wrinkle" in DmeVertexDeltaData["vertexFormat"]:
-							#	wrinkle = DmeVertexDeltaData["wrinkle"]
-							#	if len(wrinkle):
-							#		vg = ob.vertex_groups.new(shape_key.name)
-							#		for i,posIndex in enumerate(DmeVertexDeltaData["wrinkleIndices"]):
-							#			vg.add([posIndex],wrinkle[i],'REPLACE') # FIXME
 			
 			if smd.jobType in [REF,REF_ADD,PHYS]:
 				parseModel(DmeModel)

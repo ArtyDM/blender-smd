@@ -106,7 +106,7 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 				if studiomdl.returncode == 0:
 					num_good_compiles += 1
 				else:
-					self.error("Compile of {}.qc failed. Check the console for details".format(os.path.basename(qc)))
+					self.error("Compile of {} failed. Check the console for details".format(os.path.basename(qc)))
 				i+=1
 		return num_good_compiles
 
@@ -156,7 +156,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 			if bpy.context.active_object.hide:
 				prev_hidden = bpy.context.active_object 
 				bpy.context.active_object.hide = False
-			prev_mode = bpy.context.mode.split("_")[0]
+			prev_mode = bpy.context.mode
+			if prev_mode.find("EDIT") != -1: prev_mode = 'EDIT'
+			elif prev_mode.find("PAINT") != -1: # FFS Blender!
+				prev_mode = prev_mode.split('_')
+				prev_mode.reverse()
+				prev_mode = "_".join(prev_mode)
 			ops.object.mode_set(mode='OBJECT')
 		
 		ops.ed.undo_push(message=self.bl_label)
@@ -438,6 +443,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 		for i in range(num_frames):
 			bpy.context.window_manager.progress_update(i / num_frames)
 			smd.file.write("time {}\n".format(i))
+			
+			if smd.a.data.smd_implicit_zero_bone:
+				smd.file.write("0 0 0 0 0 0 0\n")
 
 			for posebone in smd.a.pose.bones:
 				if not posebone.bone.use_deform: continue
@@ -542,15 +550,15 @@ class SmdExporter(bpy.types.Operator, Logger):
 			out.append(weights)
 		return out
 		
-	def GetMaterialName(self, poly, uv_tex):
+	def GetMaterialName(self, ob, poly):
 		smd = self.smd
 		mat_name = None
-		if not bpy.context.scene.smd_use_image_names and len(smd.m.material_slots) > poly.material_index:
-			mat = smd.m.material_slots[poly.material_index].material
+		if not bpy.context.scene.smd_use_image_names and len(ob.material_slots) > poly.material_index:
+			mat = ob.material_slots[poly.material_index].material
 			if mat:
 				mat_name = getObExportName(mat)
-		if not mat_name and uv_tex:
-			image = uv_tex[poly.index].image
+		if not mat_name and ob.data.uv_textures.active.data:
+			image = ob.data.uv_textures.active.data[poly.index].image
 			if image:
 				mat_name = os.path.basename(bpy.path.abspath(image.filepath))
 				if len(mat_name) == 0: mat_name = image.name
@@ -558,7 +566,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			smd.materials_used.add(mat_name)
 			return mat_name, True
 		else:
-			return "no_material", smd.m.draw_type != 'TEXTURED' # assume it's a collision mesh if it's not textured
+			return "no_material", ob.draw_type != 'TEXTURED' # assume it's a collision mesh if it's not textured
 
 	# triangles block
 	def writePolys(self,internal=False):
@@ -619,7 +627,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		p = 0
 		for poly in md.polygons:
 			if p % 10 == 0: bpy.context.window_manager.progress_update(p / len(md.polygons))
-			mat_name, mat_success = self.GetMaterialName(poly, uv_tex)
+			mat_name, mat_success = self.GetMaterialName(smd.m, poly)
 			if not mat_success:
 				bad_face_mats += 1
 			
@@ -629,7 +637,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				# Vertex locations, normal directions
 				loc = norms = ""
 				v = md.vertices[poly.vertices[i]]
-				norm = v.normal if poly.use_smooth else poly.normal
+				norm = v.normal
 				for j in range(3):
 					loc += " " + getSmdFloat(v.co[j])
 					norms += " " + getSmdFloat(norm[j])
@@ -862,7 +870,28 @@ class SmdExporter(bpy.types.Operator, Logger):
 				
 				_ApplyVisualTransform(obj)
 				
-			# Apply modifiers; need to do this per shape key
+				has_edge_split = False
+				for mod in obj.modifiers:
+					if mod.type == 'EDGE_SPLIT':
+						has_edge_split = 'WITH_SHARP' if mod.use_edge_angle else 'NO_SHARP'
+						mod.use_edge_sharp = True # required for splitting flat-shaded faces
+					if mod.type == 'SOLIDIFY' and not solidify_fill_rim:
+						solidify_fill_rim = mod.use_rim
+					if smd.jobType == FLEX and mod.type == 'DECIMATE' and mod.decimate_type != 'UNSUBDIV':
+						self.error("Cannot export shape keys from \"{}\" because it has a '{}' Decimate modifier. Only Un-Subdivide mode is supported.".format(obj.name,mod.decimate_type))
+						return
+
+				if obj.type == 'MESH':
+					if has_edge_split == 'NO_SHARP': # unset user sharp edges
+						for e in obj.data.edges: e.use_edge_sharp = False
+					else:
+						edgesplit = obj.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
+						edgesplit.use_edge_angle = False
+					
+					for poly in obj.data.polygons:
+						if not poly.use_smooth:
+							for ek in poly.edge_keys: obj.data.edges[obj.data.edge_keys.index(ek)].use_edge_sharp = True
+				
 			ops.object.mode_set(mode='OBJECT')
 			for x in range(num_out):
 				bpy.context.window_manager.progress_update((i + 1 + (x / num_out)) / (len(bakes_in) + 1))
@@ -873,78 +902,63 @@ class SmdExporter(bpy.types.Operator, Logger):
 					if smd.jobType == FLEX and cur_shape.mute:
 						self.warning("Skipping muted shape \"{}\"".format(cur_shape.name))
 						continue
+					
+				data = obj.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
+				baked = obj
+				if obj.type == 'MESH':
+					baked = baked.copy()
+					baked.data = data
+				else:
+					baked = bpy.data.objects.new(obj.name, data)
+				bpy.context.scene.objects.link(baked)
+				bpy.context.scene.objects.active = baked
+				baked.select = True
+				baked['src_name'] = obj.name
+				if smd.jobType == FLEX or (smd.isDMX and x > 0):
+					baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
+				
+				if smd.isDMX:
+					if x == 0: bakes_out.append(baked)
+					else: smd.dmxShapes[obj.name].append(baked)
+					if smd.g:
+						baked.smd_flex_controller_source = smd.g.smd_flex_controller_source
+						baked.smd_flex_controller_mode = smd.g.smd_flex_controller_mode
+				else:
+					bakes_out.append(baked)
+				
+				if obj.smd_triangulate or not smd.isDMX:
+					ops.object.mode_set(mode='EDIT')
+					ops.mesh.quads_convert_to_tris()
+					ops.object.mode_set(mode='OBJECT')
+					
+				for mod in baked.modifiers:
+					if mod.type == 'ARMATURE':
+						mod.show_viewport = False
 		
-				if obj.type in mesh_compatible:
-					has_edge_split = False
-					for mod in obj.modifiers:
-						if mod.type == 'EDGE_SPLIT':
-							has_edge_split = True
-						if mod.type == 'SOLIDIFY' and not solidify_fill_rim:
-							solidify_fill_rim = mod.use_rim
-						if smd.jobType == FLEX and mod.type == 'DECIMATE' and mod.decimate_type != 'UNSUBDIV':
-							self.error("Cannot export shape keys from \"{}\" because it has a '{}' Decimate modifier. Only Un-Subdivide mode is supported.".format(obj.name,mod.decimate_type))
-							return
+				# handle which sides of a curve should have polys
+				if obj.type == 'CURVE':
+					ops.object.mode_set(mode='EDIT')
+					if obj.data.smd_faces == 'RIGHT':
+						ops.mesh.duplicate()
+						ops.mesh.flip_normals()
+					if not obj.data.smd_faces == 'BOTH':
+						ops.mesh.select_all(action='INVERT')
+						ops.mesh.delete()
+					elif solidify_fill_rim:
+						self.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
+					ops.object.mode_set(mode='OBJECT')
 
-					if not has_edge_split and obj.type == 'MESH':
-						edgesplit = obj.modifiers.new(name="SMD Edge Split",type='EDGE_SPLIT') # creates sharp edges
-						edgesplit.use_edge_angle = False
-					
-					data = obj.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
-					baked = obj
-					if obj.type == 'MESH':
-						baked = baked.copy()
-						baked.data = data
-					else:
-						baked = bpy.data.objects.new(obj.name, data)
-					bpy.context.scene.objects.link(baked)
-					bpy.context.scene.objects.active = baked
-					baked.select = True
-					baked['src_name'] = obj.name
-					if smd.jobType == FLEX or (smd.isDMX and x > 0):
-						baked.name = baked.data.name = baked['shape_name'] = cur_shape.name
-					
-					if smd.isDMX:
-						if x == 0: bakes_out.append(baked)
-						else: smd.dmxShapes[obj.name].append(baked)
-						if smd.g:
-							baked.smd_flex_controller_source = smd.g.smd_flex_controller_source
-							baked.smd_flex_controller_mode = smd.g.smd_flex_controller_mode
-					else:
-						bakes_out.append(baked)
-					
-					if obj.smd_triangulate or not smd.isDMX:
-						ops.object.mode_set(mode='EDIT')
-						ops.mesh.quads_convert_to_tris()
+				# project a UV map
+				if smd.jobType != FLEX and len(baked.data.uv_textures) == 0:
+					if len(baked.data.vertices) < 2000:
 						ops.object.mode_set(mode='OBJECT')
-						
-					for mod in baked.modifiers:
-						if mod.type == 'ARMATURE':
-							mod.show_viewport = False
-			
-					# handle which sides of a curve should have polys
-					if obj.type == 'CURVE':
+						ops.object.select_all(action='DESELECT')
+						baked.select = True
+						ops.uv.smart_project()
+					else:
 						ops.object.mode_set(mode='EDIT')
-						if obj.data.smd_faces == 'RIGHT':
-							ops.mesh.duplicate()
-							ops.mesh.flip_normals()
-						if not obj.data.smd_faces == 'BOTH':
-							ops.mesh.select_all(action='INVERT')
-							ops.mesh.delete()
-						elif solidify_fill_rim:
-							self.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
-						ops.object.mode_set(mode='OBJECT')
-
-					# project a UV map
-					if smd.jobType != FLEX and len(baked.data.uv_textures) == 0:
-						if len(baked.data.vertices) < 2000:
-							ops.object.mode_set(mode='OBJECT')
-							ops.object.select_all(action='DESELECT')
-							baked.select = True
-							ops.uv.smart_project()
-						else:
-							ops.object.mode_set(mode='EDIT')
-							ops.mesh.select_all(action='SELECT')
-							ops.uv.unwrap()
+						ops.mesh.select_all(action='SELECT')
+						ops.uv.unwrap()
 			
 			ops.object.mode_set(mode='OBJECT')
 			obj.select = False
@@ -1224,30 +1238,18 @@ class SmdExporter(bpy.types.Operator, Logger):
 						jointIndices.extend(indices)
 					if len(pos) % 50 == 0:
 						bpy.context.window_manager.progress_update(len(pos) / num_verts)
-					
+				
+				for poly in ob.data.polygons:
+					for l_i in poly.loop_indices:
+						loop = ob.data.loops[l_i]
+						
+						texco.append(datamodel.Vector2(uv_layer[loop.index].uv))
+						texcoIndices.append(loop.index)
+						
+						Indices.append(loop.vertex_index)
+				
 				bench("verts")
 				
-				num_polys = len(ob.data.polygons)
-				p = 0
-				for poly in ob.data.polygons:
-					i=0
-					for vert_index in poly.vertices:
-						vert = ob.data.vertices[vert_index]
-						
-						Indices.append(vert_index)
-						
-						uv = datamodel.Vector2(uv_layer[poly.loop_start + i].uv)					
-						try:
-							texcoIndices.append(texco.index(uv))
-						except ValueError:
-							texco.append(uv)
-							texcoIndices.append(len(texco) - 1)
-						
-						i+=1
-					p+=1
-					if p % 10 == 0:
-						bpy.context.window_manager.progress_update(p / num_polys)
-				bench("polys")
 				
 				vertex_data["positions"] = datamodel.make_array(pos,datamodel.Vector3)
 				vertex_data["positionsIndices"] = datamodel.make_array(Indices,int)
@@ -1269,11 +1271,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 				bench("insert")
 				face_sets = {}
 				bad_face_mats = 0
-				vert_index = 0
+				v = 0
 				p = 0
-				uv_tex = ob.data.uv_textures.active.data
+				num_polys = len(ob.data.polygons)
+				
 				for poly in ob.data.polygons:
-					mat_name, mat_success = self.GetMaterialName(poly, uv_tex)
+					mat_name, mat_success = self.GetMaterialName(ob, poly)
 					if not mat_success:
 						bad_face_mats += 1
 						
@@ -1281,9 +1284,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 						material_elem = materials.get(mat_name)
 						if not material_elem:
 							materials[mat_name] = material_elem = dm.add_element(mat_name,"DmeMaterial",id=mat_name + "mat")
-							mat_path = bpy.context.scene.smd_material_path.replace('\\','/')
-							if (len(mat_path) > 0 and mat_path[-1] != '/'): mat_path += '/'
-							material_elem["mtlName"] = mat_path + mat_name
+							material_elem["mtlName"] = os.path.join(bpy.context.scene.smd_material_path, mat_name).replace('\\','/')
 						
 						faceSet = dm.add_element(mat_name,"DmeFaceSet",id=ob_name+mat_name+"faces")
 						faceSet["material"] = material_elem
@@ -1291,16 +1292,10 @@ class SmdExporter(bpy.types.Operator, Logger):
 						
 						face_sets[mat_name] = faceSet
 					
-					if poly.use_smooth:
-						vertex_data["normals"].append(datamodel.Vector3(poly.normal))
-						poly_ni = len(vertex_data["normals"]) - 1
-					
 					face_list = face_sets[mat_name]["faces"]
-					for vert in poly.vertices:
-						face_list.append(vert_index)
-						if poly.use_smooth: vertex_data["normalsIndices"][vert_index] = poly_ni
-						vert_index += 1
+					face_list.extend(poly.loop_indices)
 					face_list.append(-1)
+					
 					p+=1
 					if p % 20 == 0:
 						bpy.context.window_manager.progress_update(len(face_list) / num_polys)
@@ -1318,19 +1313,48 @@ class SmdExporter(bpy.types.Operator, Logger):
 					control_values = []
 					delta_state_weights = []
 					num_shapes = len(smd.dmxShapes[ob_name])
+					num_correctives = 0
+					num_wrinkles = 0
+					
+					if ob.smd_flex_controller_mode == 'ADVANCED':
+						text = bpy.data.texts.get(ob.smd_flex_controller_source)
+						msg = "- Loading flex controllers from "
+						element_path = [ "combinationOperator" ]
+						if text:
+							print(msg + "text block \"{}\"".format(text.name))
+							controller_dm = datamodel.parse(text.as_string(),element_path=element_path)
+						else:
+							path = os.path.realpath(bpy.path.abspath(ob.smd_flex_controller_source))
+							print(msg + path)
+							controller_dm = datamodel.load(path=path,element_path=element_path)
+						
 					for shape in smd.dmxShapes[ob_name]:
 						shape_name = shape['shape_name']
 						shape_names.append(shape_name)
-						wrinkle_vg = ob.vertex_groups.get(shape_name)
 						
-						if src_ob.smd_flex_controller_mode == 'SIMPLE':
-							DmeCombinationInputControl = dm.add_element(shape_name,"DmeCombinationInputControl",id=ob_name+shape_name+"controller")
-							control_elems.append(DmeCombinationInputControl)
-						
-							DmeCombinationInputControl["rawControlNames"] = datamodel.make_array([shape_name],str)					
-							if wrinkle_vg:
-								DmeCombinationInputControl["wrinkleScales"] = datamodel.make_array([1.0],float)					
-							control_values.append(datamodel.Vector3([0.5,0.5,0.5])) # ??
+						wrinkle_scale = 0
+						if "_" in shape_name:
+							num_correctives += 1
+						else:
+							if ob.smd_flex_controller_mode == 'SIMPLE':
+								DmeCombinationInputControl = dm.add_element(shape_name,"DmeCombinationInputControl",id=ob_name+shape_name+"controller")
+								control_elems.append(DmeCombinationInputControl)
+							
+								DmeCombinationInputControl["rawControlNames"] = datamodel.make_array([shape_name],str)
+								control_values.append(datamodel.Vector3([0.5,0.5,0.5])) # ??
+							else:
+								def _FindScale():
+									for control in controller_dm.root["combinationOperator"]["controls"]:
+										for i in range(len(control["rawControlNames"])):
+											if control["rawControlNames"][i] == shape_name:
+												scales = control.get("wrinkleScales")
+												return scales[i] if scales else 0
+									raise ValueError()
+								try:
+									wrinkle_scale = _FindScale()
+								except ValueError:
+									self.warning("No flex controller defined for shape {}.".format(shape_name))
+								pass
 						
 						delta_state_weights.append(datamodel.Vector2([0.0,0.0])) # ??
 						
@@ -1338,11 +1362,12 @@ class SmdExporter(bpy.types.Operator, Logger):
 						shape_elems.append(DmeVertexDeltaData)
 						
 						vertexFormat = DmeVertexDeltaData["vertexFormat"] = datamodel.make_array([ "positions", "normals" ],str)
+						if wrinkle_scale:
+							vertexFormat.append("wrinkle")
+							num_wrinkles += 1
 						
 						wrinkle = []
 						wrinkleIndices = []
-						
-						if wrinkle_vg: vertexFormat.append("wrinkle")
 						
 						# what do these do?
 						#DmeVertexDeltaData["flipVCoordinates"] = False
@@ -1352,31 +1377,44 @@ class SmdExporter(bpy.types.Operator, Logger):
 						shape_posIndices = []
 						shape_norms = []
 						shape_normIndices = []
+						if wrinkle_scale: delta_lengths = {}
 						
-						for i in range(len(ob.data.vertices)):
-							ob_vert = ob.data.vertices[i]
-							shape_vert = shape.data.vertices[i]
+						for ob_vert in ob.data.vertices:
+							shape_vert = shape.data.vertices[ob_vert.index]
 							
-							if ob_vert.co != shape_vert.co:
-								shape_pos.append(datamodel.Vector3(shape_vert.co - ob_vert.co))
-								shape_posIndices.append(i)
+							delta = shape_vert.co - ob_vert.co
+							delta_length = delta.length
+							
+							if wrinkle_scale: delta_lengths[ob_vert.index] = delta_length
+							
+							if delta_length:
+								shape_pos.append(datamodel.Vector3(delta))
+								shape_posIndices.append(ob_vert.index)
 								
 							if ob_vert.normal != shape_vert.normal:
 								shape_norms.append(datamodel.Vector3(shape_vert.normal))
-								shape_normIndices.append(i)
+								shape_normIndices.append(ob_vert.index)
 							
-							if wrinkle_vg:
-								try:
-									wrinkle.append(wrinkle_vg.weight(i))
-									wrinkleIndices.append(i)
-								except RuntimeError:
-									pass
+						if wrinkle_scale:
+							max_delta = 0
+							for poly in ob.data.polygons:
+								for l_i in poly.loop_indices:
+									loop = ob.data.loops[l_i]
+									if loop.vertex_index in shape_posIndices:
+										max_delta = max(max_delta,delta_lengths[loop.vertex_index])
+										wrinkle.append(delta_lengths[loop.vertex_index])
+										wrinkleIndices.append(l_i)
+						
+							wrinkle_mod = wrinkle_scale / max_delta
+							if (wrinkle_mod != 1):
+								for i in range(len(wrinkle)):
+									wrinkle[i] *= wrinkle_mod
 						
 						DmeVertexDeltaData["positions"] = datamodel.make_array(shape_pos,datamodel.Vector3)
 						DmeVertexDeltaData["positionsIndices"] = datamodel.make_array(shape_posIndices,int)
 						DmeVertexDeltaData["normals"] = datamodel.make_array(shape_norms,datamodel.Vector3)
 						DmeVertexDeltaData["normalsIndices"] = datamodel.make_array(shape_normIndices,int)
-						if wrinkle_vg:
+						if wrinkle_scale:
 							DmeVertexDeltaData["wrinkle"] = datamodel.make_array(wrinkle,float)
 							DmeVertexDeltaData["wrinkleIndices"] = datamodel.make_array(wrinkleIndices,int)
 						
@@ -1387,19 +1425,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 					DmeMesh["deltaStateWeightsLagged"] = datamodel.make_array(delta_state_weights,datamodel.Vector2)
 					
 					first_pass = not root.get("combinationOperator")
-					if ob.smd_flex_controller_mode == 'ADVANCED':
+					if ob.smd_flex_controller_mode == 'ADVANCED' and not "_" in shape_name:
 						if first_pass:
-							text = bpy.data.texts.get(ob.smd_flex_controller_source)
-							msg = "- Loading flex controllers from "
-							element_path = [ "combinationOperator" ]
-							if text:
-								print(msg + "text block \"{}\"".format(text.name))
-								controller_dm = datamodel.parse(text.as_string(),element_path=element_path)
-							else:
-								path = bpy.path.abspath(ob.smd_flex_controller_source)
-								print(msg + path)
-								controller_dm = datamodel.load(path=path,element_path=element_path)
-						
 							DmeCombinationOperator = controller_dm.root["combinationOperator"]
 							root["combinationOperator"] = DmeCombinationOperator
 						
@@ -1429,7 +1456,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 						DmeCombinationOperator["controlValues"].extend(control_values)
 						DmeCombinationOperator["targets"].append(DmeMesh)
 					
-					bench("shapes")			
+					bench("shapes")
+					print("- {} flexes ({} with wrinklemaps) + {} correctives".format(num_shapes - num_correctives,num_wrinkles,num_correctives))
 			
 				removeObject(ob)
 			

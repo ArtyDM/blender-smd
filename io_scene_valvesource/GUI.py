@@ -173,7 +173,10 @@ class SMD_PT_Scene(bpy.types.Panel):
 		row.prop(scene,"smd_layer_filter",text="Visible layer(s) only")
 		row.prop(scene,"smd_use_image_names",text="Ignore Blender materials")
 
-		l.prop(scene,"smd_path",text="Export Path")
+		row = l.row()
+		row.alert = len(scene.smd_path) == 0
+		row.prop(scene,"smd_path",text="Export Path")
+		
 		if getDmxVersionsForSDK() != [0,0]:
 			row = l.row().split(0.33)
 			row.label(text="Export Format:")
@@ -326,19 +329,17 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 						datablocks_dispayed.append(ob.data)
 			
 			num_shapes = 0
-			num_wrinkle_maps = 0
+			num_correctives = 0
 			for ob in objects:
 				if hasShapes(ob):
 					for shape in ob.data.shape_keys.key_blocks[1:]:
-						num_shapes += 1
-						if ob.vertex_groups.get(shape.name):
-							num_wrinkle_maps += 1
+						if "_" in shape.name: num_correctives += 1
+						else: num_shapes += 1
 			
 			col.separator()
 			row = col.row()
 			row.alignment = 'CENTER'
-			row.label(icon='SHAPEKEY_DATA',text = "{} shape{}".format(num_shapes,"s" if num_shapes != 1 else ""))
-			row.label(icon='GROUP_VERTEX',text="{} wrinkle map{}".format(num_wrinkle_maps,"s" if num_wrinkle_maps != 1 else ""))
+			row.label(icon='SHAPEKEY_DATA',text = "{} shape{}, {} corrective{}".format(num_shapes,"s" if num_shapes != 1 else "", num_correctives,"s" if num_correctives != 1 else ""))
 			
 class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 	bl_label = "Source Engine QC Complies"
@@ -390,3 +391,5 @@ class SMD_PT_Scene_QC_Complie(bpy.types.Panel):
 				p_cache.qc_lastPath_row.alert = True
 			compile_row.enabled = False
 		p_cache.qc_lastPath_row.prop(scene,"smd_qc_path",text="QC Path") # can't add this until the above test completes!
+		
+		l.operator(SMD_OT_LaunchHLMV.bl_idname,icon='SCRIPTWIN')
