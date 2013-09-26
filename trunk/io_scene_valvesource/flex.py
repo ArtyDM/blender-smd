@@ -51,7 +51,7 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 			objects.append(ob)
 		else:
 			for g in ob.users_group:
-				if g.mute: continue
+				if g.smd_mute: continue
 				text_name = g.name
 				target = g
 				for g_ob in g.objects:
