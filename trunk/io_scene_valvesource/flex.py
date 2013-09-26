@@ -41,19 +41,17 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 	
 	def execute(self, context):
 		ob = bpy.context.active_object
-		dm = datamodel.DataModel("model",18)
-		
-		root = dm.add_element("root",id=ob.name)
-		DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator",id=ob.name+"controllers")
-		root["combinationOperator"] = DmeCombinationOperator
-		controls = DmeCombinationOperator["controls"] = datamodel.make_array([],datamodel.Element)
+		dm = datamodel.DataModel("model",1)
 		
 		text_name = ob.name
 		objects = []
 		shapes = []
 		target = ob
-		for g in ob.users_group:
-			if not g.smd_mute:
+		if len(ob.users_group) == 0:
+			objects.append(ob)
+		else:
+			for g in ob.users_group:
+				if g.mute: continue
 				text_name = g.name
 				target = g
 				for g_ob in g.objects:
@@ -61,9 +59,18 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 						objects.append(g_ob)
 				break
 		
+		text = bpy.data.texts.new( "flex_{}".format(text_name) )
+		
+		root = dm.add_element(text.name)
+		DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator",id=ob.name+"controllers")
+		root["combinationOperator"] = DmeCombinationOperator
+		controls = DmeCombinationOperator["controls"] = datamodel.make_array([],datamodel.Element)
+		
+		
 		for ob in objects:
 			for shape in ob.data.shape_keys.key_blocks[1:]:
-				DmeCombinationInputControl = dm.add_element(shape.name,"DmeCombinationInputControl",id=ob.name+shape.name)
+				if "_" in shape.name: continue
+				DmeCombinationInputControl = dm.add_element(shape.name,"DmeCombinationInputControl",id=ob.name+shape.name+"inputcontrol")
 				controls.append(DmeCombinationInputControl)
 				
 				DmeCombinationInputControl["rawControlNames"] = datamodel.make_array([shape.name],str)
@@ -73,7 +80,7 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 				DmeCombinationInputControl["flexMax"] = 1.0
 				DmeCombinationInputControl["flexMin"] = 0.0
 				
-				DmeCombinationInputControl["wrinkleScales"] = datamodel.make_array([1.0],float)
+				DmeCombinationInputControl["wrinkleScales"] = datamodel.make_array([0.0],float)
 				
 		controlValues = DmeCombinationOperator["controlValues"] = datamodel.make_array( [ [0.0,0.0,0.5] ] * len(controls), datamodel.Vector3)
 		DmeCombinationOperator["controlValuesLagged"] = datamodel.make_array( controlValues, datamodel.Vector3)
@@ -82,22 +89,6 @@ class DmxWriteFlexControllers(bpy.types.Operator):
 		DmeCombinationOperator["dominators"] = datamodel.make_array([],datamodel.Element)
 		targets = DmeCombinationOperator["targets"] = datamodel.make_array([],datamodel.Element)
 		
-		for ob in objects:
-			DmeFlexRules = dm.add_element("flexRules","DmeFlexRules",id=ob.name+"rules")
-			targets.append(DmeFlexRules)
-			
-			delta_states = DmeFlexRules["deltaStates"] = datamodel.make_array([],datamodel.Element)
-		
-			for shape in ob.data.shape_keys.key_blocks[1:]:
-				DmeFlexRule = dm.add_element(shape.name,"DmeFlexRulePassThrough",id=ob.name+shape.name+"passthrough")
-				DmeFlexRule["result"] = 0.0
-				DmeFlexRule["expr"] = "" # ignored unless element type is "DmeFlexRule"
-				delta_states.append(DmeFlexRule)
-				
-			DmeFlexRules["deltaStateWeights"] = datamodel.make_array([ [0.0,0.0] ] * len(delta_states),datamodel.Vector2)
-			DmeFlexRules["target"] = datamodel.make_array([],datamodel.Element)
-		
-		text = bpy.data.texts.new( "flex_{}".format(text_name) )
 		text.use_tabs_as_spaces = False
 		text.from_string(dm.echo("keyvalues2",1))
 		
