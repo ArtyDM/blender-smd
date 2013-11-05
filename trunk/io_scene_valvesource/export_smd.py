@@ -1141,7 +1141,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				print("\n" + ob_name)
 				vertex_data = dm.add_element("bind","DmeVertexData",id=ob_name+"verts")
 				
-				DmeMesh = dm.add_element(ob_name,"DmeMesh",id=ob_name)
+				DmeMesh = dm.add_element(ob_name,"DmeMesh",id=ob_name+"mesh")
 				DmeMesh["visible"] = True			
 				DmeMesh["bindState"] = vertex_data
 				DmeMesh["currentState"] = vertex_data

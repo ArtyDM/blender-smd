@@ -213,6 +213,8 @@ class SMD_PT_Scene(bpy.types.Panel):
 class SMD_UL_ExportItems(bpy.types.UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		id = item.get_id()
+		if id == None: return
+		
 		row = layout.row(align=True)
 		if type(id) == bpy.types.Group:
 			row.enabled = id.smd_mute == False
