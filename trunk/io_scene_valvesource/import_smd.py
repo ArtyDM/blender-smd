@@ -718,12 +718,12 @@ class SmdImporter(bpy.types.Operator, Logger):
 		for line in smd.file:
 			line = line.rstrip("\n")
 
-			if smdBreak(line):
+			if line and smdBreak(line): # normally a blank line means a break, but Milkshape can export SMDs with zero-length material names...
 				break
 			if smdContinue(line):
 				continue
 
-			mat, mat_ind = self.getMeshMaterial(line)
+			mat, mat_ind = self.getMeshMaterial(line if line else "UndefinedMaterial")
 			mats.append(mat_ind)
 
 			# ***************************************************************
@@ -731,6 +731,8 @@ class SmdImporter(bpy.types.Operator, Logger):
 			vertexCount = 0
 			faceVerts = []
 			for line in smd.file:
+				if smdBreak(line):
+					break
 				if smdContinue(line):
 					continue
 				values = line.split()
