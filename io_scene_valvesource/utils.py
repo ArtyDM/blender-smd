@@ -60,6 +60,7 @@ dmx_versions = { # [encoding, format]
 'ep1':[0,0],
 'source2007':[2,1],
 'source2009':[2,1],
+'Team Fortress 2':[2,1],
 'Left 4 Dead':[5,15],
 'Left 4 Dead 2':[5,15],
 'orangebox':[5,18], # aka Source MP
