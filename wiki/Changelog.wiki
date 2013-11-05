@@ -1,4 +1,14 @@
 #labels Featured
+== SMD Tools 1.9.1 - November 5th, 2013 ==
+
+General:
+
+  * Added DMX version information for TF2
+  
+Importer:
+
+  * Added support for SMDs which provide blank material names
+
 == SMD Tools 1.9.0 - September 26th, 2013 ==
 
 General:
