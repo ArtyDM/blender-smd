@@ -9,6 +9,10 @@ Importer:
 
   * Added support for SMDs which provide blank material names
 
+Exporter:
+
+  * Fixed a possible DMX element ID collision
+
 == SMD Tools 1.9.0 - September 26th, 2013 ==
 
 General:
