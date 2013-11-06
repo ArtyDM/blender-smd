@@ -312,9 +312,16 @@ class SmdImporter(bpy.types.Operator, Logger):
 		smd = self.smd
 		# We only care about pose data in some SMD types
 		if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
-			for line in smd.file:			
-				if smdBreak(line):
-					return
+			if smd.jobType == FLEX: smd.shapeNames = {}
+			for line in smd.file:
+				if smdBreak(line): return
+				if smd.jobType == FLEX and line.startswith("time"):
+					for c in line:
+						if c in ['#',';','/']:
+							pos = line.index(c)
+							frame = line[:pos].split()[1]
+							if c == '/': pos += 1
+							smd.shapeNames[frame] = line[pos+1:].strip()
 
 		a = smd.a
 		bones = a.data.bones
@@ -857,12 +864,13 @@ class SmdImporter(bpy.types.Operator, Logger):
 				break
 			if smdContinue(line):
 				continue
-				
+			
 			values = line.split()
 
 			if values[0] == "time":
+				shape_name = smd.shapeNames.get(values[1])
 				if smd.vta_ref == None:
-					smd.m.shape_key_add("Basis")
+					smd.m.shape_key_add(shape_name if shape_name else "Basis")
 					vta_ref = smd.vta_ref = smd.m.copy()
 					vta_ref.name = "VTA vertices"
 					bpy.context.scene.objects.link(vta_ref)
@@ -891,7 +899,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					
 					if bad_vta_verts > 0:
 						err_ratio = bad_vta_verts/len(vta_ids)
-						message = "{} VTA vertices ({}%) were not matched to a mesh vertex! An object has been created showing where the VTA vertices are.".format(bad_vta_verts, int(err_ratio * 100))
+						message = "{} VTA vertices ({}%) were not matched to a mesh vertex! An object has been created to show where the VTA file's vertices are.".format(bad_vta_verts, int(err_ratio * 100))
 						if err_ratio == 1:
 							self.error(message)
 							return
@@ -902,7 +910,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					making_base_shape = False
 				
 				if not making_base_shape:
-					smd.m.shape_key_add(values[1])
+					smd.m.shape_key_add(shape_name if shape_name else values[1])
 					num_shapes += 1
 
 				continue # to the first vertex of the new shape
@@ -1093,7 +1101,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 				for i in range(1,len(line)):
 					if line[i] == "frame":
 						shape = qc.ref_mesh.data.shape_keys.key_blocks.get(line[i+1])
-						if shape: shape.name = line[1]
+						if shape and shape.name.startswith("Key"): shape.name = line[1]
 						break
 				continue
 
@@ -1485,8 +1493,8 @@ class SmdImporter(bpy.types.Operator, Logger):
 				frameRate = animation["frameRate"] if dm.format_ver > 1 else 30 # very, very old DMXs don't have this
 				timeFrame = animation["timeFrame"]
 				scale = timeFrame.get("scale",1.0)
-				duration = timeFrame["duration" if dm.format_ver >= 18 else "durationTime"]
-				offset = timeFrame.get("offset" if dm.format_ver >= 18 else "offsetTime",0.0)
+				duration = timeFrame["duration" if dm.format_ver >= 11 else "durationTime"]
+				offset = timeFrame.get("offset" if dm.format_ver >= 11 else "offsetTime",0.0)
 				
 				if type(duration) == int: duration = datamodel.Time.from_int(duration)
 				if type(offset) == int: offset = datamodel.Time.from_int(offset)
