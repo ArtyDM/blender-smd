@@ -313,7 +313,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 		# We only care about pose data in some SMD types
 		if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
 			if smd.jobType == FLEX: smd.shapeNames = {}
-			for line in smd.file:
+			for line.strip() in smd.file:
 				if smdBreak(line): return
 				if smd.jobType == FLEX and line.startswith("time"):
 					for c in line:
