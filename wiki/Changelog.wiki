@@ -1,4 +1,16 @@
 #labels Featured
+== SMD Tools 1.9.2 - November 6th, 2013 ==
+
+General:
+
+  * Added support for DMX binary 4 (L4D2)
+  * Fixed DMX binary 3 animations
+  * Fixed DMX model 11 animations
+
+Importer:
+
+  * SMD: Shape names are now imported from VTA file comments
+
 == SMD Tools 1.9.1 - November 5th, 2013 ==
 
 General:
