@@ -137,8 +137,8 @@ class SmdExporter(bpy.types.Operator, Logger):
 			return {'CANCELLED'}
 		if context.scene.smd_format == 'DMX':
 			datamodel.check_support("binary",DatamodelEncodingVersion())
-			if DatamodelEncodingVersion() < 5 and DatamodelFormatVersion() > 15:
-				self.report({'ERROR'},"DMX format \"Model {}\" requires DMX encoding \"Binary 5\" or later".format(DatamodelFormatVersion()))
+			if DatamodelEncodingVersion() < 3 and DatamodelFormatVersion() > 15:
+				self.report({'ERROR'},"DMX format \"Model {}\" requires DMX encoding \"Binary 3\" or later".format(DatamodelFormatVersion()))
 				return {'CANCELLED' }
 		if len(context.scene.smd_path) == 0:
 			self.report({'ERROR'},"Scene unconfigured. See the SOURCE ENGINE EXPORT panel in SCENE PROPERTIES.")
@@ -1479,7 +1479,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			
 			DmeTimeFrame = dm.add_element("timeframe","DmeTimeFrame",id=action.name+"time")
 			duration = action.frame_range[1] / fps
-			if DatamodelFormatVersion() >= 18:
+			if DatamodelFormatVersion() >= 11:
 				DmeTimeFrame["duration"] = datamodel.Time(duration)
 			else:
 				DmeTimeFrame["durationTime"] = int(duration * 10000)
