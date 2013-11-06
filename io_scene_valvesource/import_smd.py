@@ -314,7 +314,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 		if smd.jobType not in [ REF, ANIM, ANIM_SOLO ]:
 			if smd.jobType == FLEX: smd.shapeNames = {}
 			for line in smd.file:
-				line.strip()
+				line = line.strip()
 				if smdBreak(line): return
 				if smd.jobType == FLEX and line.startswith("time"):
 					for c in line:
