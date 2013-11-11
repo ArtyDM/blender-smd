@@ -19,15 +19,15 @@
 # ##### END GPL LICENSE BLOCK #####
 
 bl_info = {
-	"name": "SMD\DMX Tools",
+	"name": "Blender Source Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 9, 2),
+	"version": (1, 10, 0),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
 	"location": "File > Import/Export, Scene properties",
-	"wiki_url": "http://code.google.com/p/blender-smd/",
-	"tracker_url": "http://code.google.com/p/blender-smd/issues/list",
+	"wiki_url": "http://steamcommunity.com/groups/BlenderSourceTools",
+	"tracker_url": "http://steamcommunity.com/groups/BlenderSourceTools/discussions/0/",
 	"description": "Importer and exporter for Valve Software's Source Engine. Supports SMD\VTA, DMX and QC."
 }
 

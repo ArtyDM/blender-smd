@@ -190,7 +190,7 @@ class SMD_PT_Scene(bpy.types.Panel):
 		
 		row = l.row()
 		row.alert = len(scene.smd_studiomdl_custom_path) > 0 and not studiomdlPathValid()
-		row.prop(scene,"smd_studiomdl_custom_path",text="SDK Path")
+		row.prop(scene,"smd_studiomdl_custom_path",text="Engine Path")
 		
 		if scene.smd_format == 'DMX':
 			if getDmxVersionsForSDK() == None:
@@ -205,10 +205,12 @@ class SMD_PT_Scene(bpy.types.Panel):
 				row.prop(scene,"smd_material_path",text="Material Path")
 				row.enabled = shouldExportDMX()
 		
-		row = l.row(align=True)
+		col = l.column(align=True)
+		row = col.row(align=True)
 		row.operator("wm.url_open",text="Help",icon='HELP').url = "http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help#Exporting"
+		row.operator("wm.url_open",text="Steam Community",icon='URL').url = "http://steamcommunity.com/groups/BlenderSourceTools"
 		if "SmdToolsUpdate" in globals():
-			row.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')
+			col.operator(SmdToolsUpdate.bl_idname,text="Check for updates",icon='URL')
 
 class SMD_UL_ExportItems(bpy.types.UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
