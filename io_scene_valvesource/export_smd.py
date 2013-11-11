@@ -137,7 +137,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			return {'CANCELLED'}
 		if context.scene.smd_format == 'DMX':
 			datamodel.check_support("binary",DatamodelEncodingVersion())
-			if DatamodelEncodingVersion() < 3 and DatamodelFormatVersion() > 15:
+			if DatamodelEncodingVersion() < 3 and DatamodelFormatVersion() > 11:
 				self.report({'ERROR'},"DMX format \"Model {}\" requires DMX encoding \"Binary 3\" or later".format(DatamodelFormatVersion()))
 				return {'CANCELLED' }
 		if len(context.scene.smd_path) == 0:
@@ -1072,7 +1072,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 		
 		if smd.jobType in [REF,ANIM]: # skeleton
 			root["skeleton"] = DmeModel
-			if DatamodelFormatVersion() >= 15:
+			if DatamodelFormatVersion() >= 11:
 				jointList = DmeModel["jointList"] = datamodel.make_array([],datamodel.Element)
 			jointTransforms = DmeModel["jointTransforms"] = datamodel.make_array([],datamodel.Element)
 			bone_transforms = {}
@@ -1081,22 +1081,23 @@ class SmdExporter(bpy.types.Operator, Logger):
 				bone_name = bone.name if bone else "blender_implicit"
 				
 				bone_elem = dm.add_element(bone_name,"DmeJoint",id=bone_name)
-				if DatamodelFormatVersion() >= 15: jointList.append(bone_elem)
+				if DatamodelFormatVersion() >= 11: jointList.append(bone_elem)
 				smd.boneNameToID[bone_name] = len(smd.boneNameToID)
 				
 				relMat = None
 				if bone:
 					if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-					else: relMat = bone.matrix
+					else: relMat = smd.a.matrix_world * bone.matrix
 				else:
 					relMat = smd.a.matrix_world
 				
 				trfm = makeTransform(bone_name,relMat,"bone"+bone_name)
 				
-				# Apply armature scale
-				scale = smd.a.matrix_world.to_scale()
-				for j in range(3):
-					trfm["position"][j] *= scale[j]
+				if bone and bone.parent:
+					# Apply armature scale
+					scale = smd.a.matrix_world.to_scale()
+					for j in range(3):
+						trfm["position"][j] *= scale[j]
 				
 				jointTransforms.append(trfm)
 				if bone:
@@ -1151,7 +1152,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				jointTransforms.append(trfm)
 				
 				DmeDag = dm.add_element(ob_name,"DmeDag",id="ob"+ob_name+"dag")
-				if DatamodelFormatVersion() >= 15: jointList.append(DmeDag)
+				if DatamodelFormatVersion() >= 11: jointList.append(DmeDag)
 				DmeDag["transform"] = trfm
 				DmeDag["shape"] = DmeMesh
 				dags.append(DmeDag)
@@ -1504,7 +1505,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					val_arr = dm.add_element(template[2]+" log","Dme"+template[2]+"LogLayer",cur.name+"loglayer")				
 					cur["log"] = dm.add_element(template[2]+" log","Dme"+template[2]+"Log",cur.name+"log")
 					cur["log"]["layers"] = datamodel.make_array([val_arr],datamodel.Element)				
-					val_arr["times"] = datamodel.make_array([],datamodel.Time if DatamodelFormatVersion() > 15 else int)
+					val_arr["times"] = datamodel.make_array([],datamodel.Time if DatamodelFormatVersion() > 11 else int)
 					val_arr["values"] = datamodel.make_array([],template[3])
 					if bone: bone_channels[bone].append(val_arr)
 					channels.append(cur)
@@ -1519,7 +1520,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 			for frame in range(0,num_frames):
 				bpy.context.window_manager.progress_update(frame/num_frames)
 				bpy.context.scene.frame_set(frame)
-				keyframe_time = datamodel.Time(frame / fps) if DatamodelFormatVersion() > 15 else int(frame/fps * 10000)
+				keyframe_time = datamodel.Time(frame / fps) if DatamodelFormatVersion() > 11 else int(frame/fps * 10000)
 				for bone in smd.a.pose.bones:
 					if bone.parent: relMat = smd.a.matrix_world * bone.parent.matrix.inverted() * bone.matrix
 					else: relMat = smd.a.matrix_world * bone.matrix

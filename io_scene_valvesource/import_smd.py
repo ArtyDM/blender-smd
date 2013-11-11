@@ -1271,7 +1271,6 @@ class SmdImporter(bpy.types.Operator, Logger):
 			if not smd_type: smd.jobType = REF if dm.root.get("model") else ANIM
 			
 			DmeModel = dm.root.get("skeleton")
-			#if not DmeModel.get("model"): smd.jobType = ANIM
 			FlexControllers = dm.root.get("combinationOperator")
 			
 			def getBlenderQuat(datamodel_quat):
@@ -1313,7 +1312,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 				bpy.context.scene.objects.active = smd.a
 				ops.object.mode_set(mode='EDIT')
 				
-				smd.a.matrix_world = get_transform_matrix(DmeModel["transform"])
+				smd.a.matrix_world = getUpAxisMat(smd.upAxis)
 				
 				bone_matrices = {}
 				def parseSkeleton(elem,parent_bone):
@@ -1353,7 +1352,8 @@ class SmdImporter(bpy.types.Operator, Logger):
 			
 			def parseModel(elem,matrix=Matrix()):
 				if elem.type in ["DmeModel","DmeDag"]:
-					matrix = get_transform_matrix(elem["transform"])
+					if elem.type == "DmeDag":
+						matrix *= get_transform_matrix(elem["transform"])
 					if elem.get("children") and len(elem["children"]):
 						subelems = elem["children"]
 					elif elem["shape"]:
@@ -1366,7 +1366,6 @@ class SmdImporter(bpy.types.Operator, Logger):
 					DmeMesh = elem
 					ops.object.mode_set(mode='OBJECT')
 					ob = smd.m = bpy.data.objects.new(name=DmeMesh.name, object_data=bpy.data.meshes.new(name=DmeMesh.name))
-					ob.matrix_world = matrix
 					bpy.context.scene.objects.link(ob)
 					self.setLayer()
 					ob.show_wire = smd.jobType == PHYS
