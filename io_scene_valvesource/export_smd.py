@@ -80,7 +80,7 @@ class SMD_OT_Compile(bpy.types.Operator, Logger):
 			p_cache.qc_paths = SMD_OT_Compile.getQCs()
 		num_good_compiles = 0
 		if len( p_cache.qc_paths ) == 0:
-			self.error("Cannot compile, no QCs provided. The SMD Tools do not generate QCs.")
+			self.error("Cannot compile, no QCs provided. The Blender Source Tools do not generate QCs.")
 		elif not os.path.exists(studiomdl_path):
 			self.error( "Could not execute studiomdl from \"{}\"".format(studiomdl_path) )
 		else:
@@ -271,7 +271,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				prev_hidden.hide = True
 				
 			for ob in self.validObs:
-				if ob.type == 'ARMATURE' and len(ob.smd_subdir) == 0:
+				if ob.type == 'ARMATURE' and len(bpy.data.objects[ob.name].smd_subdir) == 0:
 					bpy.data.objects[ob.name].smd_subdir = self.default_armature_subdir # ob itself seems to be within the undo buffer!
 			p_cache.scene_updated = True
 			
@@ -464,7 +464,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				if parent:
 					if smd.a.data.smd_legacy_rotation: parentMat = parent.matrix * mat_BlenderToSMD 
 					else: parentMat = parent.matrix
-					PoseMatrix = parentMat.inverted() * PoseMatrix
+					PoseMatrix = smd.a.matrix_world * parentMat.inverted() * PoseMatrix
 				else:
 					PoseMatrix = smd.a.matrix_world * PoseMatrix				
 		
@@ -1087,7 +1087,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				relMat = None
 				if bone:
 					if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-					else: relMat = smd.a.matrix_world * bone.matrix
+					else: relMat = bone.matrix
 				else:
 					relMat = smd.a.matrix_world
 				
@@ -1521,7 +1521,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				bpy.context.scene.frame_set(frame)
 				keyframe_time = datamodel.Time(frame / fps) if DatamodelFormatVersion() > 15 else int(frame/fps * 10000)
 				for bone in smd.a.pose.bones:
-					if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
+					if bone.parent: relMat = smd.a.matrix_world * bone.parent.matrix.inverted() * bone.matrix
 					else: relMat = smd.a.matrix_world * bone.matrix
 					
 					pos = relMat.to_translation()
