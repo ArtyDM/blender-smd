@@ -1076,6 +1076,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				jointList = DmeModel["jointList"] = datamodel.make_array([],datamodel.Element)
 			jointTransforms = DmeModel["jointTransforms"] = datamodel.make_array([],datamodel.Element)
 			bone_transforms = {}
+			if smd.a: scale = smd.a.matrix_world.to_scale()
 			
 			def writeBone(bone):
 				bone_name = bone.name if bone else "blender_implicit"
@@ -1094,8 +1095,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 				trfm = makeTransform(bone_name,relMat,"bone"+bone_name)
 				
 				if bone and bone.parent:
-					# Apply armature scale
-					scale = smd.a.matrix_world.to_scale()
 					for j in range(3):
 						trfm["position"][j] *= scale[j]
 				
@@ -1221,7 +1220,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 							balance_out = min(1,max(0, balance_out))
 						balance.append( float(balance_out) )
 					
-					if smd.a and not ob.get('bp'):
+					if smd.amod.get(ob['src_name']) and not ob.get('bp'):
 						weights = [0.0] * jointCount
 						indices = [0] * jointCount
 						i = 0
@@ -1426,7 +1425,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 					DmeMesh["deltaStateWeightsLagged"] = datamodel.make_array(delta_state_weights,datamodel.Vector2)
 					
 					first_pass = not root.get("combinationOperator")
-					if ob.smd_flex_controller_mode == 'ADVANCED' and not "_" in shape_name:
+					if ob.smd_flex_controller_mode == 'ADVANCED':
 						if first_pass:
 							DmeCombinationOperator = controller_dm.root["combinationOperator"]
 							root["combinationOperator"] = DmeCombinationOperator
@@ -1445,7 +1444,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 							targets.append(DmeMesh)
 					else:					
 						if first_pass:
-							DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator",id="controllers")
+							DmeCombinationOperator = dm.add_element("combinationOperator","DmeCombinationOperator",id=smd.a.name+"controllers")
 							DmeCombinationOperator["controls"] = datamodel.make_array([],datamodel.Element)
 							DmeCombinationOperator["controlValues"] = datamodel.make_array([],datamodel.Vector3)
 							DmeCombinationOperator["usesLaggedValues"] = False
@@ -1516,16 +1515,20 @@ class SmdExporter(bpy.types.Operator, Logger):
 			bench("Animation setup")
 			prev_pos = {}
 			prev_rot = {}
+			scale = smd.a.matrix_world.to_scale()
 			
 			for frame in range(0,num_frames):
 				bpy.context.window_manager.progress_update(frame/num_frames)
 				bpy.context.scene.frame_set(frame)
 				keyframe_time = datamodel.Time(frame / fps) if DatamodelFormatVersion() > 11 else int(frame/fps * 10000)
 				for bone in smd.a.pose.bones:
-					if bone.parent: relMat = smd.a.matrix_world * bone.parent.matrix.inverted() * bone.matrix
+					if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
 					else: relMat = smd.a.matrix_world * bone.matrix
 					
 					pos = relMat.to_translation()
+					
+					if bone.parent:
+						for j in range(3): pos[j] *= scale[j]
 					
 					if not prev_pos.get(bone) or pos - prev_pos[bone] > epsilon:
 						bone_channels[bone][0]["times"].append(keyframe_time)
