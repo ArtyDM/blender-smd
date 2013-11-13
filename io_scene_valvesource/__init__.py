@@ -21,7 +21,7 @@
 bl_info = {
 	"name": "Blender Source Tools",
 	"author": "Tom Edwards (Artfunkel)",
-	"version": (1, 10, 1),
+	"version": (1, 10, 2),
 	"blender": (2, 66, 0),
 	"api": 54697,
 	"category": "Import-Export",
@@ -150,7 +150,7 @@ def scene_update(scene):
 	validObs = GUI.getValidObs()
 	
 	def makeDisplayName(item,action = None):
-		out = os.path.join(item.smd_subdir, getObExportName(action if action else item) + getFileExt())
+		out = os.path.join(item.smd_subdir if item.smd_subdir != "." else None, getObExportName(action if action else item) + getFileExt())
 		#if hasShapes(item):
 		#	out += " (shapes)"
 		return out

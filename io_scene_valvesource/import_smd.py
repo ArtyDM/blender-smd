@@ -1270,18 +1270,23 @@ class SmdImporter(bpy.types.Operator, Logger):
 			
 			if not smd_type: smd.jobType = REF if dm.root.get("model") else ANIM
 			
-			DmeModel = dm.root.get("skeleton")
+			DmeModel = dm.root["skeleton"]
 			FlexControllers = dm.root.get("combinationOperator")
+			transforms = DmeModel["baseStates"][0]["transforms"] if DmeModel.get("baseStates") and len(DmeModel["baseStates"]) > 0 else None
 			
 			def getBlenderQuat(datamodel_quat):
 				return Quaternion([datamodel_quat[3], datamodel_quat[0], datamodel_quat[1], datamodel_quat[2]])
-			def get_transform_matrix(elem,use_up_axis = True):
+			def get_transform_matrix(elem):
 				out = Matrix()
 				if elem == None: return out
-				if use_up_axis:
-					out = getUpAxisMat(smd.upAxis)
-				out *= Matrix.Translation(Vector(elem["position"]))
-				out *= getBlenderQuat(elem["orientation"]).to_matrix().to_4x4()
+				trfm = elem.get("transform")
+				if transforms:
+					for e in transforms:
+						if e.name == elem.name:
+							trfm = e
+				if trfm == None: return out
+				out *= Matrix.Translation(Vector(trfm["position"]))
+				out *= getBlenderQuat(trfm["orientation"]).to_matrix().to_4x4()
 				return out
 			
 			# Skeleton
@@ -1312,8 +1317,6 @@ class SmdImporter(bpy.types.Operator, Logger):
 				bpy.context.scene.objects.active = smd.a
 				ops.object.mode_set(mode='EDIT')
 				
-				smd.a.matrix_world = getUpAxisMat(smd.upAxis)
-				
 				bone_matrices = {}
 				def parseSkeleton(elem,parent_bone):
 					if elem.type in ["DmeJoint","DmeDag"]:
@@ -1328,12 +1331,12 @@ class SmdImporter(bpy.types.Operator, Logger):
 								atch.parent_type = 'BONE'
 								atch.parent_bone = parent_bone.name
 							
-							atch.matrix_local = get_transform_matrix(elem["transform"],use_up_axis = False)
+							atch.matrix_local = get_transform_matrix(elem)
 						else:
 							bone = smd.a.data.edit_bones.new(elem.name)
 							bone.parent = parent_bone
 							bone.tail = (0,5,0)
-							bone_matrices[bone.name] = get_transform_matrix(elem["transform"],use_up_axis=False)
+							bone_matrices[bone.name] = get_transform_matrix(elem)
 							smd.boneIDs[elem.id] = bone.name
 							smd.boneTransformIDs[elem["transform"].id] = bone.name
 							if elem.get("children"):
@@ -1353,7 +1356,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 			def parseModel(elem,matrix=Matrix()):
 				if elem.type in ["DmeModel","DmeDag"]:
 					if elem.type == "DmeDag":
-						matrix *= get_transform_matrix(elem["transform"])
+						matrix *= get_transform_matrix(elem)
 					if elem.get("children") and len(elem["children"]):
 						subelems = elem["children"]
 					elif elem["shape"]:
@@ -1420,7 +1423,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					
 					# Weightmap
 					if "jointWeights" in DmeVertexData["vertexFormat"]:
-						jointList = DmeModel["jointList"] if dm.format_ver >= 15 else DmeModel["jointTransforms"]
+						jointList = DmeModel["jointList"] if dm.format_ver >= 11 else DmeModel["jointTransforms"]
 						jointWeights = DmeVertexData["jointWeights"]
 						jointIndices = DmeVertexData["jointIndices"]
 						jointRange = range(DmeVertexData["jointCount"])
@@ -1431,7 +1434,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 								weight = jointWeights[joint_index]
 								if weight > 0:
 									bone_id = jointList[jointIndices[joint_index]].id
-									if dm.format_ver >= 15:
+									if dm.format_ver >= 11:
 										bone_name = smd.boneIDs[bone_id]
 									else:
 										bone_name = smd.boneTransformIDs[bone_id]
@@ -1544,6 +1547,8 @@ class SmdImporter(bpy.types.Operator, Logger):
 			raise e
 		except Exception as e:
 			raise e
+		
+		smd.a.matrix_world = getUpAxisMat(smd.upAxis)
 		
 		new_obs = set(bpy.context.scene.objects).difference(starting_objects)
 		if len(new_obs) > 1:

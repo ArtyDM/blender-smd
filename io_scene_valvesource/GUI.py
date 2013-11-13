@@ -44,7 +44,7 @@ class SMD_MT_ExportChoice(bpy.types.Menu):
 					icon = "ACTION"
 					count = 1
 					if export_name:
-						text = os.path.join(ob.smd_subdir,ad.action.name + getFileExt())
+						text = os.path.join(ob.smd_subdir if ob.smd_subdir != "." else None,ad.action.name + getFileExt())
 					else:
 						text = ad.action.name
 				elif ad.nla_tracks:
