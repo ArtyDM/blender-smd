@@ -1291,57 +1291,64 @@ class SmdImporter(bpy.types.Operator, Logger):
 			
 			# Skeleton
 			if target_arm:
-				def validateSkeleton(elem,parent_bone):
-					if elem.type == "DmeJoint":
+				missing_bones = []
+				def validateSkeleton(elem,parent_elem):
+					if elem.type == "DmeJoint" or (elem.type == "DmeDag" and elem["shape"] == None):
 						bone = smd.a.data.bones.get(elem.name)
 						if not bone:
-							self.warning("Could not find bone {}".format(elem.name))
-							return
-						
-						smd.boneIDs[elem.id] = bone.name
-						smd.boneTransformIDs[elem["transform"].id] = bone.name
+							if smd.jobType == REF: missing_bones.append(elem.name)
+						else:
+							scene_parent = bone.parent.name if bone.parent else "<None>"
+							dmx_parent = parent_elem.name if parent_elem else "<None>"
+							if scene_parent != dmx_parent:
+								self.warning("Parent mismatch for bone \"{}\": \"{}\" in Blender, \"{}\" in {}.".format(elem.name,scene_parent,dmx_parent,smd.jobName))
+							
+							smd.boneIDs[elem.id] = bone.name
+							smd.boneTransformIDs[elem["transform"].id] = bone.name
 						
 						if elem.get("children"):
 							for child in elem["children"]:
-								validateSkeleton(child,bone)
+								validateSkeleton(child,elem)
 				
 				for child in DmeModel["children"]:
 					validateSkeleton(child,None)
+				if len(missing_bones):
+					self.warning("{} contains {} bones not present in {}:\n{}".format(smd.jobName,len(missing_bones),smd.a.name,", ".join(missing_bones)))
 			else:
 				if smd.jobType == ANIM: smd.jobType = ANIM_SOLO
 				restData = {}
 				smd.append = False
 				ob = smd.a = self.createArmature(DmeModel.name)
 				if self.qc: self.qc.a = ob
-				smd.a.data.smd_implicit_zero_bone = False # Too easy to break compatibility, plus the skeleton is probably set up already
 				bpy.context.scene.objects.active = smd.a
 				ops.object.mode_set(mode='EDIT')
 				
+				smd.a.matrix_world = getUpAxisMat(smd.upAxis)
+				
 				bone_matrices = {}
 				def parseSkeleton(elem,parent_bone):
-					if elem.type in ["DmeJoint","DmeDag"]:
-						if elem.get("shape") and elem["shape"].type == "DmeAttachment":
-							atch = smd.atch = bpy.data.objects.new(name=elem.name, object_data=None)
-							bpy.context.scene.objects.link(atch)
-							atch.show_x_ray = True
-							atch.empty_draw_type = 'ARROWS'
+					if elem.type =="DmeDag" and elem.get("shape") and elem["shape"].type == "DmeAttachment":
+						atch = smd.atch = bpy.data.objects.new(name=elem["shape"].name, object_data=None)
+						bpy.context.scene.objects.link(atch)
+						atch.show_x_ray = True
+						atch.empty_draw_type = 'ARROWS'
 
-							atch.parent = smd.a
-							if parent_bone:
-								atch.parent_type = 'BONE'
-								atch.parent_bone = parent_bone.name
-							
-							atch.matrix_local = get_transform_matrix(elem)
-						else:
-							bone = smd.a.data.edit_bones.new(elem.name)
-							bone.parent = parent_bone
-							bone.tail = (0,5,0)
-							bone_matrices[bone.name] = get_transform_matrix(elem)
-							smd.boneIDs[elem.id] = bone.name
-							smd.boneTransformIDs[elem["transform"].id] = bone.name
-							if elem.get("children"):
-								for child in elem["children"]:
-									parseSkeleton(child,bone)
+						atch.parent = smd.a
+						if parent_bone:
+							atch.parent_type = 'BONE'
+							atch.parent_bone = parent_bone.name
+						
+						atch.matrix_local = get_transform_matrix(elem)
+					elif elem.type == "DmeJoint" or elem.get("shape") == None: # don't import Dags which simply wrap meshes
+						bone = smd.a.data.edit_bones.new(elem.name)
+						bone.parent = parent_bone
+						bone.tail = (0,5,0)
+						bone_matrices[bone.name] = get_transform_matrix(elem)
+						smd.boneIDs[elem.id] = bone.name
+						smd.boneTransformIDs[elem["transform"].id] = bone.name
+						if elem.get("children"):
+							for child in elem["children"]:
+								parseSkeleton(child,bone)
 				
 				for child in DmeModel["children"]:
 					parseSkeleton(child,None)
@@ -1417,7 +1424,7 @@ class SmdImporter(bpy.types.Operator, Logger):
 					# Move from BMesh to Blender
 					bm.to_mesh(ob.data)
 					ob.data.update()
-					ob.matrix_world = matrix
+					ob.matrix_local = matrix
 					if smd.jobType == PHYS:
 						ob.draw_type = 'SOLID'
 					
@@ -1547,8 +1554,6 @@ class SmdImporter(bpy.types.Operator, Logger):
 			raise e
 		except Exception as e:
 			raise e
-		
-		smd.a.matrix_world = getUpAxisMat(smd.upAxis)
 		
 		new_obs = set(bpy.context.scene.objects).difference(starting_objects)
 		if len(new_obs) > 1:
