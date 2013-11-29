@@ -794,7 +794,7 @@ class SmdExporter(bpy.types.Operator, Logger):
 				validObs = getValidObs()
 				flex_obs = []
 				for object in smd.g.objects:
-					if object.smd_export and object in validObs and not (object.type == 'META' and have_baked_metaballs):
+					if object.smd_export and object in validObs and object.type in mesh_compatible and not (object.type == 'META' and have_baked_metaballs):
 						bakes_in.append(object)
 						if not have_baked_metaballs: have_baked_metaballs = object.type == 'META'
 						
@@ -902,11 +902,10 @@ class SmdExporter(bpy.types.Operator, Logger):
 					if smd.jobType == FLEX and cur_shape.mute:
 						self.warning("Skipping muted shape \"{}\"".format(cur_shape.name))
 						continue
-					
+				
 				data = obj.to_mesh(bpy.context.scene, True, 'PREVIEW') # bake it!
-				baked = obj
 				if obj.type == 'MESH':
-					baked = baked.copy()
+					baked = obj.copy()
 					baked.data = data
 				else:
 					baked = bpy.data.objects.new(obj.name, data)
@@ -938,12 +937,11 @@ class SmdExporter(bpy.types.Operator, Logger):
 				# handle which sides of a curve should have polys
 				if obj.type == 'CURVE':
 					ops.object.mode_set(mode='EDIT')
-					if obj.data.smd_faces == 'RIGHT':
+					ops.mesh.select_all(action='SELECT')
+					if obj.data.smd_faces == 'BOTH':
 						ops.mesh.duplicate()
+					if obj.data.smd_faces != 'LEFT':
 						ops.mesh.flip_normals()
-					if not obj.data.smd_faces == 'BOTH':
-						ops.mesh.select_all(action='INVERT')
-						ops.mesh.delete()
 					elif solidify_fill_rim:
 						self.warning("Curve {} has the Solidify modifier with rim fill, but is still exporting polys on both sides.".format(obj.name))
 					ops.object.mode_set(mode='OBJECT')
@@ -1065,50 +1063,46 @@ class SmdExporter(bpy.types.Operator, Logger):
 		dm = datamodel.DataModel("model",DatamodelFormatVersion())
 		root = dm.add_element("root",id="Scene"+bpy.context.scene.name)
 		DmeModel = dm.add_element(bpy.context.scene.name,"DmeModel",id="Object" + (smd.a.name if smd.a else smd.m.name))
-		DmeModel["transform"] = makeTransform("upaxis",getUpAxisMat(smd.upAxis),"Scene"+bpy.context.scene.name)
 		DmeModel_children = DmeModel["children"] = datamodel.make_array([],datamodel.Element)
 		
-		implicit_trfm = None
-		
+		DmeModel_transforms = dm.add_element("base","DmeTransformList",id="transforms"+bpy.context.scene.name)
+		DmeModel["baseStates"] = datamodel.make_array([ DmeModel_transforms ],datamodel.Element)
+		DmeModel_transforms["transforms"] = datamodel.make_array([],datamodel.Element)
+		DmeModel_transforms = DmeModel_transforms["transforms"]
+				
 		if smd.jobType in [REF,ANIM]: # skeleton
 			root["skeleton"] = DmeModel
 			if DatamodelFormatVersion() >= 11:
 				jointList = DmeModel["jointList"] = datamodel.make_array([],datamodel.Element)
 			jointTransforms = DmeModel["jointTransforms"] = datamodel.make_array([],datamodel.Element)
-			bone_transforms = {}
+			bone_transforms = {} # cache for animation lookup
 			if smd.a: scale = smd.a.matrix_world.to_scale()
 			
-			def writeBone(bone):
-				bone_name = bone.name if bone else "blender_implicit"
-				
-				bone_elem = dm.add_element(bone_name,"DmeJoint",id=bone_name)
+			def writeBone(bone):				
+				bone_elem = dm.add_element(bone.name,"DmeJoint",id=bone.name)
 				if DatamodelFormatVersion() >= 11: jointList.append(bone_elem)
-				smd.boneNameToID[bone_name] = len(smd.boneNameToID)
+				smd.boneNameToID[bone.name] = len(smd.boneNameToID)
 				
-				relMat = None
-				if bone:
-					if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
-					else: relMat = smd.a.matrix_world * bone.matrix
-				else:
-					relMat = smd.a.matrix_world
+				if bone.parent: relMat = bone.parent.matrix.inverted() * bone.matrix
+				else: relMat = smd.a.matrix_world * bone.matrix
 				
-				trfm = makeTransform(bone_name,relMat,"bone"+bone_name)
+				trfm = makeTransform(bone.name,relMat,"bone"+bone.name)
+				trfm_base = makeTransform(bone.name,relMat,"bone_base"+bone.name)
 				
-				if bone and bone.parent:
+				if bone.parent:
 					for j in range(3):
 						trfm["position"][j] *= scale[j]
+				trfm_base["position"] = trfm["position"]
 				
 				jointTransforms.append(trfm)
-				if bone:
-					bone_transforms[bone] = trfm
-				else:
-					implicit_trfm = trfm
+				bone_transforms[bone] = trfm
 				bone_elem["transform"] = trfm
 				
-				if bone:
-					children = bone_elem["children"] = datamodel.make_array([],datamodel.Element)
-					for child in bone.children:
-						children.append( writeBone(child) )
+				DmeModel_transforms.append(trfm_base)
+				
+				children = bone_elem["children"] = datamodel.make_array([],datamodel.Element)
+				for child in bone.children:
+					children.append( writeBone(child) )
 				
 				bpy.context.window_manager.progress_update(len(jointTransforms)/num_bones)
 				return bone_elem
@@ -1119,9 +1113,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 				for posebone in smd.a.pose.bones:
 					posebone.matrix_basis.identity()
 				bpy.context.scene.update()
-				
-				if smd.a.data.smd_implicit_zero_bone:
-					DmeModel_children.append(writeBone(None))
 				
 				for bone in smd.a.pose.bones:
 					if not bone.parent:
@@ -1138,6 +1129,9 @@ class SmdExporter(bpy.types.Operator, Logger):
 				ob_name = ob['src_name']
 				src_ob = bpy.data.objects[ob_name]
 				if ob.type != 'MESH': continue
+				if len(ob.data.polygons) == 0:
+					self.error("Object {} has no faces, cannot export".format(ob_name))
+					return
 				print("\n" + ob_name)
 				vertex_data = dm.add_element("bind","DmeVertexData",id=ob_name+"verts")
 				
@@ -1152,12 +1146,13 @@ class SmdExporter(bpy.types.Operator, Logger):
 				
 				DmeDag = dm.add_element(ob_name,"DmeDag",id="ob"+ob_name+"dag")
 				if DatamodelFormatVersion() >= 11: jointList.append(DmeDag)
-				DmeDag["transform"] = trfm
 				DmeDag["shape"] = DmeMesh
+				DmeDag["transform"] = trfm
 				dags.append(DmeDag)
 				
-				ob_weights = self.getWeightmap(ob)
+				DmeModel_transforms.append(makeTransform(ob_name, ob.matrix_world, "ob_base"+ob_name))
 				
+				ob_weights = self.getWeightmap(ob)
 				has_shapes = smd.dmxShapes.get(ob_name)
 				
 				jointCount = 0
@@ -1174,8 +1169,6 @@ class SmdExporter(bpy.types.Operator, Logger):
 						
 				if badJointCounts:
 					self.warning("{} verts on \"{}\" have over 3 weight links. Studiomdl does not support this!".format(badJointCounts,ob['src_name']))
-				elif jointCount > 3: # due to implicit bone
-					self.warning("Implicit motionless bone is pushing \"{}\" over the weight link limit.".format(ob['src_name']))
 				
 				format = [ "positions", "normals", "textureCoordinates" ]
 				if jointCount: format.extend( [ "jointWeights", "jointIndices" ] )

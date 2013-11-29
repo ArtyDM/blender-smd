@@ -291,8 +291,8 @@ class SMD_PT_Object_Config(bpy.types.Panel):
 					if armature.data.smd_action_selection == 'FILTERED':
 						col.prop(armature,"smd_action_filter",text="Action Filter")
 
-				col.prop(armature.data,"smd_implicit_zero_bone")
 				if not shouldExportDMX():
+					col.prop(armature.data,"smd_implicit_zero_bone")
 					col.prop(armature.data,"smd_legacy_rotation")
 					
 				if armature.animation_data and not 'ActLib' in dir(bpy.types):
