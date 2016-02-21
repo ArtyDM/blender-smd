@@ -1,0 +1,1 @@
+## Bug reports have moved to http://steamcommunity.com/groups/BlenderSourceTools/discussions/0/ ##

@@ -1,0 +1,1 @@
+See http://developer.valvesoftware.com/wiki/Blender_SMD_Tools_Help.
